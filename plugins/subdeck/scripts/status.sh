@@ -318,7 +318,7 @@ while IFS=$'\001' read -r id type start dur state path sid spath secs msg; do
   fi
   # clip activity to the available width
   act="$(printf '%s' "$act" | LC_ALL=C awk -v W="$ACTW" "$UTF8_AWK_FUNCS"'{ print (clen($0) > W) ? trunc($0, W - 3) "..." : $0 }')"
-  tc="$(cell "$type" 16)"; tc="${tc%|}"
+  tc="$(cell "${type#*:}" 16)"; tc="${tc%|}"
   ti="$(cell "$(title_of "$np")" 30)"; ti="${ti%|}"
   tk="$(tokens_of "$np")"
   printf '%-8s  %s  %s  %-8s  %-9s  %-6s  %-7s  %s\n' "$short" "$ti" "$tc" "$start" "$dur" "$tk" "$state" "$act"

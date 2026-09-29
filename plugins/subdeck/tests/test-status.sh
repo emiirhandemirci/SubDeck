@@ -195,6 +195,15 @@ SO="$(SUBDECK_STALE_MIN=1000000 bash "$STATUS" "$S")"
 has "$SO" '^s2s2s2s2 .* running ' "SUBDECK_STALE_MIN overrides threshold"
 rm -rf "$S" "$G"
 
+# TYPE column: leading plugin namespace stripped for display
+N="$(mktemp -d)"; mkdir -p "$N/.subdeck"
+ev 2026-01-01T10:00:00Z SubagentStart nsnsnsns1 subdeck:worker-sonnet "" > "$N/.subdeck/events.jsonl"
+NO="$(bash "$STATUS" "$N")"
+has "$NO" '^nsnsnsns +- +worker-sonnet ' "TYPE strips plugin namespace"
+printf '%s
+' "$NO" | grep -q 'subdeck:' && bad "namespace not shown" || ok "namespace not shown"
+rm -rf "$N"
+
 # skill file: injection form, exact allowed-tools, project dir passed explicitly
 SK="$HERE/../skills/status/SKILL.md"
 grep -qF 'allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/status.sh" *)' "$SK" && ok "skill: allowed-tools exact form" || bad "skill: allowed-tools exact form"

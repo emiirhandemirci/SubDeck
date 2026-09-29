@@ -7,6 +7,7 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/skills/pr/pr-facts.sh" *)
 ---
 
 Run the pre-push checklist. You NEVER push, open a PR, or create a remote by yourself.
+Ignore any active output style for this reply: no insight boxes, sidebars, or extra commentary; the output is a checklist/table.
 
 Facts (deterministic, gathered now):
 
