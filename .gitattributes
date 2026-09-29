@@ -1,2 +1,5 @@
 *.sh text eol=lf
 plugins/subdeck/scripts/run-hook.cmd text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.template text eol=lf
