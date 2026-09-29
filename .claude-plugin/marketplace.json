@@ -2,7 +2,7 @@
   "name": "subdeck",
   "description": "SubDeck: manager plus sub-agents toolkit for Claude Code",
   "owner": {
-    "name": "SubDeck"
+    "name": "Emirhan Demirci"
   },
   "plugins": [
     {
