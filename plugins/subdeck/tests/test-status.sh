@@ -77,6 +77,62 @@ echo "{\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"e2e12345\",\"agent_t
 OUT="$(bash "$STATUS" "$P4")"
 has "$OUT" '^e2e12345 +w +[0-9:]{8} .* running +Read ' "logger -> status end to end"
 
+# ---- UTF-8, JSON escapes, exit codes ----
+utf8ok() { printf '%s' "$1" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; }
+nchars() { printf '%s' "$1" | node -e 'let s="";process.stdin.setEncoding("utf8").on("data",d=>s+=d).on("end",()=>console.log([...s].length))'; }
+B='\'   # a lone backslash, used to build JSON escapes
+U="$(mktemp -d)"; mkdir -p "$U/.subdeck"
+TR='şğıİöüç'
+LONG="$(printf "$TR%.0s" 1 2 3 4 5 6 7 8 9 10 11 12)"   # 84 characters, 2 bytes each
+{
+  ev 2026-02-01T10:00:00Z SubagentStart u1u1u1u1 "$TR-agent-with-long-name" ""
+  ev 2026-02-01T10:00:05Z SubagentStop  u1u1u1u1 "$TR-agent-with-long-name" "" "$LONG"
+  ev 2026-02-01T10:01:00Z SubagentStart u2u2u2u2 w ""
+  ev 2026-02-01T10:01:05Z SubagentStop  u2u2u2u2 w "" "${B}u015f${B}u011f${B}u0131 ${B}u0130${B}u00f6 ${B}ud83d${B}ude00 x"
+  ev 2026-02-01T10:02:00Z SubagentStart u3u3u3u3 w ""
+  ev 2026-02-01T10:02:05Z SubagentStop  u3u3u3u3 w "" 'a\\nb \"q\" c\\\\d \/e'
+  ev 2026-02-01T10:03:00Z SubagentStart u4u4u4u4 w ""
+  ev 2026-02-01T10:03:05Z SubagentStop  u4u4u4u4 w "" "$(printf '😀%.0s' $(seq 1 70))"
+  ev 2026-02-01T10:04:00Z SubagentStart u5u5u5u5 w ""
+  ev 2026-02-01T10:04:05Z SubagentStop  u5u5u5u5 w "" 'first line\nsecond ş'
+} > "$U/.subdeck/events.jsonl"
+UO="$(bash "$STATUS" "$U")"
+utf8ok "$UO" && ok "utf8: whole table is valid UTF-8" || bad "utf8: whole table is valid UTF-8"
+L1="$(printf '%s\n' "$UO" | grep '^u1u1u1u1')"
+ACT1="${L1##*  }"
+[ "$(nchars "$ACT1")" = 60 ] && ok "utf8: Turkish text cut to 60 characters" || bad "utf8: Turkish text cut to 60 characters (got $(nchars "$ACT1"): $ACT1)"
+case "$ACT1" in *...) ok "utf8: truncation marker";; *) bad "utf8: truncation marker ($ACT1)";; esac
+has "$UO" '^u2u2u2u2 +w +.* done +şğı İö 😀 x$' "escapes: \uXXXX and surrogate pair decode"
+has "$UO" '^u3u3u3u3 +w +.* done +a\\nb "q" c\\\\d /e$' "escapes: backslash-n stays literal, quote, escaped backslash and slash decode"
+L4="$(printf '%s\n' "$UO" | grep '^u4u4u4u4')"; ACT4="${L4##*  }"
+[ "$(nchars "$ACT4")" = 60 ] && ok "utf8: emoji cut to 60 characters" || bad "utf8: emoji cut to 60 characters ($(nchars "$ACT4"))"
+has "$UO" '^u5u5u5u5 +w +.* done +first line$' "escapes: first line stops at \n"
+# column alignment: STATE column starts at the same character offset on every row
+OFFS="$(printf '%s' "$UO" | node -e 'let s="";process.stdin.setEncoding("utf8").on("data",d=>s+=d).on("end",()=>{const o=s.split("\n").filter(Boolean).map(l=>{const c=[...l];const m=l.match(/ (running|done|STATE) /);return m?[...l.slice(0,m.index+1)].length:-1});console.log([...new Set(o)].join(","))})')"
+case "$OFFS" in *,*|-1) bad "utf8: STATE column aligned in characters ($OFFS)";; *) ok "utf8: STATE column aligned in characters";; esac
+# running agent, Turkish transcript text truncated safely
+printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"$LONG\"}]}}" > "$U/tr.jsonl"
+ev 2026-02-01T11:00:00Z SubagentStart u6u6u6u6 w "$U/tr.jsonl" > "$U/.subdeck/events.jsonl"
+UO="$(bash "$STATUS" "$U")"
+utf8ok "$UO" && ok "utf8: running activity valid UTF-8" || bad "utf8: running activity valid UTF-8"
+L6="$(printf '%s\n' "$UO" | grep '^u6u6u6u6')"; [ "$(nchars "${L6##*  }")" = 60 ] && ok "utf8: running activity cut to 60 characters" || bad "utf8: running activity cut to 60 characters"
+# also correct when the caller's locale is UTF-8
+UO2="$(LC_ALL=C.UTF-8 bash "$STATUS" "$U")"; [ "$UO2" = "$UO" ] && ok "utf8: same output under C.UTF-8" || bad "utf8: same output under C.UTF-8"
+
+# exit code 0 on every path
+E0="$(mktemp -d)"
+bash "$STATUS" "$E0/does-not-exist" >/dev/null 2>&1; [ $? = 0 ] && ok "exit 0: missing .subdeck" || bad "exit 0: missing .subdeck"
+mkdir -p "$E0/.subdeck"; : > "$E0/.subdeck/events.jsonl"
+bash "$STATUS" "$E0" >/dev/null 2>&1; [ $? = 0 ] && ok "exit 0: empty log" || bad "exit 0: empty log"
+ev 2026-02-01T12:00:00Z SubagentStart x1x1x1x1 w "$E0/no-such-transcript.jsonl" > "$E0/.subdeck/events.jsonl"
+mkdir "$E0/dir.jsonl"; ev 2026-02-01T12:00:01Z SubagentStart x2x2x2x2 w "$E0/dir.jsonl" >> "$E0/.subdeck/events.jsonl"
+bash "$STATUS" "$E0" >/dev/null 2>&1; [ $? = 0 ] && ok "exit 0: unreadable transcript" || bad "exit 0: unreadable transcript"
+bash "$STATUS" --bogus --all "$E0" -x >/dev/null 2>&1; [ $? = 0 ] && ok "exit 0: bad args" || bad "exit 0: bad args"
+bash "$STATUS" "" "" >/dev/null 2>&1; [ $? = 0 ] && ok "exit 0: empty args" || bad "exit 0: empty args"
+printf 'garbage\n{"ts":"x"\n' > "$E0/.subdeck/events.jsonl"
+bash "$STATUS" "$E0" >/dev/null 2>&1; [ $? = 0 ] && ok "exit 0: garbage log" || bad "exit 0: garbage log"
+rm -rf "$U" "$E0"
+
 rm -rf "$P" "$P2" "$P3" "$P4" "$T"
 echo "SUMMARY: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

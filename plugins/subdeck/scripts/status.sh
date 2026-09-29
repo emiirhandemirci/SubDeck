@@ -13,6 +13,7 @@ for a in "$@"; do
   case "$a" in
     --all) ALL=1 ;;
     "") ;;
+    -*) ;;   # unknown flags are ignored (always exit 0)
     *) PROJECT="$a" ;;
   esac
 done
@@ -94,6 +95,53 @@ fold() {
   }'
 }
 
+# Shared awk helpers (run under LC_ALL=C): one-pass JSON unescape (incl. \uXXXX and
+# surrogate pairs), UTF-8-safe truncation and padding. Continuation bytes 0x80-0xBF are
+# not counted, so cuts never split a character in byte awks; in char-aware awks the
+# lookup never matches and the count is already in characters.
+UTF8_AWK_FUNCS='
+function init(  i) { BS = sprintf("%c", 92); for (i = 128; i < 192; i++) cont[sprintf("%c", i)] = 1 }
+function clen(s,   n, i, cnt) {
+  n = length(s); cnt = 0
+  for (i = 1; i <= n; i++) if (!(substr(s, i, 1) in cont)) cnt++
+  return cnt
+}
+# keep the first `keep` characters (never splits a UTF-8 sequence)
+function trunc(s, keep,   n, i, cnt) {
+  n = length(s); cnt = 0
+  for (i = 1; i <= n; i++) if (!(substr(s, i, 1) in cont)) { cnt++; if (cnt == keep + 1) return substr(s, 1, i - 1) }
+  return s
+}
+function clip(s, limit, keep) { return clen(s) > limit ? trunc(s, keep) "..." : s }
+function padc(s, w,   n) { n = w - clen(s); while (n-- > 0) s = s " "; return s }
+function hexv(h,   i, v) { v = 0; h = tolower(h)
+  for (i = 1; i <= length(h); i++) v = v * 16 + index("0123456789abcdef", substr(h, i, 1)) - 1
+  return v }
+function utf8(cp) {
+  if (cp < 32) return " "
+  if (cp < 128)   return sprintf("%c", cp)
+  if (cp < 2048)  return sprintf("%c%c", 192 + int(cp / 64), 128 + cp % 64)
+  if (cp >= 55296 && cp < 57344) cp = 65533
+  if (cp < 65536) return sprintf("%c%c%c", 224 + int(cp / 4096), 128 + int(cp / 64) % 64, 128 + cp % 64)
+  return sprintf("%c%c%c%c", 240 + int(cp / 262144), 128 + int(cp / 4096) % 64, 128 + int(cp / 64) % 64, 128 + cp % 64) }
+# firstonly=1 stops at the first \n (first line of a message)
+function unesc(s, firstonly,   out, i, d, cp, lo) {
+  out = ""
+  while ((i = index(s, "\\")) > 0) {
+    out = out substr(s, 1, i - 1); d = substr(s, i + 1, 1); s = substr(s, i + 2)
+    if (d == "n") { if (firstonly) return out; out = out " " }
+    else if (d == "t" || d == "r") out = out " "
+    else if (d == "u" && match(s, /^[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]/)) {
+      cp = hexv(substr(s, 1, 4)); s = substr(s, 5)
+      if (cp >= 55296 && cp < 56320 && substr(s, 1, 2) == (BS "u") && substr(s, 3, 4) ~ /^[dD][c-fC-F][0-9A-Fa-f][0-9A-Fa-f]$/) {
+        lo = hexv(substr(s, 3, 4)); cp = 65536 + (cp - 55296) * 1024 + (lo - 56320); s = substr(s, 7) }
+      out = out utf8(cp) }
+    else out = out d
+  }
+  return out s
+}
+BEGIN { init() }'
+
 # Cheap "what is it doing" from the last ~64 KB of a transcript.
 tail_activity() {
   local p="$1" size
@@ -124,13 +172,19 @@ tail_activity() {
       }
       if (best != "") last = best
     }
-    END { print last }' | sed -e 's/\\n/ /g' -e 's/\\t/ /g' -e 's/\\"/"/g' -e 's/\\\\/\\/g' | awk '
-      { s = $0; if (s == "") s = "-"; if (length(s) > 60) s = substr(s, 1, 57) "..."; print s }'
+    END { print last }' | LC_ALL=C awk -v FIRST=0 "$UTF8_AWK_FUNCS"'
+    { s = unesc($0, FIRST); if (s == "") s = "-"; print clip(s, 60, 57) }'
 }
 
 first_line() { # unescape + first line + truncate
-  printf '%s' "$1" | sed -e 's/\\n.*$//' -e 's/\\t/ /g' -e 's/\\"/"/g' -e 's/\\\\/\\/g' |
-    awk '{ s = $0; if (s == "") s = "-"; if (length(s) > 60) s = substr(s, 1, 57) "..."; print s }'
+  printf '%s' "$1" | LC_ALL=C awk -v FIRST=1 "$UTF8_AWK_FUNCS"'
+    { s = unesc($0, FIRST); if (s == "") s = "-"; print clip(s, 60, 57) }'
+}
+
+# type column: unescape, cut to 18 characters, pad to 18 characters (sentinel keeps trailing blanks)
+type_cell() {
+  printf '%s' "$1" | LC_ALL=C awk "$UTF8_AWK_FUNCS"'
+    { s = unesc($0, 0); if (s == "") s = "-"; print padc(trunc(s, 18), 18) "|" }'
 }
 
 ROWS="$(fold)"
@@ -147,6 +201,7 @@ while IFS=$'\001' read -r id type start dur state path msg; do
   else
     act="$(first_line "$msg")"
   fi
-  printf '%-8s  %-18s  %-8s  %-9s  %-7s  %s\n' "$short" "${type:0:18}" "$start" "$dur" "$state" "$act"
+  tc="$(type_cell "$type")"; tc="${tc%|}"
+  printf '%-8s  %s  %-8s  %-9s  %-7s  %s\n' "$short" "$tc" "$start" "$dur" "$state" "$act"
 done <<< "$ROWS"
 exit 0
