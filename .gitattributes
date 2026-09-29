@@ -1,0 +1,2 @@
+*.sh text eol=lf
+plugins/subdeck/scripts/run-hook.cmd text eol=lf
