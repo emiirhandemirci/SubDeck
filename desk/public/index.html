@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SubDeck Desk</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1>SubDeck Desk</h1>
+    <div id="sources" class="sources" aria-label="Sources"></div>
+    <div class="status">
+      <span id="live" class="live off" role="status">Connecting…</span>
+      <span id="lastScan" class="muted"></span>
+    </div>
+  </header>
+  <main class="panes">
+    <section class="pane" aria-labelledby="h-projects">
+      <h2 id="h-projects">Projects</h2>
+      <div class="controls">
+        <input id="filter" type="search" placeholder="Filter projects" aria-label="Filter projects">
+        <label class="toggle"><input id="onlyActive" type="checkbox"> Only active</label>
+      </div>
+      <div id="notices"></div>
+      <div id="projects" role="listbox" aria-label="Projects" tabindex="-1"></div>
+    </section>
+    <section class="pane" aria-labelledby="h-map">
+      <h2 id="h-map">Agent map</h2>
+      <div id="map" role="tree" aria-label="Sessions and agents" tabindex="-1"></div>
+      <div id="announce" class="sr-only" aria-live="polite"></div>
+    </section>
+    <section class="pane" aria-labelledby="h-detail">
+      <h2 id="h-detail">Detail</h2>
+      <div id="detail"><p class="empty">Select a session or agent</p></div>
+    </section>
+  </main>
+</body>
+</html>
