@@ -97,6 +97,7 @@ LONG="$(printf "$TR%.0s" 1 2 3 4 5 6 7 8 9 10 11 12)"   # 84 characters, 2 bytes
   ev 2026-02-01T10:04:05Z SubagentStop  u5u5u5u5 w "" 'first line\nsecond ş'
 } > "$U/.subdeck/events.jsonl"
 UO="$(bash "$STATUS" "$U")"
+UO2="$(LC_ALL=C.UTF-8 bash "$STATUS" "$U")"; [ "$UO2" = "$UO" ] && ok "utf8: same output under C.UTF-8" || bad "utf8: same output under C.UTF-8"
 utf8ok "$UO" && ok "utf8: whole table is valid UTF-8" || bad "utf8: whole table is valid UTF-8"
 L1="$(printf '%s\n' "$UO" | grep '^u1u1u1u1')"
 ACT1="${L1##*  }"
@@ -117,7 +118,6 @@ UO="$(bash "$STATUS" "$U")"
 utf8ok "$UO" && ok "utf8: running activity valid UTF-8" || bad "utf8: running activity valid UTF-8"
 L6="$(printf '%s\n' "$UO" | grep '^u6u6u6u6')"; [ "$(nchars "${L6##*  }")" = 60 ] && ok "utf8: running activity cut to 60 characters" || bad "utf8: running activity cut to 60 characters"
 # also correct when the caller's locale is UTF-8
-UO2="$(LC_ALL=C.UTF-8 bash "$STATUS" "$U")"; [ "$UO2" = "$UO" ] && ok "utf8: same output under C.UTF-8" || bad "utf8: same output under C.UTF-8"
 
 # exit code 0 on every path
 E0="$(mktemp -d)"
@@ -132,6 +132,12 @@ bash "$STATUS" "" "" >/dev/null 2>&1; [ $? = 0 ] && ok "exit 0: empty args" || b
 printf 'garbage\n{"ts":"x"\n' > "$E0/.subdeck/events.jsonl"
 bash "$STATUS" "$E0" >/dev/null 2>&1; [ $? = 0 ] && ok "exit 0: garbage log" || bad "exit 0: garbage log"
 rm -rf "$U" "$E0"
+
+# skill file: injection form, exact allowed-tools, project dir passed explicitly
+SK="$HERE/../skills/status/SKILL.md"
+grep -qF 'allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/status.sh" *)' "$SK" && ok "skill: allowed-tools exact form" || bad "skill: allowed-tools exact form"
+grep -qF 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/status.sh" $ARGUMENTS "${CLAUDE_PROJECT_DIR}" || true' "$SK" && ok "skill: injection passes project dir, never fails" || bad "skill: injection passes project dir, never fails"
+grep -q '^```!$' "$SK" && ok "skill: injection fence" || bad "skill: injection fence"
 
 rm -rf "$P" "$P2" "$P3" "$P4" "$T"
 echo "SUMMARY: $PASS passed, $FAIL failed"

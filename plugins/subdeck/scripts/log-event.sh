@@ -43,7 +43,8 @@ while :; do
   if mkdir "$LOCK" 2>/dev/null; then
     HAVE_LOCK=1
     # atomic owner write (tmp + mv): readers never see a partial line
-    printf '%s %s\n' "$$" "$(date +%s)" > "$LOCK/owner.tmp" 2>/dev/null \
+    printf -v OTS "%(%s)T" -1
+    printf '%s %s\n' "$$" "$OTS" > "$LOCK/owner.tmp" 2>/dev/null \
       && mv -f "$LOCK/owner.tmp" "$LOCK/owner" 2>/dev/null
     break
   fi

@@ -1,15 +1,13 @@
 ---
 name: status
 description: Show the live SubDeck agent table (running and recently finished subagents, with current activity). Deterministic script output, no analysis.
-argument-hint: "[--all] [project_dir]"
+argument-hint: "[--all]"
 disable-model-invocation: true
-allowed-tools: Bash(bash *status.sh*)
+allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/status.sh" *)
 ---
 
-Run exactly this command with the Bash tool:
+Print the block below verbatim inside a code block. Add nothing else: no summary, no commentary, no follow-up commands.
 
+```!
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/status.sh" $ARGUMENTS "${CLAUDE_PROJECT_DIR}" || true
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/status.sh" $ARGUMENTS
-```
-
-Then print the command output verbatim inside a code block. Add nothing else: no summary, no commentary, no follow-up commands. If the command fails, print its error output verbatim.
