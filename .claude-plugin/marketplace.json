@@ -1,0 +1,14 @@
+{
+  "name": "subdeck",
+  "description": "SubDeck: manager plus sub-agents toolkit for Claude Code",
+  "owner": {
+    "name": "SubDeck"
+  },
+  "plugins": [
+    {
+      "name": "subdeck",
+      "source": "./plugins/subdeck",
+      "description": "Manager plus sub-agents toolkit: agents, skills, and hooks for orchestrating parallel work"
+    }
+  ]
+}
