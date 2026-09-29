@@ -11,7 +11,7 @@ Run the pre-push checklist. You NEVER push, open a PR, or create a remote by you
 Facts (deterministic, gathered now):
 
 ```!
-bash "${CLAUDE_PLUGIN_ROOT}/skills/pr/pr-facts.sh" "${CLAUDE_PROJECT_DIR:-.}" || true
+bash "${CLAUDE_PLUGIN_ROOT}/skills/pr/pr-facts.sh" "${CLAUDE_PROJECT_DIR}" || true
 ```
 
 Steps:

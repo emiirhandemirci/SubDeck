@@ -21,4 +21,4 @@ In v0.1 the in-session launch above is the supported path. For a separate termin
 claude -p --agent subdeck:<agent> "<task text, or: read docs/tasks/NNNN-slug.md and execute it>"
 ```
 
-The plugin-namespaced `subdeck:<agent>` form for `--agent` is not verified; if it is rejected, try the bare agent name.
+The plugin-namespaced `subdeck:<agent>` form for `--agent` is verified (headless run with `--plugin-dir`); the bare agent name also works.
