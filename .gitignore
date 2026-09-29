@@ -1,0 +1,11 @@
+.subdeck/
+.claude/settings.local.json
+CLAUDE.local.md
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.log
+node_modules/
