@@ -1,0 +1,18 @@
+# {{NNNN}} {{TITLE}}
+
+- Date: {{YYYY-MM-DD}}
+- Status: {{Proposed | Accepted | Superseded by NNNN}}
+
+## Context
+
+{{Why is a decision needed? Keep it to a few lines.}}
+
+## Decision
+
+{{What was decided.}}
+
+## Consequences
+
+{{What follows from it (good and bad).}}
+
+Append-only: do not edit an accepted record; add a new one that supersedes it.

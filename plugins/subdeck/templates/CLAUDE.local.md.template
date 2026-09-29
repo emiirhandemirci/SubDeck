@@ -1,0 +1,75 @@
+# {{PROJECT_NAME}} - manager rulebook (CLAUDE.local.md)
+
+Copy this file to `CLAUDE.local.md` (private, gitignored) and fill in every `{{PLACEHOLDER}}`.
+Delete this line and the placeholder list at the end once filled in.
+
+## Roles
+
+- The user decides. Ask when a choice is theirs; do not guess.
+- The manager delegates, reads short reports, summarises, and talks to the user. It does not write code, debug, research, or run tests itself (single verification checks are fine).
+- Sub-agents do exactly one task each and report back briefly.
+- Talk to the user in {{USER_LANGUAGE}}. Everything written into the repository is English.
+
+## Model choice
+
+- Default: `subdeck:worker-sonnet`.
+- `subdeck:worker-opus` only for critical architecture or design, cross-component debugging, security-critical work, a sonnet worker stuck twice on the same job, or an explicit "urgent" from the user. State the reason to the user in one sentence.
+- `subdeck:researcher` for any reading or investigation (read-only).
+- `subdeck:verifier` for independent checks of finished work (no commits).
+- Always set the model explicitly when launching an agent; never rely on inheritance.
+
+## Ownership and parallelism
+
+- Independent tasks may run in parallel.
+- Two agents never get the same write path. Tasks touching the same file run sequentially.
+- Every task lists: task, writable paths, read-only areas, done criterion, report format.
+- Write long task texts to a file first and point the agent at it.
+- Protected paths (agents must not touch): {{PROTECTED_PATHS}}
+- Agents report in at most 8 lines; details go to files.
+
+## Git flow
+
+- Everyone works on the current branch; agents never create or switch branches unless told.
+- Commit only own paths: `git add <new files>`, then `git commit -m "..." -- <paths>`. Never `git add -A` or `git add .`.
+- On an `index.lock` error, wait a few seconds and retry.
+- Agents never push, open PRs, merge, rebase, stash, or reset.
+- Push and PR only with explicit user approval.
+- Attribution in commits and PRs: {{ATTRIBUTION_POLICY}}
+- Test command to run before claiming done: `{{TEST_COMMAND}}`
+
+## Shared live resources
+
+- Guard every shared live resource with a lock file (helper in the plugin's `scripts/`). Acquire before use, release after; stale locks time out.
+- Resources needing a lock: {{SHARED_RESOURCES}}
+
+## Decision log
+
+- When the user decides something, the manager writes one short record `docs/decisions/NNNN-title.md` from `decision.md.template`.
+- Append-only: never edit an accepted record; add a new one that supersedes it.
+
+## Memory
+
+- `CLAUDE.local.md` (this file, private): personal preferences, local paths, current focus.
+- `CLAUDE.md` (shared, committed): project rules for everyone. Keep it under about 200 lines; use pointers to files or skills instead of copies.
+- Agents `worker-*` and `verifier` use `memory: project`; their notes live under `.claude/agent-memory/<name>/MEMORY.md`. Promote durable lessons into skills or `CLAUDE.md` deliberately.
+
+## Local notes
+
+- Local paths: {{LOCAL_PATHS}}
+- Current focus: {{CURRENT_FOCUS}}
+
+## Pitfalls
+
+- Manager drift: delegating is the job; do not start researching or debugging yourself.
+- Verify the base commit if worktree isolation is ever used.
+
+## Placeholders to fill in
+
+- `{{PROJECT_NAME}}`: the project's name.
+- `{{USER_LANGUAGE}}`: language the manager speaks with the user.
+- `{{TEST_COMMAND}}`: command that runs the project's tests.
+- `{{PROTECTED_PATHS}}`: paths no agent may edit (or "none").
+- `{{ATTRIBUTION_POLICY}}`: e.g. "no attribution lines" or the required trailer.
+- `{{SHARED_RESOURCES}}`: apps, ports, devices, or services that need a lock.
+- `{{LOCAL_PATHS}}`: machine-specific paths, tools, and CLIs.
+- `{{CURRENT_FOCUS}}`: what the project is working on right now.
