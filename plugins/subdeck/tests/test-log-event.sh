@@ -71,7 +71,7 @@ rm -rf "$P"
 # 6. forced fallback: lock held by a live owner, writer must not drop the event
 P="$(newproj)"
 mkdir -p "$P/.subdeck/events.lock"
-hold(){ echo "1 $(date +%s)" > "$P/.subdeck/events.lock/owner"; }
+hold(){ echo "1 $(date +%s)" > "$P/.subdeck/events.lock/owner.tmp" && mv -f "$P/.subdeck/events.lock/owner.tmp" "$P/.subdeck/events.lock/owner"; }
 hold
 ( for i in 1 2 3 4 5 6 7 8 9 10 11 12; do hold; sleep 0.5; done ) &
 HOLDER=$!
@@ -84,6 +84,20 @@ FB="$(ls "$P/.subdeck/events.d/"*.json | head -1)"
 case "$(basename "$FB")" in [0-9]*T[0-9]*Z-[0-9]*-[0-9]*.json) ok "fallback file name pattern";; *) bad "fallback file name pattern ($(basename "$FB"))";; esac
 [ -e "$P/.subdeck/events.jsonl" ] && bad "jsonl untouched while lock held" || ok "jsonl untouched while lock held"
 ls "$P/.subdeck/events.d" | grep -q '\.tmp$' && bad "no leftover .tmp" || ok "no leftover .tmp"
+rm -rf "$P"
+
+# 6b. partial owner file (mid-write, fresh mtime) must not be read as a stale timestamp:
+# a holder completes the owner atomically after 0.5 s and keeps refreshing; writer must fall back, not steal
+P="$(newproj)"
+mkdir -p "$P/.subdeck/events.lock"
+printf '1 17' > "$P/.subdeck/events.lock/owner"
+hold(){ echo "1 $(date +%s)" > "$P/.subdeck/events.lock/owner.tmp" && mv -f "$P/.subdeck/events.lock/owner.tmp" "$P/.subdeck/events.lock/owner"; }
+( sleep 0.5; for i in 1 2 3 4 5 6 7 8 9 10 11 12; do hold; sleep 0.5; done ) &
+HOLDER=$!
+echo '{"hook_event_name":"SubagentStop","agent_id":"pp","agent_type":"t","transcript_path":"/x","session_id":"s"}' | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" SubagentStop
+wait $HOLDER
+[ -e "$P/.subdeck/events.jsonl" ] && bad "partial owner: lock not stolen" || ok "partial owner: lock not stolen"
+check "$(ls "$P/.subdeck/events.d" 2>/dev/null | grep -c '\.json$')" "1" "partial owner: event went to fallback"
 rm -rf "$P"
 
 # 7. 30 parallel writers, nothing lost regardless of path taken
