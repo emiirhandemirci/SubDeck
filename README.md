@@ -18,6 +18,18 @@
 
 SubDeck is a private Claude Code plugin marketplace for running a **manager session with sub-agents**. The manager delegates to worker, researcher and verifier agents and reads short reports. You get a live, IDE-independent view of what every agent is doing. Everything is deterministic (hooks, bash, awk); the model is never called just to produce status.
 
+## Install
+
+```bash
+claude plugin marketplace add emiirhandemirci/SubDeck && claude plugin install subdeck@subdeck
+```
+
+- Or run `./install.sh` (macOS, Linux, Git Bash) / `.\install.ps1` (Windows) from a clone. Both also update; add `--uninstall` / `-Uninstall` to remove.
+- Inside Claude Code: `/plugin marketplace add emiirhandemirci/SubDeck`, then `/plugin install subdeck@subdeck`.
+- Update: `claude plugin marketplace update subdeck && claude plugin update subdeck@subdeck`.
+
+Restart Claude Code, then try `/subdeck:status` or `/subdeck:desk`. The repo is private, so you need GitHub access.
+
 ## What you get
 
 <table>

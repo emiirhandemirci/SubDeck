@@ -15,11 +15,20 @@ SubDeck is a manager + sub-agents toolkit for Claude Code: rules, agents and ski
 **Permanent install from GitHub** (recommended), in a terminal:
 
 ```
-claude plugin marketplace add emiirhandemirci/SubDeck
-claude plugin install subdeck@subdeck
+claude plugin marketplace add emiirhandemirci/SubDeck && claude plugin install subdeck@subdeck
 ```
 
-Update later with `claude plugin marketplace update subdeck`. In the VS Code extension the `/plugin` command is unavailable, so use the terminal CLI; the plugin is then active in the extension too. Desk is found automatically in the marketplace clone under `~/.claude/plugins/marketplaces/subdeck/`.
+Or run `./install.sh` (macOS, Linux, Git Bash) / `.\install.ps1` (Windows PowerShell) from a clone; the script installs, or updates if SubDeck is already installed. Inside a Claude Code terminal session you can use `/plugin marketplace add emiirhandemirci/SubDeck` and `/plugin install subdeck@subdeck`. The VS Code extension has no `/plugin`, so use the terminal CLI; the plugin is then active in the extension too. The repo is private, so you need GitHub access. Restart Claude Code afterwards.
+
+**Update:**
+
+```
+claude plugin marketplace update subdeck && claude plugin update subdeck@subdeck
+```
+
+**Uninstall:** `claude plugin uninstall subdeck@subdeck` (or `./install.sh --uninstall` / `.\install.ps1 -Uninstall`).
+
+Desk is found automatically in the marketplace clone under `~/.claude/plugins/marketplaces/subdeck/`.
 
 **For plugin development** (local checkout, nothing installed):
 
