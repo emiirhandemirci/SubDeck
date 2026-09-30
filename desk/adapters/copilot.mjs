@@ -193,8 +193,8 @@ async function scanCli(env, cache, isAlive) {
       const age = updatedAt ? env.now() - Date.parse(updatedAt) : Infinity;
       let stateBasis;
       if (locked) {
-        stateBasis = acc.turnOpen ? { kind: 'fixed', state: 'running', stateSource: 'field' }
-          : age < IDLE_MS ? { kind: 'mtime', at: updatedAt, stateSource: 'mtime' } : { kind: 'fixed', state: 'idle', stateSource: 'field' };
+        stateBasis = acc.turnOpen ? { kind: 'fixed', state: 'running', stateSource: 'lock' }
+          : age < IDLE_MS ? { kind: 'mtime', at: updatedAt, stateSource: 'mtime' } : { kind: 'fixed', state: 'idle', stateSource: 'lock' };
       } else if (acc.shutdown) stateBasis = { kind: 'fixed', state: acc.shutdown.failed ? 'failed' : 'finished', stateSource: 'field' };
       else stateBasis = { kind: 'mtime', at: updatedAt, stateSource: 'mtime' };
       const endedAt = !locked && acc.shutdown ? acc.shutdown.at || updatedAt : null;
@@ -209,7 +209,7 @@ async function scanCli(env, cache, isAlive) {
         const ended = a.endAt || (!locked && acc.shutdown ? acc.shutdown.at : null);
         const label = clip(a.display || a.name, 120);
         const basis = a.endAt ? { kind: 'fixed', state: a.failed ? 'failed' : 'finished', stateSource: 'field' }
-          : locked ? { kind: 'fixed', state: 'running', stateSource: 'field' }
+          : locked ? { kind: 'fixed', state: 'running', stateSource: 'lock' }
           : acc.shutdown ? { kind: 'fixed', state: 'finished', stateSource: 'field' } : { kind: 'mtime', at: a.startAt || updatedAt, stateSource: 'mtime' };
         sessions.push({
           ...base, nativeId: `${id}#${a.key}`, parentNativeId: id, depth: 1,

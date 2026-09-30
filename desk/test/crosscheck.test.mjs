@@ -44,8 +44,8 @@ test('Desk and status.sh agree on state, title and tokens', { skip: hasBash ? fa
   const out = spawnSync('bash', [STATUS, '--all', proj], { encoding: 'utf8', env: { ...process.env, TZ: 'UTC', COLUMNS: '200' } }).stdout;
   const rows = {};
   for (const line of out.split('\n')) {
-    const m = /^(\S{8})  (.{30})  (.{16})  (\S+)\s+(\S+)\s+(\S+)\s+(\S+)/u.exec(line);
-    if (m && m[1] !== 'AGENT') rows[m[1]] = { title: m[2].trimEnd(), tokens: m[6], state: m[7] };
+    const m = /^(\S{8})  (.{30})  (.{16})  (\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/u.exec(line);
+    if (m && m[1] !== 'AGENT') rows[m[1]] = { title: m[2].trimEnd(), tokens: m[6], state: m[7], model: m[8] };
   }
   const r = await claude.scan({ now: () => NOW, days: 14, platform: process.platform, claudeProjectsDir: projects }, { since: null, cache: new Map() });
   for (const s of r.sessions.filter(x => x.depth === 1)) {
@@ -54,6 +54,7 @@ test('Desk and status.sh agree on state, title and tokens', { skip: hasBash ? fa
     assert.equal(row.state, MAP[deriveState(s.stateBasis, NOW).state], `state ${s.nativeId}`);
     assert.equal(row.title, clip30(s.title), `title ${s.nativeId}`);
     assert.equal(row.tokens, fmt(s.tokens.context), `tokens ${s.nativeId}`);
+    assert.equal(row.model, s.model || '-', `model ${s.nativeId}`);
   }
   assert.equal(Object.keys(rows).length, 3);
 });

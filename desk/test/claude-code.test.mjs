@@ -92,7 +92,7 @@ function buildScenario() {
   writeJsonl(a3, [rec.user(ago(7200000), alpha), 'this is not json'], { mtimeMs: NOW - 7200000 });
   const a4 = path.join(sub, 'agent-dddd4444.jsonl');           // no hook data -> mtime rule (idle)
   writeJsonl(a4, [rec.user(ago(600000), alpha)], { mtimeMs: NOW - 600000 });
-  writeMeta(a4, { agentType: 'verifier' });
+  writeMeta(a4, { agentType: 'verifier', model: 'haiku' });
   const ev = (ts, event, id, type) => JSON.stringify({ ts, event, agent_id: id, agent_type: type, transcript_path: s1, session_id: 'sess-1111',
     payload: { last_assistant_message: 'HOOK_MESSAGE_MARKER' } });
   fs.writeFileSync(path.join(alpha, '.subdeck', 'events.jsonl'), [
@@ -134,7 +134,8 @@ test('scan: sessions, sub-agents, titles, tokens, hooks, retention', async () =>
   assert.equal(by.aaaa1111.title, 'Write the parser');
   assert.equal(by.aaaa1111.titleSource, 'meta');
   assert.equal(by.aaaa1111.agentType, 'worker-sonnet');
-  assert.equal(by.aaaa1111.model, 'sonnet');
+  assert.equal(by.aaaa1111.model, 'claude-sonnet-4-5');   // real id from the last assistant record beats the meta alias
+  assert.equal(by.dddd4444.model, 'haiku');                 // no assistant record: meta alias
   assert.equal(by.aaaa1111.tokens.context, 79500);
   assert.deepEqual(by.aaaa1111.stateBasis, { kind: 'fixed', state: 'finished', stateSource: 'hook' });
   assert.ok(by.aaaa1111.endedAt);

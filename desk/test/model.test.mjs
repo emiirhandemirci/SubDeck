@@ -1,7 +1,7 @@
 // desk/test/model.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clip, deriveState, validateAdapterSession, makeSource, sessionIdOf, projectIdOf, RUNNING_MS, IDLE_MS, STALE_MS, WAITING_MS, STATES } from '../lib/model.mjs';
+import { clip, deriveState, validateAdapterSession, makeSource, sessionIdOf, projectIdOf, RUNNING_MS, IDLE_MS, STALE_MS, WAITING_MS, STATES, STATE_SOURCES } from '../lib/model.mjs';
 
 test('clip: code points, single line, ellipsis', () => {
   assert.equal(clip('a\nb\tc', 80), 'a b c');
@@ -50,8 +50,16 @@ test('ids are URL-safe and stable', () => {
 
 test('makeSource defaults', () => {
   assert.deepEqual(makeSource({ tool: 'cursor', label: 'Cursor', adapterVersion: '1' }), {
-    id: 'cursor', tool: 'cursor', label: 'Cursor', adapterVersion: '1', detected: false, health: 'ok', lastError: null,
-    lastScanAt: null, scanMs: null, counts: { projects: 0, sessions: 0, running: 0, skipped: 0 } });
+    id: 'cursor', tool: 'cursor', label: 'Cursor', adapterVersion: '1', experimental: false, detected: false, health: 'ok', lastError: null,
+    lastScanAt: null, scanMs: null, counts: { projects: 0, sessions: 0, running: 0, waiting: 0, skipped: 0 } });
+  assert.equal(makeSource({ tool: 'x', label: 'X', adapterVersion: '1', experimental: true }).experimental, true);
+});
+
+test('lock is a supported state source', () => {
+  assert.ok(STATE_SOURCES.includes('lock'));
+  const b = { nativeId: 'a', tool: 't', title: 'x', titleSource: 'meta', projectPath: '/p', tokens: { context: null, total: null },
+    stateBasis: { kind: 'fixed', state: 'running', stateSource: 'lock' } };
+  assert.equal(validateAdapterSession(b).ok, true);
 });
 
 test('failed is a supported fixed state; runStartedAt is an optional string', () => {

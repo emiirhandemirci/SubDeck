@@ -7,7 +7,7 @@ export const IDLE_MS = 1800000;
 export const STALE_MS = 300000;
 export const WAITING_MS = 21600000;   // a pending prompt older than this is treated as abandoned
 export const STATES = ['waiting', 'running', 'idle', 'finished', 'failed', 'stale', 'unknown'];
-export const STATE_SOURCES = ['hook', 'field', 'mtime', 'none'];
+export const STATE_SOURCES = ['hook', 'field', 'lock', 'mtime', 'none'];
 const KINDS = ['user', 'assistant', 'tool', 'other'];
 const TITLE_SOURCES = ['explicit', 'summary', 'meta', 'fallback'];
 
@@ -54,9 +54,9 @@ export function validateAdapterSession(s) {
   return { ok: true };
 }
 
-export function makeSource({ tool, label, adapterVersion }) {
-  return { id: tool, tool, label, adapterVersion, detected: false, health: 'ok', lastError: null,
-    lastScanAt: null, scanMs: null, counts: { projects: 0, sessions: 0, running: 0, skipped: 0 } };
+export function makeSource({ tool, label, adapterVersion, experimental }) {
+  return { id: tool, tool, label, adapterVersion, experimental: !!experimental, detected: false, health: 'ok', lastError: null,
+    lastScanAt: null, scanMs: null, counts: { projects: 0, sessions: 0, running: 0, waiting: 0, skipped: 0 } };
 }
 
 export function sessionIdOf(toolShort, nativeId) {

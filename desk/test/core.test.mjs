@@ -146,3 +146,32 @@ test('duration uses runStartedAt; failed and finished end at endedAt', async () 
   assert.equal(by.r1.runStartedAt, iso(30000));
   assert.equal(by.d1.runStartedAt, null);
 });
+
+test('waiting counts per project and per source; waiting projects sort first', async () => {
+  const w = (extra = {}) => sess({ stateBasis: { kind: 'fixed', state: 'waiting', stateSource: 'hook' }, ...extra });
+  const a = adapter('claude-code', 'claude', ok([
+    w({ nativeId: 'w1', projectPath: 'e:/A', updatedAt: iso(9000000) }),
+    sess({ nativeId: 'r1', projectPath: 'e:/B' }),
+    sess({ nativeId: 'r2', projectPath: 'e:/B', updatedAt: iso(500) }),
+  ].map(s => ({ ...s, tool: 'claude-code' }))));
+  const b = adapter('cursor', 'cursor', ok([w({ nativeId: 'w2', tool: 'cursor', projectPath: 'e:/A', parentNativeId: 'w1' })]));
+  const core = createCore({ env, adapters: [a, b], now: () => NOW });
+  await core.scanAll();
+  const s = core.snapshot();
+  const pa = s.projects.find(p => p.name === 'A'), pb = s.projects.find(p => p.name === 'B');
+  assert.equal(pa.waitingCount, 2);
+  assert.equal(pb.waitingCount, 0);
+  assert.equal(s.projects[0].name, 'A');   // waiting first even though B is running
+  assert.equal(s.sources.find(x => x.id === 'claude-code').counts.waiting, 1);
+  assert.equal(s.sources.find(x => x.id === 'cursor').counts.waiting, 1);
+  assert.equal(s.sources.find(x => x.id === 'claude-code').counts.running, 2);
+});
+
+test('experimental flag flows into the source', async () => {
+  const a = { ...adapter('codex', 'cx', ok([])), experimental: true };
+  const core = createCore({ env, adapters: [a, adapter('cursor', 'cursor', ok([]))], now: () => NOW });
+  await core.scanAll();
+  const s = core.snapshot().sources;
+  assert.equal(s.find(x => x.id === 'codex').experimental, true);
+  assert.equal(s.find(x => x.id === 'cursor').experimental, false);
+});

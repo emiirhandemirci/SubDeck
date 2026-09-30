@@ -70,7 +70,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
         let p = projects.get(key);
         if (!p) {
           p = { id: projectIdOf(key), key, path: s.projectPath || null, name: s.projectPath ? baseName(s.projectPath) : s.projectLabel,
-            tools: new Set(), sessionCount: 0, agentCount: 0, runningCount: 0, lastActivityAt: null };
+            tools: new Set(), sessionCount: 0, agentCount: 0, runningCount: 0, waitingCount: 0, lastActivityAt: null };
           projects.set(key, p);
         }
         p.tools.add(a.tool);
@@ -105,7 +105,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
       const own = sessions.filter(s => s.tool === tool);
       const skipped = skippedByTool.get(tool) || 0;
       src.counts = { projects: new Set(own.map(s => s.projectId)).size, sessions: own.length,
-        running: own.filter(s => s.state === 'running').length, skipped };
+        running: own.filter(s => s.state === 'running').length, waiting: own.filter(s => s.state === 'waiting').length, skipped };
       if (src.health !== 'error') {
         const parts = [];
         if (skipped > 0) parts.push(`${skipped} malformed item(s) skipped`);
@@ -133,16 +133,17 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
 
   function finishProjects(projects, sessions) {
     const byId = new Map([...projects.values()].map(p => [p.id, { ...p, tools: new Set(p.tools) }]));
-    for (const p of byId.values()) { p.sessionCount = 0; p.agentCount = 0; p.runningCount = 0; p.lastActivityAt = null; }
+    for (const p of byId.values()) { p.sessionCount = 0; p.agentCount = 0; p.runningCount = 0; p.waitingCount = 0; p.lastActivityAt = null; }
     for (const s of sessions) {
       const p = byId.get(s.projectId);
       p.agentCount++;
       if (!s.parentId) p.sessionCount++;
       if (s.state === 'running') p.runningCount++;
+      if (s.state === 'waiting') p.waitingCount++;
       if (s.updatedAt && (!p.lastActivityAt || s.updatedAt > p.lastActivityAt)) p.lastActivityAt = s.updatedAt;
     }
     return [...byId.values()].map(p => ({ ...p, tools: [...p.tools].sort() }))
-      .sort((a, b) => b.runningCount - a.runningCount || String(b.lastActivityAt).localeCompare(String(a.lastActivityAt)));
+      .sort((a, b) => b.waitingCount - a.waitingCount || b.runningCount - a.runningCount || String(b.lastActivityAt).localeCompare(String(a.lastActivityAt)));
   }
 
   function emitDiff() {
@@ -150,7 +151,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
     for (const p of snap.projects) {
       const own = snap.sessions.filter(s => s.projectId === p.id)
         .map(s => [s.id, s.state, s.updatedAt, s.tokens.context, s.title, s.lastActivity && s.lastActivity.at, s.parentId]);
-      hashes.set(p.id, JSON.stringify([p.tools, p.sessionCount, p.agentCount, p.runningCount, p.lastActivityAt, own]));
+      hashes.set(p.id, JSON.stringify([p.tools, p.sessionCount, p.agentCount, p.runningCount, p.waitingCount, p.lastActivityAt, own]));
     }
     const changed = [];
     for (const [id, h] of hashes) if (projectHashes.get(id) !== h) changed.push(id);
@@ -170,7 +171,10 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
       applyStates(snap.sessions, now());
       const byKey = new Map(snap.projects.map(p => [p.key, p]));
       snap = { ...snap, projects: finishProjects(byKey, snap.sessions) };
-      for (const src of snap.sources) src.counts.running = snap.sessions.filter(s => s.tool === src.id && s.state === 'running').length;
+      for (const src of snap.sources) {
+        src.counts.running = snap.sessions.filter(s => s.tool === src.id && s.state === 'running').length;
+        src.counts.waiting = snap.sessions.filter(s => s.tool === src.id && s.state === 'waiting').length;
+      }
       emitDiff();
     },
     snapshot() { return snap; },

@@ -38,12 +38,12 @@ ev 2026-01-01T10:20:00Z SubagentStart eeeeeeee55 verifier "" > "$P/.subdeck/even
 ev 2026-01-01T10:20:30Z SubagentStop  eeeeeeee55 verifier "" 'Approved' > "$P/.subdeck/events.d/20260101T102030Z-3-3.json"
 
 OUT="$(bash "$STATUS" "$P")"
-has "$OUT" '^AGENT +TITLE +TYPE +STARTED +DURATION +TOKENS +STATE +ACTIVITY' "header"
-has "$OUT" '^aaaaaaaa +- +worker-sonnet +10:00:00 .* running +Read C:.Users.x.proj.src.main\.rs' "running1: tool use + unescaped path"
-has "$OUT" '^bbbbbbbb +- +researcher +10:00:05 .* running +Now writing the parser "carefully"' "running2: last text (CRLF file, last block wins)"
-has "$OUT" '^cccccccc +- +worker-opus +10:01:00 +2m05s +- +done +Fixed the bug in parser\.$' "done1: first line, duration"
-has "$OUT" '^dddddddd +- +worker-sonnet +10:10:00 +2m10s +- +done +All done' "done2 via events.d (start jsonl, stop file)"
-has "$OUT" '^eeeeeeee +- +verifier +10:20:00 +30s +- +done +Approved' "done3 fully in events.d"
+has "$OUT" '^AGENT +TITLE +TYPE +STARTED +DURATION +TOKENS +STATE +MODEL +ACTIVITY' "header"
+has "$OUT" '^aaaaaaaa +- +worker-sonnet +10:00:00 .* running +[^ ]+ +Read C:.Users.x.proj.src.main\.rs' "running1: tool use + unescaped path"
+has "$OUT" '^bbbbbbbb +- +researcher +10:00:05 .* running +[^ ]+ +Now writing the parser "carefully"' "running2: last text (CRLF file, last block wins)"
+has "$OUT" '^cccccccc +- +worker-opus +10:01:00 +2m05s +- +done +[^ ]+ +Fixed the bug in parser\.$' "done1: first line, duration"
+has "$OUT" '^dddddddd +- +worker-sonnet +10:10:00 +2m10s +- +done +[^ ]+ +All done' "done2 via events.d (start jsonl, stop file)"
+has "$OUT" '^eeeeeeee +- +verifier +10:20:00 +30s +- +done +[^ ]+ +Approved' "done3 fully in events.d"
 [ "$(printf '%s\n' "$OUT" | grep -c ' running ')" = 2 ] && ok "2 running" || bad "2 running"
 [ "$(printf '%s\n' "$OUT" | grep -c ' done ')" = 3 ] && ok "3 done" || bad "3 done"
 FIRST_DONE="$(printf '%s\n' "$OUT" | grep -n ' done ' | head -1 | cut -d: -f1)"
@@ -66,7 +66,7 @@ OUT="$(bash "$STATUS" --all "$P")"
 P2="$(mktemp -d)"; mkdir -p "$P2/.subdeck"
 { ev 2026-01-01T09:00:00Z SubagentStart ffffffff66 x "$T/nope.jsonl"; echo 'garbage {'; } > "$P2/.subdeck/events.jsonl"
 OUT="$(bash "$STATUS" "$P2")"
-has "$OUT" '^ffffffff +- +x +09:00:00 .* stale\? +-$' "missing transcript, old Start -> stale? and '-'"
+has "$OUT" '^ffffffff +- +x +09:00:00 .* stale\? +- +-$' "missing transcript, old Start -> stale? and '-'"
 
 # empty / missing
 P3="$(mktemp -d)"
@@ -79,7 +79,7 @@ cp "$T/s1/subagents/agent-aaaaaaaa11.jsonl" "$T/s1/subagents/agent-e2e12345.json
 P4="$(mktemp -d)"
 echo "{\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"e2e12345\",\"agent_type\":\"w\",\"session_id\":\"s1\",\"transcript_path\":\"$T/s1.jsonl\"}" | CLAUDE_PROJECT_DIR="$P4" bash "$HERE/../scripts/log-event.sh" SubagentStart
 OUT="$(bash "$STATUS" "$P4")"
-has "$OUT" '^e2e12345 +- +w +[0-9:]{8} .* running +Read ' "logger -> status end to end"
+has "$OUT" '^e2e12345 +- +w +[0-9:]{8} .* running +[^ ]+ +Read ' "logger -> status end to end"
 
 # ---- UTF-8, JSON escapes, exit codes ----
 utf8ok() { printf '%s' "$1" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; }
@@ -107,11 +107,11 @@ L1="$(printf '%s\n' "$UO" | grep '^u1u1u1u1')"
 ACT1="${L1##*  }"
 [ "$(nchars "$ACT1")" = 60 ] && ok "utf8: Turkish text cut to 60 characters" || bad "utf8: Turkish text cut to 60 characters (got $(nchars "$ACT1"): $ACT1)"
 case "$ACT1" in *...) ok "utf8: truncation marker";; *) bad "utf8: truncation marker ($ACT1)";; esac
-has "$UO" '^u2u2u2u2 +- +w +.* done +şğı İö 😀 x$' "escapes: \uXXXX and surrogate pair decode"
-has "$UO" '^u3u3u3u3 +- +w +.* done +a\\nb "q" c\\\\d /e$' "escapes: backslash-n stays literal, quote, escaped backslash and slash decode"
+has "$UO" '^u2u2u2u2 +- +w +.* done +[^ ]+ +şğı İö 😀 x$' "escapes: \uXXXX and surrogate pair decode"
+has "$UO" '^u3u3u3u3 +- +w +.* done +[^ ]+ +a\\nb "q" c\\\\d /e$' "escapes: backslash-n stays literal, quote, escaped backslash and slash decode"
 L4="$(printf '%s\n' "$UO" | grep '^u4u4u4u4')"; ACT4="${L4##*  }"
 [ "$(nchars "$ACT4")" = 60 ] && ok "utf8: emoji cut to 60 characters" || bad "utf8: emoji cut to 60 characters ($(nchars "$ACT4"))"
-has "$UO" '^u5u5u5u5 +- +w +.* done +first line$' "escapes: first line stops at \n"
+has "$UO" '^u5u5u5u5 +- +w +.* done +[^ ]+ +first line$' "escapes: first line stops at \n"
 # column alignment: STATE column starts at the same character offset on every row
 OFFS="$(printf '%s' "$UO" | node -e 'let s="";process.stdin.setEncoding("utf8").on("data",d=>s+=d).on("end",()=>{const o=s.split("\n").filter(l=>l&&!l.startsWith("Session:")&&!l.startsWith("AGENT")).map(l=>{const c=[...l];const m=l.match(/ (running|done|stale?|STATE) /);return m?[...l.slice(0,m.index+1)].length:-1});console.log([...new Set(o)].join(","))})')"
 case "$OFFS" in *,*|-1) bad "utf8: STATE column aligned in characters ($OFFS)";; *) ok "utf8: STATE column aligned in characters";; esac
@@ -146,9 +146,10 @@ SA="$PR/sidAAAA1/subagents"
 # multi-line same-requestId usage: streaming snapshots; the LAST line is the definition
 printf '%s\n' \
  '{"type":"assistant","requestId":"r1","message":{"role":"assistant","content":[{"type":"text","text":"a"}],"usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":5}}}' \
- '{"type":"assistant","requestId":"r1","message":{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Edit","input":{"file_path":"/a/b.sh"}}],"usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":79000,"output_tokens":390,"cache_creation":{"ephemeral_5m_input_tokens":0}}}}' > "$SA/agent-t1t1t1t1.jsonl"
+ '{"type":"assistant","requestId":"r1","message":{"role":"assistant","model":"claude-sonnet-5-5","content":[{"type":"tool_use","id":"t","name":"Edit","input":{"file_path":"/a/b.sh"}}],"usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":79000,"output_tokens":390,"cache_creation":{"ephemeral_5m_input_tokens":0}}}}' > "$SA/agent-t1t1t1t1.jsonl"
 printf '%s' '{"agentType":"worker-sonnet","description":"Türkçe başlık: şğıİöüç uzun bir açıklama metni burada","toolUseId":"tu1"}' > "$SA/agent-t1t1t1t1.meta.json"
 printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"}],"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":1100000,"output_tokens":1}}}' > "$SA/agent-t2t2t2t2.jsonl"
+printf '%s' '{"model":"haiku"}' > "$SA/agent-t2t2t2t2.meta.json"
 printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"no usage here"}]}}' > "$SA/agent-t3t3t3t3.jsonl"
 SB="$PR/sidBBBB2/subagents"; printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"b"}]}}' > "$SB/agent-t4t4t4t4.jsonl"
 evs() { # ts event id type path session
@@ -165,7 +166,7 @@ GO="$(bash "$STATUS" "$G")"
 has "$GO" '^Session: Durum raporu: şğı$' "group header: last aiTitle of manager transcript"
 has "$GO" '^Session: sidBBBB2$' "group header: short session id when no ai-title"
 [ "$(printf '%s\n' "$GO" | grep -c '^Session:')" = 2 ] && ok "two session groups" || bad "two session groups"
-has "$GO" '^t1t1t1t1 +Türkçe başlık: şğıİöüç uzun... +worker-sonnet .* 79\.5k +running +Edit /a/b\.sh' "title clipped to 30 chars, tokens = last line (not sum), running"
+has "$GO" '^t1t1t1t1 +Türkçe başlık: şğıİöüç uzun... +worker-sonnet .* 79\.5k +running +[^ ]+ +Edit /a/b\.sh' "title clipped to 30 chars, tokens = last line (not sum), running"
 has "$GO" '^t2t2t2t2 +- +w .* 1\.1M .*abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij$' "tokens formatted in millions"
 has "$GO" '^t3t3t3t3 +- +w .* - +done ' "no usage -> tokens '-'; missing meta -> title '-'"
 has "$GO" '^t4t4t4t4 +- +w .* - +running' "second group row"
@@ -175,6 +176,20 @@ utf8ok "$GO" && ok "title/session table valid UTF-8" || bad "title/session table
 # narrow terminal: ACTIVITY shrinks
 NO="$(COLUMNS=110 bash "$STATUS" "$G" | grep '^t2t2t2t2')"
 case "$NO" in *abcdefghijab...) ok "COLUMNS=110 narrows ACTIVITY";; *) bad "COLUMNS=110 narrows ACTIVITY ($NO)";; esac
+
+has "$GO" '^t1t1t1t1 .* running +claude-sonnet-5-5 +Edit ' "MODEL: real id from the last assistant record"
+has "$GO" '^t2t2t2t2 .* haiku +abcdefghij' "MODEL: meta alias when the transcript has no model"
+has "$GO" '^t3t3t3t3 .* done +- +' "MODEL: '-' when unknown"
+# COLUMNS: wide keeps everything; below ACTIVITY's minimum only MODEL stays; below that MODEL goes too
+W1="$(COLUMNS=150 bash "$STATUS" "$G")"
+has "$W1" '^AGENT .* STATE +MODEL +ACTIVITY$' "COLUMNS=150 keeps MODEL and ACTIVITY"
+W2="$(COLUMNS=125 bash "$STATUS" "$G")"
+has "$W2" '^AGENT .* STATE +MODEL$' "COLUMNS=125 drops ACTIVITY first"
+has "$W2" '^t1t1t1t1 .* running +claude-sonnet-5-5$' "COLUMNS=125 row keeps MODEL"
+W3="$(COLUMNS=100 bash "$STATUS" "$G")"
+has "$W3" '^AGENT .* STATE +ACTIVITY$' "COLUMNS=100 drops MODEL"
+[ -z "$(printf '%s
+' "$W3" | grep 'claude-sonnet-5-5')" ] && ok "COLUMNS=100 rows without MODEL" || bad "COLUMNS=100 rows without MODEL"
 
 # stale detection
 S="$(mktemp -d)"; mkdir -p "$S/.subdeck" "$S/s1/subagents"

@@ -447,7 +447,7 @@ async function scan(env, { cache }) {
       const runStartedAt = (hook && hook.stop) ? null : ((done && done.runStartedAt) || s.tr.runStartedAt || null);
       sessions.push({ ...base, nativeId: s.agentId, parentNativeId: g.uuid, depth: 1, ...subTitle(s.meta, s.agentId),
         agentType: (s.meta && s.meta.agentType) || (hook && hook.agentType) || null,
-        model: (s.meta && s.meta.model) || s.tr.model,
+        model: s.tr.model || (s.meta && s.meta.model) || null,
         createdAt: earlier(s.tr.createdAt, hook && hook.start) || smt, updatedAt: smt, endedAt: (hook && hook.stop) || (done && done.at) || null,
         ...(runStartedAt ? { runStartedAt } : {}),
         tokens: { context: s.tr.tokens, total: null }, lastActivity: s.tr.lastActivity,

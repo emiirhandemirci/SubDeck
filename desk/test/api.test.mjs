@@ -130,7 +130,7 @@ function mkContent(opts = {}) {
   const pub = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-pub-'));
   const core = { snapshot: () => ({ ...snapshot, sessions: [...snapshot.sessions, S('cursor.x', { tool: 'cursor' }), S('claude.gone')] }) };
   const adapters = [{ tool: 'claude-code', timeline: async (env, s) => (s.id === 'claude.k1' ? CONTENT : null) }, { tool: 'cursor' }];
-  return createApi({ core, adapters, env: {}, getPort: () => P, startedAt: 'x', days: 14, version: '0.2.1', publicDir: pub, ...opts });
+  return createApi({ core, adapters, env: {}, getPort: () => P, startedAt: 'x', days: 14, version: '0.3.1', publicDir: pub, ...opts });
 }
 
 test('GET /api/sessions/:id/content: data, no-store, 404, 501', async () => {

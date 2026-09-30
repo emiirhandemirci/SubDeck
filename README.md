@@ -7,7 +7,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-emiirhandemirci-181717?logo=github&logoColor=white)](https://github.com/emiirhandemirci)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Emirhan_Demirci-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/emirhan-demirci-/)
 
-![version](https://img.shields.io/badge/version-0.2.1-6366f1)
+![version](https://img.shields.io/badge/version-0.3.1-6366f1)
 ![node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white)
 ![plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757)
 ![deps](https://img.shields.io/badge/dependencies-zero-22c55e)
@@ -40,7 +40,7 @@ Restart Claude Code, then try `/subdeck:status` or `/subdeck:desk`.
     <td width="33%" valign="top">📟<br><b>Live status table</b><br>Running and finished agents in the terminal: <code>/subdeck:status</code></td>
   </tr>
   <tr>
-    <td valign="top">🖥️<br><b>SubDeck Desk</b><br>Local web dashboard for Claude Code and Cursor agents. Read-only, <code>127.0.0.1</code> only.</td>
+    <td valign="top">🖥️<br><b>SubDeck Desk</b><br>Local web dashboard for Claude Code, Cursor, Codex, Copilot, Gemini, Cline/Roo and OpenCode sessions. Read-only, <code>127.0.0.1</code> only.</td>
     <td valign="top">🚦<br><b>Push gate</b><br>Pre-push checklist that asks first. It never pushes by itself. <code>/subdeck:pr</code></td>
     <td valign="top">🪶<br><b>Zero dependencies</b><br>Bash and awk for the plugin, plain Node for Desk. No jq, no npm install.</td>
   </tr>
@@ -55,7 +55,7 @@ Restart Claude Code, then try `/subdeck:status` or `/subdeck:desk`.
   </picture>
 </p>
 
-Projects on the left, the agent tree in the middle, details on the right. Start it with `/subdeck:desk` or `node desk/server.mjs`. Details in [desk/README.md](desk/README.md).
+Projects on the left, the agent tree in the middle, details on the right. Start it with `/subdeck:desk` or `node desk/server.mjs`. Claude Code and Cursor are supported; Codex, Copilot (CLI and VS Code Chat), Gemini CLI, Cline/Roo and OpenCode are **experimental** (marked in the header). Sessions that are blocked on you (permission prompt, question, plan approval) show as **waiting** and sort first. Details in [desk/README.md](desk/README.md).
 
 <details>
 <summary><b>Agent detail</b>: prompt, tool calls, final report</summary>
@@ -108,7 +108,7 @@ flowchart LR
 |---|---|
 | `/subdeck:orchestrator` | Loads the manager rulebook. |
 | `/subdeck:task` | Launches an agent directly, without the manager window. |
-| `/subdeck:status` | Live agent table (`--all` includes finished agents). |
+| `/subdeck:status` | Live agent table with the real model id per agent (`--all` includes finished agents). |
 | `/subdeck:desk` | Starts (or prints the URL of) Desk; `stop` stops it. |
 | `/subdeck:pr` | Pre-push checklist and approval gate. |
 
@@ -139,7 +139,7 @@ Check the manifests with `claude plugin validate .` and `claude plugin validate 
 
 ## Status
 
-v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. Desk v0.2 (monitoring only) is implemented. Roadmap and decision records live in `internal/design.md` and `internal/decisions/` (private, maintainers only).
+v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. Desk v0.3 (monitoring only, seven tools, waiting state) is implemented. Roadmap and decision records live in `internal/design.md` and `internal/decisions/` (private, maintainers only).
 
 ## License
 

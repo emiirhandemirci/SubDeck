@@ -1,6 +1,6 @@
 # SubDeck Desk
 
-A local, read-only web dashboard that shows what your AI coding agents are doing: projects, sessions, sub-agents, state, and token usage. It reads the session data that Claude Code and Cursor already write on your machine. No dependencies, no build step.
+A local, read-only web dashboard that shows what your AI coding agents are doing: projects, sessions, sub-agents, state, and token usage. It reads the session data that Claude Code, Cursor, Codex, Copilot, Gemini CLI, Cline/Roo and OpenCode already write on your machine. No dependencies, no build step.
 
 ## Run
 
@@ -8,7 +8,7 @@ A local, read-only web dashboard that shows what your AI coding agents are doing
 node desk/server.mjs [--port N] [--days N] [--open] [--no-content]
 ```
 
-- Needs Node 20 or newer; Cursor support needs Node 22.13+ (built-in `node:sqlite`).
+- Needs Node 20 or newer; Cursor, Codex and OpenCode (SQLite) need Node 22.13+ (built-in `node:sqlite`).
 - Binds `127.0.0.1` only. Default port 4917, falling back to 4918-4936; `--port N` is exact (exit 1 if busy); `--port 0` picks any free port.
 - `--days N` sets the retention window (1-365, default 14). `--open` opens the browser. `--no-content` disables the agent content endpoint.
 - A second start prints the URL of the running instance. Runtime file: `~/.subdeck/desk.json` (`pid`, `port`, `startedAt`, `version`).
@@ -18,10 +18,19 @@ node desk/server.mjs [--port N] [--days N] [--open] [--no-content]
 
 | Tool | Location | Notes |
 |---|---|---|
-| Claude Code | `~/.claude/projects/` transcripts, plus `.subdeck/` hook events | Sub-agents are read from `subagents/`. |
+| Claude Code | `~/.claude/projects/` transcripts, plus `.subdeck/` hook events | Sub-agents are read from `subagents/`. The model column shows the real id from the last assistant record. |
 | Cursor | `state.vscdb` under the Cursor user directory | Opened read-only; retried when Cursor holds a lock. |
+| Codex (experimental) | `$CODEX_HOME` (default `~/.codex`): `state_N.sqlite` index and `sessions/` rollout files | Needs Node 22.13+. Rollout event names and sub-agent status values are unverified. |
+| Copilot (experimental) | CLI: `$COPILOT_HOME/session-state` (default `~/.copilot`); VS Code Chat: `chatSessions` under the VS Code user directory | A live `inuse` lock file marks running CLI sessions (state source `lock`). VS Code Chat gives title, times and request count only. |
+| Gemini CLI (experimental) | `$GEMINI_CLI_HOME/.gemini/tmp/<project>/chats/` (default `~/.gemini`) | Sub-agent parent links are inferred. |
+| Cline/Roo (experimental) | `globalStorage` of the Cline and Roo extensions in VS Code family editors | Title is the first task text. Roo child tasks link to their parent. |
+| OpenCode (experimental) | `$XDG_DATA_HOME/opencode` (default `~/.local/share/opencode`): `opencode.db`, older `storage/` | Needs Node 22.13+ for the database. |
 
-Environment overrides: `SUBDECK_CLAUDE_PROJECTS_DIR`, `SUBDECK_CURSOR_USER_DIR`, `SUBDECK_DISABLE` (comma-separated tool names).
+Tools that are not installed are hidden in the UI header (listed under a collapsed "not detected" hint). Experimental adapters carry an `experimental` flag in `/api/sources` and an "experimental" tag in the UI.
+
+Tool colours: Claude orange, Cursor blue, Codex teal, Copilot violet, Gemini pink, Cline/Roo yellow, OpenCode green.
+
+Environment overrides: `SUBDECK_CLAUDE_PROJECTS_DIR`, `SUBDECK_CURSOR_USER_DIR`, `SUBDECK_GEMINI_DIR`, `SUBDECK_DISABLE` (comma-separated tool names, e.g. `codex,gemini`), plus the tools' own variables `CODEX_HOME`, `GEMINI_CLI_HOME`, `COPILOT_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `APPDATA`.
 
 ## Privacy
 
@@ -29,7 +38,7 @@ Lists, snapshots and live updates carry only titles (up to 120 characters), a sh
 
 ## States
 
-`running` (activity within 2 minutes, or a hook Start without Stop), `idle` (within 30 minutes), `finished` (older, or an explicit completion), `failed` (explicit failure or API error), `stale` (hook Start without Stop and file untouched for 5 minutes), `unknown`. The state source is shown per session (`hook`, `field`, `mtime`, or `none`).
+`running` (activity within 2 minutes, or a hook Start without Stop), `idle` (within 30 minutes), `finished` (older, or an explicit completion), `failed` (explicit failure or API error), `stale` (hook Start without Stop and file untouched for 5 minutes), `unknown`. `waiting` means the session or agent is blocked on you (permission prompt, question, plan approval); it is counted per project (`waitingCount`) and per source (`counts.waiting`), waiting projects sort first, and the header badge sums them. The state source is shown per session (`hook`, `field`, `lock` (Copilot CLI lock file), `mtime`, or `none`). Codex and OpenCode treat an open turn as running only while the session was updated within the 5-minute stale window.
 
 ## Tests
 

@@ -1,8 +1,8 @@
 // Pure display helpers shared by the browser UI and Node tests. No DOM access here.
 
 export const STATE_LABEL = { waiting: 'waiting', running: 'running', idle: 'idle', finished: 'finished', failed: 'failed', stale: 'stale?', unknown: 'unknown' };
-export const SOURCE_LABEL = { hook: 'from hook', field: 'from tool status', mtime: 'estimated from file activity', none: 'unknown' };
-export const TOOL_BADGE = { 'claude-code': 'Claude', cursor: 'Cursor' };
+export const SOURCE_LABEL = { hook: 'from hook', field: 'from tool status', lock: 'from lock file', mtime: 'estimated from file activity', none: 'unknown' };
+export const TOOL_BADGE = { 'claude-code': 'Claude', cursor: 'Cursor', codex: 'Codex', copilot: 'Copilot', gemini: 'Gemini', cline: 'Cline/Roo', opencode: 'OpenCode' };
 export const GROUP_ORDER = ['Active now', 'Today', 'Last 7 days', 'Older'];
 
 const pad = n => String(n).padStart(2, '0');

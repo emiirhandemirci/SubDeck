@@ -2,7 +2,7 @@
 
 ## 1. What SubDeck is
 
-SubDeck is a manager + sub-agents toolkit for Claude Code: rules, agents and skills that let one session delegate work to worker, researcher and verifier agents. `/subdeck:status` shows the live agent table in the terminal. SubDeck Desk is a local web dashboard that shows the agents of Claude Code and Cursor, like the Claude Code "Agent map" but outside the IDE.
+SubDeck is a manager + sub-agents toolkit for Claude Code: rules, agents and skills that let one session delegate work to worker, researcher and verifier agents. `/subdeck:status` shows the live agent table in the terminal. SubDeck Desk is a local web dashboard that shows the agents of Claude Code, Cursor and several other tools, like the Claude Code "Agent map" but outside the IDE.
 
 ## 2. Requirements
 
@@ -46,7 +46,7 @@ Add `.subdeck/` to your project's `.gitignore`; the hooks write agent events the
 |---|---|---|
 | `/subdeck:orchestrator` | Loads the manager rulebook: delegate, do not do the work yourself. | `/subdeck:orchestrator` |
 | `/subdeck:task` | Launches an agent (`worker-sonnet`, `worker-opus`, `researcher`, `verifier`, or the `*-current` variants) with a task text or task file. | `/subdeck:task researcher find where login errors are handled` |
-| `/subdeck:status` | Prints the live table of running and recently finished sub-agents. `--all` shows more. | `/subdeck:status --all` |
+| `/subdeck:status` | Prints the live table of running and recently finished sub-agents, including the real model id (MODEL column; on narrow terminals ACTIVITY is dropped first, then MODEL). `--all` shows more. | `/subdeck:status --all` |
 | `/subdeck:pr` | Pre-push checklist and approval gate. It never pushes by itself. | `/subdeck:pr release notes` |
 | `/subdeck:desk` | Starts Desk (or prints its URL if it is already running). | `/subdeck:desk` |
 | `/subdeck:desk stop` | Stops Desk. `status` prints the URL or says it is not running. | `/subdeck:desk stop` |
@@ -63,6 +63,18 @@ Desk serves on `http://127.0.0.1:4917` by default (it falls back to 4918-4936 if
 
 **Open it in VS Code.** Command Palette, then "Simple Browser: Show", then paste `http://127.0.0.1:4917` (or the URL that `/subdeck:desk` printed).
 
+**Supported tools.** Claude Code and Cursor are supported. Codex, Copilot (CLI and VS Code Chat), Gemini CLI, Cline/Roo and OpenCode are **experimental**: they are marked "experimental" in the header, and some of their data formats are not verified on every platform. Tools that are not installed are hidden behind a collapsed "not detected" hint. Each tool has its own badge colour.
+
+| Tool | "Running" means |
+|---|---|
+| Claude Code | A hook saw an agent start with no stop, or the transcript changed in the last 2 minutes. |
+| Cursor | The composer is generating, or its data changed in the last 2 minutes. |
+| Codex | A turn is open in the rollout file and it was updated in the last 5 minutes. |
+| Copilot | CLI: an open turn while the session's lock file belongs to a live process. VS Code Chat: recent file activity. |
+| Gemini CLI | The session file changed in the last 2 minutes. |
+| Cline/Roo | The task is not completed and its data changed in the last 2 minutes. |
+| OpenCode | An assistant message is still open and the session was updated in the last 5 minutes. |
+
 **Three panes.**
 
 - **Projects** (left): projects with recent sessions; filter by name, or tick "Only active".
@@ -74,12 +86,13 @@ Desk serves on `http://127.0.0.1:4917` by default (it falls back to 4918-4936 if
 | State | Colour | Meaning |
 |---|---|---|
 | 🟢 running | green | Activity in the last 2 minutes, or a hook saw a start with no stop. |
+| 🟠 waiting | orange | Blocked on you: a permission prompt, a question or a plan approval. Waiting sessions sort first, and the header shows how many are waiting in total. |
 | 🟡 idle | amber | Last activity within 30 minutes. |
 | ⚪ finished | grey | Older, or the agent explicitly completed. |
 | 🔴 failed | red | Explicit failure or an API error. |
 | ⚪❔ stale | grey with `?` | A start was seen but no stop, and the file has been untouched for 5 minutes. State is uncertain. |
 
-Each agent also shows where its state came from. "Estimated from file activity" means there was no hook or explicit status, so Desk guessed from how recently the session file changed.
+Each agent also shows where its state came from. "Estimated from file activity" means there was no hook or explicit status, so Desk guessed from how recently the session file changed. "From lock file" (Copilot CLI) means the session's lock file is held by a live process.
 
 **Agent content.** Click an agent to open it. The detail pane has three sections: **Prompt** (what it was asked), **Tool calls** (tool name and target), and **Final report** (its last message).
 
@@ -128,6 +141,8 @@ Note: the agent prompts were tuned on Claude. Behaviour on other models is untes
 **Desk says it is already running.** Only one instance runs at a time. Open the printed URL, or run `/subdeck:desk stop` and start again.
 
 **`claude` not found.** Add the folder that contains the Claude Code executable to your `PATH`, then open a new terminal.
+
+**A tool is missing in the header.** Tools that Desk cannot find are listed under "not detected". Codex, Copilot, Gemini, Cline/Roo and OpenCode read their standard data folders; if yours live elsewhere see the environment overrides in [desk/README.md](../desk/README.md). OpenCode and Codex also need Node 22.13 or newer.
 
 **Cursor shows nothing.** Check that Node is 22.13 or newer (`node --version`) and that Cursor has been used on this machine, so its data directory exists.
 

@@ -4,10 +4,10 @@
 // and part bodies (text, tool input/output) are never selected.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { clip } from '../lib/model.mjs';
+import { clip, STALE_MS } from '../lib/model.mjs';
 
 const RETRY_DELAYS = [100, 200, 400];
-const LIVE_MS = 300000; // an unfinished assistant message counts as running only while the session was touched this recently
+const LIVE_MS = STALE_MS; // an unfinished assistant message counts as running only while the session was touched this recently
 const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const strOrNull = v => (typeof v === 'string' && v ? v : null);
 const toIso = v => { const t = num(v); return t !== null ? new Date(t).toISOString() : null; };

@@ -50,3 +50,11 @@ test('resolveEnv defaults per platform and overrides', () => {
   assert.equal(resolveEnv({}, 'linux', '/home/u').cursorUserDir, '/home/u/.config/Cursor/User');
   assert.equal(resolveEnv({}, 'win32', 'C:\\u').cursorUserDir, null); // no APPDATA
 });
+
+test('resolveEnv exposes the environment map as vars', () => {
+  const vars = { CODEX_HOME: '/x/codex', GEMINI_CLI_HOME: '/x/g', XDG_DATA_HOME: '/x/d' };
+  const e = resolveEnv(vars, 'linux', '/home/u');
+  assert.equal(e.vars.CODEX_HOME, '/x/codex');
+  assert.equal(e.vars.XDG_DATA_HOME, '/x/d');
+  assert.deepEqual(resolveEnv({}, 'linux', '/home/u').vars, {});
+});

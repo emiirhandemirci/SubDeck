@@ -6,6 +6,8 @@
 # project_dir defaults to $CLAUDE_PROJECT_DIR, else the current directory.
 # STATE shows `waiting` when the agent is blocked on you: a Notification hook event (permission prompt,
 # question dialog) newer than its transcript's last write, or a trailing AskUserQuestion/ExitPlanMode call.
+# MODEL is the real model id from the agent's last assistant record (else the meta alias); narrow terminals
+# (COLUMNS) drop ACTIVITY first, then MODEL.
 # Default view: running agents + the last 10 finished; --all shows every agent.
 # Reads <project>/.subdeck/events.jsonl and <project>/.subdeck/events.d/*.json.
 
@@ -240,7 +242,8 @@ title_of() {
   m="${p%.jsonl}.meta.json"
   [ -f "$m" ] || { echo "-"; return; }
   tr -d '\r' < "$m" 2>/dev/null | awk '
-    match($0, /"description":"([^"\\]|\\.)*"/) { r = substr($0, RSTART, RLENGTH); sub(/^"description":"/, "", r); sub(/"$/, "", r); print r; exit }'
+    match($0, /"description":"([^"\\]|\\.)*"/) { r = substr($0, RSTART, RLENGTH); sub(/^"description":"/, "", r); sub(/"$/, "", r); print r; found = 1; exit }
+    END { if (!found) print "-" }'
 }
 
 # Tokens = input + cache_read + cache_creation + output of the LAST assistant usage line
@@ -270,6 +273,25 @@ tokens_of() {
     }'
 }
 
+# Model id: the real id from the last assistant record (last 64 KB of the agent transcript),
+# else the alias in <transcript>.meta.json; "-" when neither exists.
+model_of() {
+  local p="$1" size m out=""
+  if [ -n "$p" ] && [ -f "$p" ]; then
+    size="$(wc -c < "$p" 2>/dev/null | tr -d ' ')"
+    out="$(tail -c 65536 "$p" 2>/dev/null | tr -d '\r' | awk -v drop="$([ "${size:-0}" -gt 65536 ] && echo 1 || echo 0)" '
+      NR == 1 && drop == 1 { next }
+      /"role":"assistant"/ && match($0, /"model":"[^"]+"/) { best = substr($0, RSTART + 9, RLENGTH - 10) }
+      END { print best }')"
+    if [ -z "$out" ]; then
+      m="${p%.jsonl}.meta.json"
+      [ -f "$m" ] && out="$(tr -d '\r' < "$m" 2>/dev/null | awk 'match($0, /"model":"[^"]+"/) { print substr($0, RSTART + 9, RLENGTH - 10); exit }')"
+    fi
+  fi
+  [ -n "$out" ] || out="-"
+  echo "$out"
+}
+
 # Manager session name: last aiTitle in the parent transcript (tail 256 KB); else short id.
 session_title() {
   local sid="$1" tp="$2" parent
@@ -294,12 +316,26 @@ if [ -z "$ROWS" ]; then
   exit 0
 fi
 
-# ACTIVITY width: 60 by default; when COLUMNS is set, whatever is left after the fixed columns (min 15).
+# Column budget. MODEL is 25 wide. Fixed columns without MODEL are 98 wide. With COLUMNS set, ACTIVITY shrinks
+# first (min 15); when it cannot fit it is dropped, then MODEL is dropped as well.
 FIXED=98
+MODW=25
 ACTW=60
+SHOW_MODEL=1
+SHOW_ACT=1
 case "${COLUMNS:-}" in
   ''|*[!0-9]*) ;;
-  *) ACTW=$(( COLUMNS - FIXED )); [ "$ACTW" -gt 60 ] && ACTW=60; [ "$ACTW" -lt 15 ] && ACTW=15 ;;
+  *)
+    ACTW=$(( COLUMNS - FIXED - MODW - 2 ))
+    if [ "$ACTW" -lt 15 ]; then
+      SHOW_ACT=0
+      if [ "$COLUMNS" -lt $(( FIXED + MODW )) ]; then
+        SHOW_MODEL=0; SHOW_ACT=1
+        ACTW=$(( COLUMNS - FIXED )); [ "$ACTW" -lt 15 ] && ACTW=15
+      fi
+    fi
+    [ "$ACTW" -gt 60 ] && ACTW=60
+    ;;
 esac
 
 STALE_MIN="${SUBDECK_STALE_MIN:-5}"
@@ -311,7 +347,10 @@ while IFS=$'\001' read -r id type start dur state path sid spath secs wts msg; d
     st="$(session_title "$sid" "$(norm_path "$spath")")"
     [ -n "$st" ] || { st="${sid:0:8}"; [ "$sid" = "-" ] && st="unknown"; }
     echo "Session: $st"
-    printf '%-8s  %-30s  %-16s  %-8s  %-9s  %-6s  %-7s  %s\n' AGENT TITLE TYPE STARTED DURATION TOKENS STATE ACTIVITY
+    hdr="$(printf '%-8s  %-30s  %-16s  %-8s  %-9s  %-6s  %-7s' AGENT TITLE TYPE STARTED DURATION TOKENS STATE)"
+    if [ "$SHOW_MODEL" = 1 ]; then hdr="$hdr  $(printf '%-*s' "$MODW" MODEL)"; fi
+    if [ "$SHOW_ACT" = 1 ]; then hdr="$hdr  ACTIVITY"; fi
+    printf '%s\n' "${hdr%"${hdr##*[![:space:]]}"}"
     prev="$sid"
   fi
   short="${id:0:8}"
@@ -346,6 +385,11 @@ while IFS=$'\001' read -r id type start dur state path sid spath secs wts msg; d
   tc="$(cell "${type#*:}" 16)"; tc="${tc%|}"
   ti="$(cell "$(title_of "$np")" 30)"; ti="${ti%|}"
   tk="$(tokens_of "$np")"
-  printf '%-8s  %s  %s  %-8s  %-9s  %-6s  %-7s  %s\n' "$short" "$ti" "$tc" "$start" "$dur" "$tk" "$state" "$act"
+  line="$(printf '%-8s  %s  %s  %-8s  %-9s  %-6s  %-7s' "$short" "$ti" "$tc" "$start" "$dur" "$tk" "$state")"
+  if [ "$SHOW_MODEL" = 1 ]; then
+    mo="$(cell "$(model_of "$np")" "$MODW")"; line="$line  ${mo%|}"
+  fi
+  if [ "$SHOW_ACT" = 1 ]; then line="$line  $act"; fi
+  printf '%s\n' "${line%"${line##*[![:space:]]}"}"
 done <<< "$ROWS"
 exit 0

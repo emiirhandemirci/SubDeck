@@ -39,6 +39,7 @@ export function resolveEnv(vars, platform, home, opts = {}) {
   else cursorUserDir = join(home, '.config', 'Cursor', 'User');
   return {
     home,
+    vars,
     appData: vars.APPDATA || null,
     platform,
     now: opts.now || Date.now,

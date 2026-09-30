@@ -7,7 +7,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseArgs } from '../server.mjs';
+import { parseArgs, ADAPTERS } from '../server.mjs';
 
 const SERVER = fileURLToPath(new URL('../server.mjs', import.meta.url));
 
@@ -42,10 +42,13 @@ test('starts, writes desk.json, answers, second start exits 0, cleans up', async
   const rt = JSON.parse(fs.readFileSync(path.join(home, '.subdeck', 'desk.json'), 'utf8'));
   assert.equal(rt.port, port);
   assert.equal(rt.pid, a.child.pid);
-  assert.equal(rt.version, '0.2.1');
+  assert.equal(rt.version, '0.3.1');
   const res = await fetch(`http://127.0.0.1:${port}/api/sources`);
   assert.equal(res.status, 200);
-  assert.equal((await res.json()).sources[0].id, 'claude-code');
+  const srcs = (await res.json()).sources;
+  assert.deepEqual(srcs.map(x => x.id), ['claude-code', 'codex', 'copilot', 'gemini', 'cline', 'opencode']);
+  // cursor is disabled by this test's env; every other adapter is registered
+  assert.deepEqual(srcs.filter(x => x.experimental).map(x => x.id), ['codex', 'copilot', 'gemini', 'cline', 'opencode']);
   // fetch() may refuse to override Host, so use node:http for the rebinding check
   const bad = await new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port, path: '/api/sources', headers: { Host: 'evil.example' } },
     r => { r.resume(); resolve(r.statusCode); }).on('error', reject));

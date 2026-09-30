@@ -86,7 +86,7 @@ test('CLI: mapping, sub-agents, tokens, states', async () => {
   assert.equal(live.title, 'Fix the parser'); assert.equal(live.titleSource, 'summary');
   assert.equal(live.model, 'gpt-5');
   assert.equal(live.tokens.context, 12000);
-  assert.deepEqual(st(live), { state: 'running', stateSource: 'field' });         // live lock + open turn
+  assert.deepEqual(st(live), { state: 'running', stateSource: 'lock' });         // live lock + open turn
   assert.deepEqual(live.lastActivity, { at: new Date(sc.NOW - 5000).toISOString(), kind: 'tool', toolName: 'view', summary: 'view' });
   assert.equal(live.refs.file, path.join(sc.fx.stateDir, 'live-1', 'events.jsonl'));
 
@@ -95,10 +95,10 @@ test('CLI: mapping, sub-agents, tokens, states', async () => {
   assert.equal(c1.title, 'Explore agent'); assert.equal(c1.agentType, 'explore');
   assert.deepEqual(st(c1), { state: 'finished', stateSource: 'field' });
   assert.equal(c1.endedAt, new Date(sc.NOW - 200000).toISOString());
-  assert.deepEqual(st(c2), { state: 'running', stateSource: 'field' });
+  assert.deepEqual(st(c2), { state: 'running', stateSource: 'lock' });
   assert.equal(c2.agentType, 'general-purpose');
 
-  assert.deepEqual(st(by['idle-1']), { state: 'idle', stateSource: 'field' });    // lock alive, quiet > 30 min
+  assert.deepEqual(st(by['idle-1']), { state: 'idle', stateSource: 'lock' });    // lock alive, quiet > 30 min
   assert.equal(by['idle-1'].title, 'Copilot CLI idle-1'); assert.equal(by['idle-1'].titleSource, 'fallback');
   assert.deepEqual(st(by['done-1']), { state: 'finished', stateSource: 'field' });
   assert.equal(by['done-1'].endedAt, new Date(sc.NOW - 7000000).toISOString());

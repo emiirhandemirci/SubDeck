@@ -28,7 +28,12 @@ function updateWaiting() {
   b.textContent = total > 0 ? `${total} waiting` : '';
   b.title = total > 0 ? 'Sessions or agents blocked on your input (permission, question or plan approval)' : '';
 }
-function toolBadge(tool) { return el('span', `badge tool tool-${tool}`, TOOL_BADGE[tool] || tool); }
+function toolBadge(tool) {
+  const b = el('span', `badge tool tool-${tool}`, TOOL_BADGE[tool] || tool);
+  const src = S.sources.find(x => x.id === tool);
+  if (src && src.experimental) b.title = `${src.label}: experimental support (parts of this tool's data format are unverified)`;
+  return b;
+}
 
 // Rebuilding a list drops keyboard focus; remember the focused item's id and restore it (only if it was focused).
 function keepFocus(box, fn) {
@@ -42,11 +47,19 @@ function keepFocus(box, fn) {
 function renderSources() {
   const box = $('sources');
   box.replaceChildren();
-  for (const s of S.sources) {
-    const cls = !s.detected ? 'absent' : s.health;
-    const b = el('span', `badge src ${cls}`, `${s.label}: ${!s.detected ? 'not found' : s.health}`);
-    b.title = `${s.counts.projects} projects, ${s.counts.sessions} sessions, ${s.counts.running} running${s.lastError ? `\n${s.lastError}` : ''}`;
+  for (const s of S.sources.filter(x => x.detected)) {
+    const b = el('span', `badge src ${s.health} tool-${s.id}`);
+    b.append(document.createTextNode(`${s.label}: ${s.health}`));
+    if (s.experimental) b.append(el('span', 'tag exp', 'experimental'));
+    const extra = [s.experimental ? "Experimental adapter: some of this tool's data format is unverified" : '', s.lastError || ''].filter(Boolean);
+    b.title = [`${s.counts.projects} projects, ${s.counts.sessions} sessions, ${s.counts.running} running${s.counts.waiting ? `, ${s.counts.waiting} waiting` : ''}`, ...extra].join('\n');
     box.append(b);
+  }
+  const absent = S.sources.filter(x => !x.detected);
+  if (absent.length) {
+    const d = el('details', 'absent-sources');
+    d.append(el('summary', null, `not detected (${absent.length})`), el('span', 'muted', absent.map(x => x.label).join(', ')));
+    box.append(d);
   }
   const last = S.sources.map(s => s.lastScanAt).filter(Boolean).sort().pop();
   $('lastScan').textContent = last ? `Last scan ${formatClock(last)}` : '';

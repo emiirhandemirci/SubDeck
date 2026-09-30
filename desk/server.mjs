@@ -12,8 +12,14 @@ import { createWatcher } from './lib/watcher.mjs';
 import { createApi } from './lib/api.mjs';
 import claudeCode from './adapters/claude-code.mjs';
 import cursor from './adapters/cursor.mjs';
+import codex from './adapters/codex.mjs';
+import copilot from './adapters/copilot.mjs';
+import gemini from './adapters/gemini.mjs';
+import cline from './adapters/cline.mjs';
+import opencode from './adapters/opencode.mjs';
 
-export const VERSION = '0.2.1';
+export const VERSION = '0.3.1';
+export const ADAPTERS = [claudeCode, cursor, codex, copilot, gemini, cline, opencode];
 const DEFAULT_PORT = 4917;
 const PORT_TRIES = 20;
 
@@ -75,10 +81,10 @@ export async function main(argv = process.argv.slice(2)) {
   if (running) { console.log(`SubDeck Desk already running: http://127.0.0.1:${running.port}/`); process.exit(0); }
 
   const env = resolveEnv(process.env, process.platform, home, { days: args.days });
-  const core = createCore({ env, adapters: [claudeCode, cursor] });
+  const core = createCore({ env, adapters: ADAPTERS });
   const startedAt = new Date().toISOString();
   let port = null;
-  const api = createApi({ core, getPort: () => port, startedAt, days: args.days, version: VERSION, contentEnabled: !args.noContent, adapters: [claudeCode, cursor], env,
+  const api = createApi({ core, getPort: () => port, startedAt, days: args.days, version: VERSION, contentEnabled: !args.noContent, adapters: ADAPTERS, env,
     publicDir: fileURLToPath(new URL('./public/', import.meta.url)) });
   const server = http.createServer((req, res) => { api.handle(req, res); });
 
