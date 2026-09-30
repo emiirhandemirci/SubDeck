@@ -25,7 +25,7 @@ const snapshot = {
 };
 function mk() {
   const pub = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-pub-'));
-  for (const f of ['index.html', 'app.js', 'format.js', 'style.css']) fs.writeFileSync(path.join(pub, f), `/* ${f} */`);
+  for (const f of ['index.html', 'app.js', 'format.js', 'style.css', 'favicon.svg']) fs.writeFileSync(path.join(pub, f), `/* ${f} */`);
   fs.writeFileSync(path.join(pub, 'secret.txt'), 'no');
   return createApi({ core: { snapshot: () => snapshot }, getPort: () => P, startedAt: '2026-09-29T11:00:00.000Z', days: 14, version: '0.2.0', publicDir: pub, now: () => Date.parse('2026-09-29T12:00:01Z') });
 }
@@ -161,4 +161,13 @@ test('content never appears in list, detail, snapshot or SSE payloads', async ()
   const s = await call(api, '/api/stream');
   api.broadcast({ projects: ['p_1'], sources: false, at: 'T' });
   assert.ok(!/prompt|finalReport|toolCalls/.test(s.chunks.join('')));
+});
+
+test('GET /favicon.svg served; other unknown paths 404', async () => {
+  const api = mk();
+  const r = await call(api, '/favicon.svg');
+  assert.equal(r.status, 200);
+  assert.equal(r.headers['Content-Type'], 'image/svg+xml');
+  assert.equal((await call(api, '/favicon.ico')).status, 404);
+  assert.equal((await call(api, '/other.svg')).status, 404);
 });

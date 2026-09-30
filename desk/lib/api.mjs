@@ -7,6 +7,7 @@ const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/format.js': ['format.js', 'text/javascript; charset=utf-8'],
+  '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
 };
 const CSP = "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:";

@@ -116,7 +116,7 @@ h1, h2, h3 { font-weight: 650; }
 /* ---------- detail ---------- */
 #detail h3 { font-size: 17px; line-height: 1.3; margin: 2px 4px 6px; letter-spacing: -.01em; word-break: break-word; }
 .subline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; margin: 0 4px var(--s3); font-size: 13px; }
-.subline > * + *::before { content: "\00b7"; margin: 0 7px; color: var(--muted); }
+.subline > :not(:last-child)::after { content: "\00b7"; margin: 0 7px; color: var(--muted); }
 .mono { font-family: var(--mono); font-size: 12px; }
 dl.kv { display: grid; grid-template-columns: 116px 1fr; gap: 0; margin: 0; border: 1px solid var(--border); border-radius: var(--r); background: var(--card); overflow: hidden; font-size: 13px; }
 dl.kv dt, dl.kv dd { padding: 4px 10px; border-top: 1px solid var(--border); }
