@@ -12,6 +12,10 @@ Everything is deterministic (hooks, bash, awk); the model is never called just t
 - Scripts: event logger, `status.sh` (bash + awk renderer), `run-hook.cmd` (Windows/POSIX launcher).
 - Templates: `CLAUDE.local.md.template`, `decision.md.template`.
 
+## SubDeck Desk
+
+A local, read-only web dashboard for AI coding agents (Claude Code and Cursor): projects, sessions, sub-agents, live state. Start it with `/subdeck:desk` or `node desk/server.mjs`; it serves on `127.0.0.1` only. Details in `desk/README.md`.
+
 ## Install
 
 Local marketplace (persistent). Inside a Claude Code session:
@@ -48,4 +52,4 @@ Check the manifests with `claude plugin validate .` (repo root) and `claude plug
 
 ## Status
 
-v0.1 is implemented: agents, hooks, status renderer, four skills, templates, decision log. It was run end to end (parallel worker + researcher, then verifier, plus `/subdeck:status` and `/subdeck:pr`); see `docs/demo/v0.1-demo.md`. Remaining items and roadmap (v0.2 "SubDeck Desk" web app) are in `docs/design.md`. Decisions are in `docs/decisions/`.
+v0.1 is implemented: agents, hooks, status renderer, four skills, templates, decision log. It was run end to end (parallel worker + researcher, then verifier, plus `/subdeck:status` and `/subdeck:pr`); see `docs/demo/v0.1-demo.md`. SubDeck Desk v0.2 (monitoring only) is implemented. Remaining items and roadmap are in `docs/design.md`. Decisions are in `docs/decisions/`.
