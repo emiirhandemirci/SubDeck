@@ -18,7 +18,7 @@ SubDeck is a manager + sub-agents toolkit for Claude Code: rules, agents and ski
 claude plugin marketplace add emiirhandemirci/SubDeck && claude plugin install subdeck@subdeck
 ```
 
-Or run `./install.sh` (macOS, Linux, Git Bash) / `.\install.ps1` (Windows PowerShell) from a clone; the script installs, or updates if SubDeck is already installed. Inside a Claude Code terminal session you can use `/plugin marketplace add emiirhandemirci/SubDeck` and `/plugin install subdeck@subdeck`. The VS Code extension has no `/plugin`, so use the terminal CLI; the plugin is then active in the extension too. The repo is private, so you need GitHub access. Restart Claude Code afterwards.
+Or run `./install.sh` (macOS, Linux, Git Bash) / `.\install.ps1` (Windows PowerShell) from a clone; the script installs, or updates if SubDeck is already installed. Inside a Claude Code terminal session you can use `/plugin marketplace add emiirhandemirci/SubDeck` and `/plugin install subdeck@subdeck`. The VS Code extension has no `/plugin`, so use the terminal CLI; the plugin is then active in the extension too. Restart Claude Code afterwards.
 
 **Update:**
 
@@ -49,6 +49,8 @@ Add `.subdeck/` to your project's `.gitignore`; the hooks write agent events the
 | `/subdeck:status` | Prints the live table of running and recently finished sub-agents, including the real model id (MODEL column; on narrow terminals ACTIVITY is dropped first, then MODEL). `--all` shows more. | `/subdeck:status --all` |
 | `/subdeck:pr` | Pre-push checklist and approval gate. It never pushes by itself. | `/subdeck:pr release notes` |
 | `/subdeck:models` | Shows the model policy (which model each sub-agent role runs on, and where each value comes from), or changes it with `set` / `reset`. `--project` writes to this project only. | `/subdeck:models set worker=haiku verifier=opus` |
+| `/subdeck:notify` | Shows or changes desktop notifications (`on`, `off`, `test`, `sound on|off`, `events ...`). | `/subdeck:notify test` |
+| `/subdeck:guard` | Shows or changes the guard rules (`set`, `on`, `off`, `reset`). | `/subdeck:guard set push=off` |
 | `/subdeck:desk` | Starts Desk (or prints its URL if it is already running). | `/subdeck:desk` |
 | `/subdeck:desk stop` | Stops Desk. `status` prints the URL or says it is not running. | `/subdeck:desk stop` |
 
@@ -106,6 +108,10 @@ Each agent also shows where its state came from. "Estimated from file activity" 
 | `--no-content` | Disable the prompt / tool calls / final report endpoint. |
 | `--open` | Open the browser after starting. |
 
+**Context usage.** Each session and agent row has a thin bar: the last known context tokens divided by the model's window. Claude models are measured against 200k; 1M is assumed only when the model id has a `[1m]` marker or the context already exceeds 200k. Other tools have no known window, so Desk shows just the token count. The bar is neutral below 60%, amber from 60 to 85%, red above 85%, and the percentage is always printed. Each project shows the total tokens of its sessions and agents in the retention window. These are tokens, not cost, and the totals are approximate (per-session context can overlap across turns). Tools that report no usage show nothing.
+
+**Paths.** Desk never shows your home directory: paths in the project list, tooltips and the session "Data" row start with `~`. "Copy path" still copies the full real path.
+
 **Stop.** `/subdeck:desk stop`.
 
 Example view (agent detail with Prompt, Tool calls and Final report expanded; synthetic data):
@@ -157,13 +163,46 @@ Optional: instead of using the `*-current` agents, you can remap the aliases so 
 
 Note: the agent prompts were tuned on Claude. Behaviour on other models is untested.
 
-## 8. Privacy
+## 8. Notifications
+
+SubDeck shows a local desktop notification (plus a system sound) when Claude needs your input (permission prompts, questions, idle) and when the manager finishes its turn. Sub-agent completion is available but off by default. Nothing leaves your machine; the notification shows only the project folder name and a short reason, never prompt content.
+
+```
+/subdeck:notify                       # show settings
+/subdeck:notify on | off | test
+/subdeck:notify sound on|off
+/subdeck:notify events waiting,done,agent
+```
+
+Add `--project` to write the project config instead of the user config (project wins). Set the environment variable `SUBDECK_NOTIFY=0` to silence everything. Config: `{"notify":{"enabled":true,"sound":true,"events":["waiting","done"]}}` in `~/.subdeck/config.json` or `<project>/.subdeck/config.json`. Windows uses a toast (balloon fallback), macOS `osascript`, Linux `notify-send` if installed. On Windows, Focus Assist / Do Not Disturb can hide toasts; if `test` shows nothing, check those settings.
+
+## 9. Guard rules
+
+SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds about 0.1 s per tool call. It checks Bash, PowerShell, Write, Edit and MultiEdit calls against these rules:
+
+| Rule | Default | Blocks |
+|---|---|---|
+| `git-add-all` | deny | `git add -A/--all/-u/.`, `git commit -a` |
+| `force-push` | deny | `git push --force`, `-f`, `--force-with-lease`, `+refspec` |
+| `push` | ask | any other `git push` |
+| `history-rewrite` | ask | `git reset --hard`, `rebase`, `filter-branch/filter-repo`, `clean -f` |
+| `rm-rf-danger` | deny | recursive delete of `/`, a drive root, `~`/`$HOME`, the project root or their parents |
+| `secret-files` | ask | Write/Edit of `.env*` (not `.env.example`), `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `credentials*.json` |
+| `attribution` | off | `git commit` messages containing `Co-Authored-By` or "Generated with" |
+
+- `/subdeck:guard` shows the effective rules.
+- `/subdeck:guard set push=off attribution=deny [--project]`, `on`, `off` and `reset [--project]` change them. They write the `guard` key of `~/.subdeck/config.json` or `<project>/.subdeck/config.json`; the project file wins.
+- `SUBDECK_GUARD=0` disables the guard for a session.
+- In auto mode, "ask" acts as "deny": an auto-mode agent can never push with the default rules.
+- It is a guard rail, not a sandbox. Aliases, scripts and other interpreters can get around it.
+
+## 10. Privacy
 
 - Local only: Desk binds `127.0.0.1` and rejects requests with a foreign `Host` header.
 - Prompt, tool calls and final report are read from your local transcript only when you open an agent. They are never stored, cached or logged; tool output and thinking text are never served.
 - Start with `--no-content` to turn content reading off completely.
 
-## 9. Troubleshooting
+## 11. Troubleshooting
 
 **Desk says it is already running.** Only one instance runs at a time. Open the printed URL, or run `/subdeck:desk stop` and start again.
 
@@ -177,6 +216,6 @@ Note: the agent prompts were tuned on Claude. Behaviour on other models is untes
 
 **States look wrong for projects without the plugin.** In projects where the plugin is installed, hooks record exact start and stop events. Without it, Desk falls back to session files and file activity, so states are estimates and can lag by a few minutes.
 
-## 10. Where to learn more
+## 12. Where to learn more
 
 - [desk/README.md](../desk/README.md) for Desk internals, data sources and environment overrides.

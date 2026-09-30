@@ -7,7 +7,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-emiirhandemirci-181717?logo=github&logoColor=white)](https://github.com/emiirhandemirci)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Emirhan_Demirci-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/emirhan-demirci-/)
 
-![version](https://img.shields.io/badge/version-0.3.1-6366f1)
+![version](https://img.shields.io/badge/version-0.4.0-6366f1)
 ![node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white)
 ![plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757)
 ![deps](https://img.shields.io/badge/dependencies-zero-22c55e)
@@ -42,6 +42,11 @@ Restart Claude Code, then try `/subdeck:status` or `/subdeck:desk`.
   <tr>
     <td valign="top">🖥️<br><b>SubDeck Desk</b><br>Local web dashboard for Claude Code, Cursor, Codex, Copilot, Gemini, Cline/Roo and OpenCode sessions. Read-only, <code>127.0.0.1</code> only.</td>
     <td valign="top">🚦<br><b>Push gate</b><br>Pre-push checklist that asks first. It never pushes by itself. <code>/subdeck:pr</code></td>
+    <td valign="top">🔔<br><b>Notifications</b><br>Local desktop notification and sound when Claude needs you or finishes. <code>/subdeck:notify</code></td>
+  </tr>
+  <tr>
+    <td valign="top">🛡️<br><b>Guard rules</b><br>Deterministic hook: blocks <code>git add -A</code>, force push, dangerous <code>rm -rf</code>, secret files. <code>/subdeck:guard</code></td>
+    <td valign="top">📊<br><b>Context usage</b><br>Desk shows how full each session's context is, and token totals per project.</td>
     <td valign="top">🪶<br><b>Zero dependencies</b><br>Bash and awk for the plugin, plain Node for Desk. No jq, no npm install.</td>
   </tr>
 </table>
@@ -55,7 +60,7 @@ Restart Claude Code, then try `/subdeck:status` or `/subdeck:desk`.
   </picture>
 </p>
 
-Projects on the left, the agent tree in the middle, details on the right. Start it with `/subdeck:desk` or `node desk/server.mjs`. Claude Code and Cursor are supported; Codex, Copilot (CLI and VS Code Chat), Gemini CLI, Cline/Roo and OpenCode are **experimental** (marked in the header). Sessions that are blocked on you (permission prompt, question, plan approval) show as **waiting** and sort first. Details in [desk/README.md](desk/README.md).
+Projects on the left, the agent tree in the middle, details on the right. Start it with `/subdeck:desk` or `node desk/server.mjs`. Claude Code and Cursor are supported; Codex, Copilot (CLI and VS Code Chat), Gemini CLI, Cline/Roo and OpenCode are **experimental** (marked in the header). Sessions that are blocked on you (permission prompt, question, plan approval) show as **waiting** and sort first. Each session shows a context-usage bar and each project its token total (tokens, not cost); paths use `~`. Details in [desk/README.md](desk/README.md).
 
 <details>
 <summary><b>Agent detail</b>: prompt, tool calls, final report</summary>
@@ -111,6 +116,8 @@ flowchart LR
 | `/subdeck:status` | Live agent table with the real model id per agent (`--all` includes finished agents). |
 | `/subdeck:desk` | Starts (or prints the URL of) Desk; `stop` stops it. |
 | `/subdeck:pr` | Pre-push checklist and approval gate. |
+| `/subdeck:notify` | Desktop notifications: `on`, `off`, `test`, `sound`, `events`. |
+| `/subdeck:guard` | Shows or changes the guard rules (`set push=off`, `reset`). |
 | `/subdeck:models` | Shows or changes which model each sub-agent role uses (`/subdeck:models set worker=haiku`). |
 
 <details>
@@ -133,14 +140,14 @@ Check the manifests with `claude plugin validate .` and `claude plugin validate 
 <summary><b>Components and requirements</b></summary>
 
 - Agents: `worker-sonnet` (default), `worker-opus` (critical work only), `researcher` (read-only), `verifier` (no commits), plus `*-current` variants that inherit the session model.
-- Hooks: `SubagentStart` / `SubagentStop` write events to `<project>/.subdeck/`.
+- Hooks: `SubagentStart` / `SubagentStop` write events to `<project>/.subdeck/`; `Stop` / `Notification` send desktop notifications; `PreToolUse` runs the guard.
 - Scripts: event logger, `status.sh` (bash + awk), `run-hook.cmd` (Windows/POSIX launcher). Templates: `CLAUDE.local.md.template`, `decision.md.template`.
 - Requirements: Bash and awk (Git Bash on Windows), Claude Code with plugin support, git. Desk needs Node 22.13 or newer.
 </details>
 
 ## Status
 
-v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. Desk v0.3 (monitoring only, seven tools, waiting state) is implemented. Roadmap and decision records live in `internal/design.md` and `internal/decisions/` (private, maintainers only).
+v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 adds notifications, guard rules and the Desk context-usage bar. Roadmap and decision records live in `internal/design.md` and `internal/decisions/` (private, maintainers only).
 
 ## License
 

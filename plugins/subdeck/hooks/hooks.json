@@ -1,5 +1,5 @@
 {
-  "description": "SubDeck hooks: event logger (subagent start/stop, input-needed) to .subdeck/events.jsonl; local desktop notifications (toggle with /subdeck:notify); Bash/Write/Edit guard",
+  "description": "SubDeck hooks: event logger (subagent start/stop, input-needed) to .subdeck/events.jsonl; local desktop notifications (toggle with /subdeck:notify); Bash/PowerShell/Write/Edit guard",
   "hooks": {
     "SubagentStart": [
       {
@@ -69,7 +69,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Write|Edit|MultiEdit",
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit",
         "hooks": [
           {
             "type": "command",
