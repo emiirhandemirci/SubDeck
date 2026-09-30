@@ -31,7 +31,7 @@ export function createWatcher({ onChange, onNote = () => {}, debounceMs = 500, p
       if (watchers.has(k) || polls.has(t.tool)) continue;
       try {
         const w = watchFn(t.path, { recursive: t.recursive, persistent: true }, (_ev, name) => {
-          if (t.filter && !(name && String(name).startsWith(t.filter))) return;
+          if (t.filter && name && !(String(name).startsWith(t.filter))) return;
           trigger(t.tool);
         });
         w.on('error', () => { try { w.close(); } catch { /* ignore */ } watchers.delete(k); startPolling(t.tool); });

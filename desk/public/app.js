@@ -79,11 +79,13 @@ function renderProjectsInner() {
   box.scrollTop = scroll;
 }
 
+function stacked() { return typeof matchMedia === 'function' && matchMedia('(max-width: 900px)').matches; }
 async function selectProject(id, focus) {
   if (id !== S.selectedProject) { S.selectedSession = null; S.detail = null; renderDetail(); }
   S.selectedProject = id; store.set('project', id);
   renderProjects();
   if (focus) { const r = $('projects').querySelector(`[data-id="${CSS.escape(id)}"]`); if (r) r.focus(); }
+  if (stacked()) { const r = $('projects').querySelector(`[data-id="${CSS.escape(id)}"]`); if (r) r.scrollIntoView({ block: 'nearest' }); }
   await loadProject();
 }
 
@@ -142,6 +144,7 @@ async function loadProject() {
 async function selectSession(id, focus) {
   S.selectedSession = id;
   renderMap();
+  if (stacked()) { const r = $('map').querySelector(`[data-id="${CSS.escape(id)}"]`); if (r) r.scrollIntoView({ block: 'nearest' }); }
   if (focus) { const r = $('map').querySelector(`[data-id="${CSS.escape(id)}"]`); if (r) r.focus(); }
   await loadDetail();
 }
@@ -229,7 +232,7 @@ $('filter').addEventListener('input', e => { S.filter = e.target.value; store.se
 $('onlyActive').addEventListener('change', e => { S.onlyActive = e.target.checked; store.set('onlyActive', S.onlyActive); renderProjects(); });
 
 // ---------- data flow ----------
-async function loadSources() { const d = await getJSON('/api/sources'); S.sources = d.sources; S.server = d.server; renderSources(); }
+async function loadSources() { const d = await getJSON('/api/sources'); S.sources = d.sources; S.server = d.server; renderSources(); renderProjects(); }
 async function loadProjects() { S.projects = (await getJSON('/api/projects')).projects; renderProjects(); }
 async function loadAll() {
   await Promise.all([loadSources(), loadProjects()]);

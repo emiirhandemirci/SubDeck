@@ -154,7 +154,11 @@ export async function readHooks(projectPath, cache) {
     if (!c || c.sig !== sig) {
       let text = '';
       try { text = await fs.readFile(f, 'utf8'); } catch { continue; }
-      const p = parseJsonl(text.endsWith('\n') ? text : text + '\n');
+      if (text && !text.endsWith('\n')) {
+        // events.jsonl: a trailing partial line is a half-written append, ignore it; events.d/*.json is one whole record
+        if (f.endsWith('.json')) text += '\n'; else text = text.slice(0, text.lastIndexOf('\n') + 1);
+      }
+      const p = parseJsonl(text);
       const events = p.records
         .filter(e => typeof e.agent_id === 'string' && e.agent_id && (e.event === 'SubagentStart' || e.event === 'SubagentStop') && toIso(e.ts))
         .map(e => ({ event: e.event, ts: toIso(e.ts), agentId: e.agent_id,

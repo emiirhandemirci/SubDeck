@@ -191,3 +191,14 @@ test('readHooks folds start/stop per agent and ignores payload', async () => {
   assert.equal(JSON.stringify([...h.agents.values()]).includes('HOOK_MESSAGE_MARKER'), false);
   assert.equal((await readHooks(sc.beta, new Map())).dir, null);
 });
+
+test('readHooks ignores a trailing partial line in events.jsonl (not malformed)', async () => {
+  const proj = tmpDir('subdeck-hook-');
+  const d = path.join(proj, '.subdeck');
+  fs.mkdirSync(d);
+  const line = JSON.stringify({ event: 'SubagentStart', agent_id: 'zz1', ts: '2026-01-01T00:00:00Z' });
+  fs.writeFileSync(path.join(d, 'events.jsonl'), line + '\n{"event":"SubagentSt');
+  const h = await readHooks(proj, new Map());
+  assert.equal(h.bad, 0);
+  assert.ok(h.agents.has('zz1'));
+});

@@ -16,7 +16,7 @@ export function formatDuration(ms) {
 
 export function formatTokens(n) {
   if (n === null || n === undefined || !Number.isFinite(n)) return '-';
-  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 999950) return (n / 1e6).toFixed(1) + 'M';
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
   return String(n);
 }

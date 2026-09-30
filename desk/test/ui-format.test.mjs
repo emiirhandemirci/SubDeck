@@ -17,6 +17,8 @@ test('formatTokens', () => {
   assert.equal(f.formatTokens(123), '123');
   assert.equal(f.formatTokens(79500), '79.5k');
   assert.equal(f.formatTokens(1100002), '1.1M');
+  assert.equal(f.formatTokens(999999), '1.0M');
+  assert.equal(f.formatTokens(999949), '999.9k');
 });
 
 test('relativeTime', () => {

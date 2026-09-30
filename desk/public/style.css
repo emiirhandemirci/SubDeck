@@ -64,3 +64,4 @@ button { font: inherit; padding: 2px 8px; border: 1px solid var(--border); borde
   .panes { grid-template-columns: 1fr; height: auto; }
   .pane { max-height: none; }
 }
+.toggle { white-space: nowrap; flex: none; }

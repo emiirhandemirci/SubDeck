@@ -75,3 +75,15 @@ test('update adds new targets and closes vanished ones; ENOENT is skipped silent
   assert.deepEqual(notes, []);
   w.close();
 });
+
+test('null filename with a filter set counts as a change', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const fw = fakeWatch();
+  const calls = [];
+  const w = createWatcher({ onChange: tool => calls.push(tool), watchFn: fw.fn });
+  w.update([{ tool: 'cursor', path: '/g', recursive: false, filter: 'state.vscdb' }]);
+  fw.watchers[0].fire(null);
+  t.mock.timers.tick(500);
+  assert.deepEqual(calls, ['cursor']);
+  w.close();
+});
