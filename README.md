@@ -11,12 +11,13 @@
 ![node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white)
 ![plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757)
 ![deps](https://img.shields.io/badge/dependencies-zero-22c55e)
+![license](https://img.shields.io/badge/license-MIT-blue)
 
 **New here? Read the [User Guide](docs/USER_GUIDE.md).**
 
 </div>
 
-SubDeck is a private Claude Code plugin marketplace for running a **manager session with sub-agents**. The manager delegates to worker, researcher and verifier agents and reads short reports. You get a live, IDE-independent view of what every agent is doing. Everything is deterministic (hooks, bash, awk); the model is never called just to produce status.
+SubDeck is a Claude Code plugin marketplace for running a **manager session with sub-agents**. The manager delegates to worker, researcher and verifier agents and reads short reports. You get a live, IDE-independent view of what every agent is doing. Everything is deterministic (hooks, bash, awk); the model is never called just to produce status.
 
 ## Install
 
@@ -28,7 +29,7 @@ claude plugin marketplace add emiirhandemirci/SubDeck && claude plugin install s
 - Inside Claude Code: `/plugin marketplace add emiirhandemirci/SubDeck`, then `/plugin install subdeck@subdeck`.
 - Update: `claude plugin marketplace update subdeck && claude plugin update subdeck@subdeck`.
 
-Restart Claude Code, then try `/subdeck:status` or `/subdeck:desk`. The repo is private, so you need GitHub access.
+Restart Claude Code, then try `/subdeck:status` or `/subdeck:desk`.
 
 ## What you get
 
@@ -139,3 +140,7 @@ Check the manifests with `claude plugin validate .` and `claude plugin validate 
 ## Status
 
 v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end; see [docs/demo/v0.1-demo.md](docs/demo/v0.1-demo.md). Desk v0.2 (monitoring only) is implemented. Roadmap in [docs/design.md](docs/design.md), decisions in [docs/decisions/](docs/decisions/).
+
+## License
+
+MIT. See [LICENSE](LICENSE).

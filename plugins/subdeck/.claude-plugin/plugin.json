@@ -1,6 +1,7 @@
 {
   "name": "subdeck",
   "version": "0.2.1",
+  "license": "MIT",
   "description": "Manager plus sub-agents toolkit for Claude Code: worker agents, orchestrator skill, live status, and hooks.",
   "author": { "name": "Emirhan Demirci" }
 }
