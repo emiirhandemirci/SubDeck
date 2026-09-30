@@ -292,6 +292,7 @@ async function scanChat(env, cache) {
           }
           const c = hit.value;
           if (c.records === 0) { skipped++; continue; }
+          if (!c.oversized && !c.requests && !clip(c.title, 120)) continue;   // empty chat: no requests, no title
           if (folder === undefined) folder = await workspaceFolder(env, hashDir);
           const id = c.sessionId || f.name.slice(0, -'.jsonl'.length);
           const updatedAt = new Date(st.mtimeMs).toISOString();

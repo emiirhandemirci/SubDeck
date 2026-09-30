@@ -2,7 +2,7 @@
 // Cursor source adapter (spec 5.2). Opens state.vscdb read-only; extracts whitelisted fields only.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { clip } from '../lib/model.mjs';
+import { clip, STALE_MS } from '../lib/model.mjs';
 import { fileUriToPath } from '../lib/paths.mjs';
 
 const RETRY_DELAYS = [100, 200, 400];
@@ -10,6 +10,7 @@ const toIso = v => { const t = typeof v === 'number' ? v : Date.parse(v); return
 const text = v => (v === null || v === undefined ? null : typeof v === 'string' ? v : Buffer.from(v).toString('utf8'));
 const isBusy = e => e && (e.errcode === 5 || e.errcode === 6 || /busy|locked/i.test(String(e.message)));
 async function statOrNull(p) { try { return await fs.stat(p); } catch { return null; } }
+const trackingPathOf = env => path.join(env.home, '.cursor', 'ai-tracking', 'ai-code-tracking.db');
 const dbPathOf = env => path.join(env.cursorUserDir, 'globalStorage', 'state.vscdb');
 
 /** Whitelist: nothing else from composerData leaves this function. */
@@ -33,7 +34,9 @@ function pickComposer(o) {
 
 function pickHeader(hv) {
   const uri = hv.workspaceIdentifier && hv.workspaceIdentifier.uri;
-  return { name: typeof hv.name === 'string' ? hv.name : null, unifiedMode: typeof hv.unifiedMode === 'string' ? hv.unifiedMode : null,
+  return { name: typeof hv.name === 'string' ? hv.name : null, subtitle: typeof hv.subtitle === 'string' ? hv.subtitle : null,
+    blocking: hv.hasBlockingPendingActions === true,
+     unifiedMode: typeof hv.unifiedMode === 'string' ? hv.unifiedMode : null,
     fsPath: uri && typeof uri.fsPath === 'string' ? uri.fsPath : null, lastUpdatedAt: Number.isFinite(hv.lastUpdatedAt) ? hv.lastUpdatedAt : null };
 }
 
@@ -50,6 +53,38 @@ async function workspacePath(env, workspaceId, memo) {
   return p;
 }
 
+/** Newest bubble of a composer whose header list is empty. Reads type / createdAt / tool name only, never text fields.
+ *  One indexed key-range query per such composer. */
+function newestBubble(conn, composerId) {
+  try {
+    const rows = conn.prepare(`SELECT key, json_extract(value, '$.type') AS t, json_extract(value, '$.createdAt') AS c, json_extract(value, '$.toolFormerData.name') AS n
+      FROM cursorDiskKV WHERE key >= ? AND key < ?`).all(`bubbleId:${composerId}:`, `bubbleId:${composerId};`);
+    let best = null, bestAt = -Infinity;
+    for (const r of rows) {
+      const at = typeof r.c === 'number' ? r.c : Date.parse(r.c);
+      if (!Number.isFinite(at)) continue;
+      if (at > bestAt) { bestAt = at; best = { bubbleId: String(r.key).slice(`bubbleId:${composerId}:`.length), type: r.t, at, name: typeof r.n === 'string' ? r.n : null }; }
+    }
+    return best;
+  } catch { return null; }
+}
+
+/** Optional read-only lookup of AI-generated conversation titles in Cursor's tracking DB; any error yields an empty map. */
+async function trackingTitles(mod, env) {
+  const out = new Map();
+  if (!env.home) return out;
+  const p = trackingPathOf(env);
+  if (!(await statOrNull(p))) return out;
+  let conn = null;
+  try {
+    conn = new mod.DatabaseSync(p, { readOnly: true });
+    for (const r of conn.prepare('SELECT conversationId, title FROM conversation_summaries').all()) {
+      if (typeof r.conversationId === 'string' && typeof r.title === 'string' && r.title.trim()) out.set(r.conversationId, r.title);
+    }
+  } catch { /* optional source */ } finally { if (conn) { try { conn.close(); } catch { /* already closed */ } } }
+  return out;
+}
+
 function readRows(conn, env) {
   const cutoff = env.now() - env.days * 86400000;
   const headers = conn.prepare('SELECT composerId, workspaceId, createdAt, lastUpdatedAt, isArchived, isSubagent, recency, subagentTypeName, value FROM composerHeaders WHERE COALESCE(recency, lastUpdatedAt, createdAt, 0) >= ?').all(cutoff);
@@ -62,7 +97,13 @@ function readRows(conn, env) {
       const raw = kv.get('composerData:' + h.composerId);
       const cd = raw ? pickComposer(JSON.parse(text(raw.value))) : pickComposer({});
       let toolName = null;
-      if (cd.generating > 0 && cd.last && cd.last.type === 2 && cd.last.bubbleId) {
+      if (!cd.last) {
+        const nb = newestBubble(conn, h.composerId);
+        if (nb) {
+          cd.last = { bubbleId: nb.bubbleId, type: nb.type, at: nb.at };
+          if (cd.generating > 0 && nb.type === 2) toolName = nb.name;
+        }
+      } else if (cd.generating > 0 && cd.last && cd.last.type === 2 && cd.last.bubbleId) {
         const b = kv.get(`bubbleId:${h.composerId}:${cd.last.bubbleId}`);
         if (b) { try { const o = JSON.parse(text(b.value)); toolName = o.toolFormerData && typeof o.toolFormerData.name === 'string' ? o.toolFormerData.name : null; } catch { /* body ignored */ } }
       }
@@ -77,8 +118,9 @@ export function createCursorAdapter({ loadSqlite = () => import('node:sqlite'), 
   async function scan(env, { cache }) {
     const dbPath = dbPathOf(env);
     const st = await statOrNull(dbPath);
+    const tst = env.home ? await statOrNull(trackingPathOf(env)) : null;
     const wal = await statOrNull(dbPath + '-wal');
-    const fp = [st && st.size, st && st.mtimeMs, wal && wal.size, wal && wal.mtimeMs, env.days].join('|');
+    const fp = [st && st.size, st && st.mtimeMs, wal && wal.size, wal && wal.mtimeMs, tst && tst.size, tst && tst.mtimeMs, env.days].join('|');
     const hit = cache.get('result');
     if (hit && hit.fp === fp) return hit.value;
     let mod;
@@ -95,6 +137,7 @@ export function createCursorAdapter({ loadSqlite = () => import('node:sqlite'), 
         await sleep(RETRY_DELAYS[attempt]);
       } finally { if (conn) { try { conn.close(); } catch { /* already closed */ } } }
     }
+    const tracked = await trackingTitles(mod, env);
     const parentOf = new Map();
     for (const r of read.rows) for (const id of r.cd.subIds) parentOf.set(id, r.h.composerId);
     const memo = new Map();
@@ -105,9 +148,11 @@ export function createCursorAdapter({ loadSqlite = () => import('node:sqlite'), 
         cd.last && (typeof cd.last.at === 'number' ? cd.last.at : Date.parse(cd.last.at)), h.createdAt].filter(Number.isFinite));
       const updatedAt = Number.isFinite(updatedMs) ? new Date(updatedMs).toISOString() : null;
       const name = clip(cd.name || hv.name, 120);
+      const sub = name ? null : clip(hv.subtitle || tracked.get(h.composerId), 120);
       const mode = hv.unifiedMode || 'chat';
       const parent = parentOf.get(h.composerId) || null;
-      const stateBasis = cd.generating > 0 ? { kind: 'fixed', state: 'running', stateSource: 'field' }
+      const stateBasis = hv.blocking ? { kind: 'waiting', at: updatedAt, stateSource: 'field', fallbackAt: updatedAt }
+        : cd.generating > 0 && Number.isFinite(updatedMs) && env.now() - updatedMs < STALE_MS ? { kind: 'fixed', state: 'running', stateSource: 'field' }
         : cd.status === 'completed' ? { kind: 'fixed', state: 'finished', stateSource: 'field' }
         : { kind: 'mtime', at: updatedAt, stateSource: 'mtime' };
       const lastActivity = cd.last && (cd.last.type === 1 || cd.last.type === 2)
@@ -115,7 +160,7 @@ export function createCursorAdapter({ loadSqlite = () => import('node:sqlite'), 
       sessions.push({
         nativeId: h.composerId, tool: 'cursor', parentNativeId: parent, depth: parent ? 1 : 0,
         projectPath: projectPath || null, projectLabel: projectPath ? null : 'Cursor (no folder)',
-        title: name || `Cursor ${mode} ${h.composerId.slice(0, 8)}`, titleSource: name ? 'explicit' : 'fallback',
+        title: name || sub || `Cursor ${mode} ${h.composerId.slice(0, 8)}`, titleSource: name ? 'explicit' : sub ? 'summary' : 'fallback',
         agentType: (h.subagentTypeName && String(h.subagentTypeName)) || mode, model: cd.modelName,
         createdAt: toIso(h.createdAt), updatedAt, endedAt: cd.status === 'completed' ? updatedAt : null,
         tokens: { context: cd.context, total: null }, lastActivity,

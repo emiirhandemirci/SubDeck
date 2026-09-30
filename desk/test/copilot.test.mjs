@@ -46,9 +46,11 @@ function scenario() {
         'aaa.jsonl': [JSON.stringify({ kind: 0, v: { version: 3, creationDate: NOW - 90000, sessionId: 'aaa', requests: [{ timestamp: NOW - 80000, modelId: 'copilot/gpt-5', message: { text: BODY } }], pendingRequests: [] } }),
           JSON.stringify({ kind: 1, k: ['customTitle'], v: 'Chat about tests' }),
           JSON.stringify({ kind: 2, k: ['requests'], v: [{ timestamp: NOW - 20000, message: { text: BODY } }] }), 'garbage'],
-        'bbb.jsonl': [JSON.stringify({ kind: 0, v: { creationDate: NOW - 5000, sessionId: 'bbb', requests: [] } })],
+        'bbb.jsonl': [JSON.stringify({ kind: 0, v: { creationDate: NOW - 5000, sessionId: 'bbb', requests: [{ message: { text: BODY } }] } })],
+        'eee.jsonl': [JSON.stringify({ kind: 0, v: { creationDate: NOW - 5000, sessionId: 'eee', requests: [] } })],
+        'fff.jsonl': [JSON.stringify({ kind: 0, v: { sessionId: 'fff', requests: [] } }), JSON.stringify({ kind: 1, k: ['customTitle'], v: 'Titled but empty' })],
         'ccc.jsonl': 'not json at all\n' } },
-      h2: { files: { 'ddd.jsonl': [JSON.stringify({ kind: 0, v: { sessionId: 'ddd', requests: [] } })], 'old.jsonl': [JSON.stringify({ kind: 0, v: { sessionId: 'old', requests: [] } })] },
+      h2: { files: { 'ddd.jsonl': [JSON.stringify({ kind: 0, v: { sessionId: 'ddd', requests: [{ message: { text: BODY } }] } })], 'old.jsonl': [JSON.stringify({ kind: 0, v: { sessionId: 'old', requests: [] } })] },
         mtimeMs: { 'old.jsonl': NOW - 40 * 86400000 } },
     },
   });
@@ -122,7 +124,9 @@ test('Chat: title, request count, workspace mapping, skipped', async () => {
   assert.equal(a.createdAt, new Date(sc.NOW - 90000).toISOString());
   assert.equal(a.agentType, 'vscode-chat');
   assert.equal(deriveState(a.stateBasis, Date.now()).stateSource, 'mtime');
-  assert.equal(by['vsc-bbb'].lastActivity, null);
+  assert.equal(by['vsc-bbb'].lastActivity.summary, '1 request');
+  assert.equal(by['vsc-eee'], undefined);               // empty chat, no title: hidden (not counted as skipped)
+  assert.equal(by['vsc-fff'].title, 'Titled but empty'); // empty but titled: kept
   assert.equal(by['vsc-bbb'].title, 'Copilot Chat bbb');
   assert.equal(by['vsc-ddd'].projectLabel, 'Copilot Chat (no folder)');
   assert.equal(by['vsc-old'], undefined);

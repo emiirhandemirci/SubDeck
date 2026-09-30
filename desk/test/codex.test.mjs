@@ -186,3 +186,18 @@ test('busy twice then succeeds; missing node:sqlite -> note', async () => {
   const none = createCodexAdapter({ loadSqlite: async () => { throw new Error('no'); } });
   assert.match((await none.scan(sc.env, { cache: new Map() })).notes[0], /node:sqlite unavailable/);
 });
+
+test('readThreads selects an explicit column list, never SELECT * or content columns', async () => {
+  const sc = scenario();
+  const real = await import('node:sqlite');
+  const sqls = [];
+  const a = createCodexAdapter({ loadSqlite: async () => ({ DatabaseSync: class extends real.DatabaseSync {
+    prepare(sql) { sqls.push(sql); return super.prepare(sql); } } }) });
+  const r = await a.scan(sc.env, { since: null, cache: new Map() });
+  assert.equal(r.sessions.length, 10);
+  const q = sqls.find(s => /FROM threads$/.test(s.trim()));
+  assert.ok(q, 'threads query issued');
+  assert.equal(/\*/.test(q), false);
+  assert.equal(/first_user_message|preview/.test(q), false);
+  assert.match(q, /\bid\b.*\brollout_path\b/);
+});

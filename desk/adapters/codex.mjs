@@ -92,9 +92,15 @@ async function readMeta(file) {
     nickname: str(p.agent_nickname), role: str(p.agent_role), model: str(p.model) };
 }
 
+const THREAD_COLS = ['id', 'rollout_path', 'cwd', 'title', 'name', 'model', 'tokens_used', 'created_at', 'created_at_ms', 'updated_at', 'updated_at_ms', 'archived', 'agent_nickname', 'agent_role'];
+
 function readThreads(conn, env) {
   const cutoff = env.now() - env.days * 86400000;
-  const rows = conn.prepare('SELECT * FROM threads').all();
+  // Explicit columns only (never first_user_message / preview); intersect with the real schema so an older DB still reads.
+  let have = null;
+  try { have = new Set(conn.prepare('PRAGMA table_info(threads)').all().map(c => c.name)); } catch { /* fall back to the full list */ }
+  const cols = THREAD_COLS.filter(c => !have || have.has(c));
+  const rows = conn.prepare(`SELECT ${cols.join(', ')} FROM threads`).all();
   const out = [];
   let skipped = 0;
   for (const r of rows) {
