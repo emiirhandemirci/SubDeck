@@ -3,3 +3,7 @@ plugins/subdeck/scripts/run-hook.cmd text eol=lf
 *.md text eol=lf
 *.json text eol=lf
 *.template text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
