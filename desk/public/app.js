@@ -18,8 +18,8 @@ const S = {
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined && text !== null) e.textContent = String(text); return e; }
 async function getJSON(url) { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); }
 function dot(state) { const d = el('span', `dot ${state}`); d.setAttribute('aria-hidden', 'true'); return d; }
-function stateWord(state) { return el('span', 'state-word', STATE_LABEL[state] || state); }
-function toolBadge(tool) { return el('span', 'badge', TOOL_BADGE[tool] || tool); }
+function stateWord(state) { return el('span', `state-word chip ${state}`, STATE_LABEL[state] || state); }
+function toolBadge(tool) { return el('span', `badge tool tool-${tool}`, TOOL_BADGE[tool] || tool); }
 
 // Rebuilding a list drops keyboard focus; remember the focused item's id and restore it (only if it was focused).
 function keepFocus(box, fn) {
@@ -35,7 +35,7 @@ function renderSources() {
   box.replaceChildren();
   for (const s of S.sources) {
     const cls = !s.detected ? 'absent' : s.health;
-    const b = el('span', `badge ${cls}`, `${s.label}: ${!s.detected ? 'not found' : s.health}`);
+    const b = el('span', `badge src ${cls}`, `${s.label}: ${!s.detected ? 'not found' : s.health}`);
     b.title = `${s.counts.projects} projects, ${s.counts.sessions} sessions, ${s.counts.running} running${s.lastError ? `\n${s.lastError}` : ''}`;
     box.append(b);
   }
@@ -70,7 +70,7 @@ function renderProjectsInner() {
       row.append(path);
       const meta = el('div', 'meta');
       for (const t of p.tools) meta.append(toolBadge(t));
-      if (p.runningCount > 0) { meta.append(dot('running')); meta.append(el('span', 'state-word', `${p.runningCount} running`)); }
+      if (p.runningCount > 0) { const pill = el('span', 'pill running'); pill.append(dot('running'), document.createTextNode(`${p.runningCount} running`)); meta.append(pill); }
       row.append(meta);
       row.addEventListener('click', () => selectProject(p.id, true));
       box.append(row);
@@ -98,8 +98,8 @@ function sessionLine(s, cls) {
   line.tabIndex = s.id === S.selectedSession ? 0 : -1;
   line.setAttribute('aria-selected', String(s.id === S.selectedSession));
   line.append(dot(s.state), el('span', 'title', s.title), stateWord(s.state));
-  line.append(el('span', 'muted', `${formatDuration(s.durationMs)} · ${formatTokens(s.tokens.context)}`));
-  if (s.agentType && cls === 'agent') line.append(el('span', 'muted', s.agentType));
+  if (s.agentType && cls === 'agent') line.append(el('span', 'tag mono', s.agentType));
+  line.append(el('span', 'meta-line muted', `${formatDuration(s.durationMs)} · ${formatTokens(s.tokens.context)}`));
   if (s.archived) line.append(el('span', 'tag', 'archived'));
   line.addEventListener('click', ev => { ev.stopPropagation(); selectSession(s.id, false); });
   return line;
@@ -111,9 +111,9 @@ function renderMapInner() {
   const scroll = box.scrollTop;
   box.replaceChildren();
   if (!S.selectedProject || !S.project) { box.append(el('p', 'empty', 'Select a project')); return; }
-  if (!S.sessions.length) { box.append(el('p', 'empty', 'No sessions')); return; }
+  if (!S.sessions.length) { box.append(el('p', 'empty', 'No sessions in this project.')); return; }
   for (const s of S.sessions) {
-    const card = el('div', 'card');
+    const card = el('div', `card st-${s.state}`);
     const head = sessionLine(s, 'head');
     head.insertBefore(toolBadge(s.tool), head.children[1]);
     card.append(head);
@@ -178,7 +178,7 @@ function section(name, title, count, build) {
   d.open = !!S.open[name];
   d.addEventListener('toggle', () => { S.open[name] = d.open; });
   const sum = el('summary', null, title);
-  if (count !== null) sum.append(el('span', 'muted', ` (${count})`));
+  if (count !== null) sum.append(el('span', 'count', count));
   d.append(sum, build());
   return d;
 }
@@ -202,7 +202,7 @@ function renderContent() {
     const ol = el('ol', 'calls');
     for (const t of c.toolCalls) {
       const li = el('li', t.ok === false ? 'err' : null);
-      li.append(el('span', 'muted', formatToolTime(t.at)), document.createTextNode(' '), el('strong', null, t.tool));
+      li.append(el('span', 'muted', formatToolTime(t.at)), document.createTextNode(' '), el('strong', `toolname tn-${String(t.tool).replace(/[^A-Za-z0-9]/g, '')}`, t.tool));
       if (t.target) li.append(document.createTextNode(' '), el('code', null, t.target));
       if (t.ok === false) li.append(document.createTextNode(' '), el('span', 'tag', 'error'));
       ol.append(li);
@@ -221,7 +221,7 @@ function renderContent() {
     }
     return w;
   }));
-  const r = el('button', null, 'Refresh');
+  const r = el('button', 'refresh', 'Refresh');
   r.addEventListener('click', () => loadContent(true));
   box.append(r);
 }
@@ -232,13 +232,13 @@ function renderDetail() {
   const s = S.detail;
   if (!s) { box.append(el('p', 'empty', 'Select a session or agent')); return; }
   box.append(el('h3', null, s.title));
-  const sub = el('p', 'muted');
-  sub.append(dot(s.state), document.createTextNode(` ${STATE_LABEL[s.state]}`));
-  if (s.agentType) sub.append(document.createTextNode(` · ${s.agentType}`));
-  if (s.model) sub.append(document.createTextNode(` · ${s.model}`));
-  if (s.parent) sub.append(document.createTextNode(` · Spawned by ${s.parent.title}`));
+  const sub = el('p', 'muted subline');
+  sub.append(el('span', `chip ${s.state}`, STATE_LABEL[s.state]));
+  if (s.agentType) sub.append(el('span', 'mono', s.agentType));
+  if (s.model) sub.append(el('span', 'mono', s.model));
+  if (s.parent) sub.append(el('span', null, `Spawned by ${s.parent.title}`));
   const subDur = el('span', null, formatDuration(s.durationMs)); subDur.id = 'headDuration';
-  sub.append(document.createTextNode(' · '), subDur, document.createTextNode(` · ${formatTokens(s.tokens.context)}`));
+  sub.append(subDur, el('span', null, formatTokens(s.tokens.context)));
   box.append(sub);
   const dl = el('dl', 'kv');
   const row = (k, v) => { dl.append(el('dt', null, k)); const dd = el('dd'); if (v instanceof Node) dd.append(v); else dd.textContent = v ?? '-'; dl.append(dd); };
@@ -263,7 +263,7 @@ function renderDetail() {
   if (refPath) {
     const wrap = el('span', 'refs');
     const code = el('code', null, s.refs.key ? `${refPath} [${s.refs.key}]` : refPath);
-    const btn = el('button', null, 'Copy path');
+    const btn = el('button', 'copy', 'Copy path');
     btn.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(refPath); btn.textContent = 'Copied'; }
       catch { const r = document.createRange(); r.selectNodeContents(code); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }

@@ -63,11 +63,11 @@ Desk serves on `http://127.0.0.1:4917` by default (it falls back to 4918-4936 if
 
 | State | Colour | Meaning |
 |---|---|---|
-| running | green | Activity in the last 2 minutes, or a hook saw a start with no stop. |
-| idle | amber | Last activity within 30 minutes. |
-| finished | grey | Older, or the agent explicitly completed. |
-| failed | red | Explicit failure or an API error. |
-| stale | grey with `?` | A start was seen but no stop, and the file has been untouched for 5 minutes. State is uncertain. |
+| 🟢 running | green | Activity in the last 2 minutes, or a hook saw a start with no stop. |
+| 🟡 idle | amber | Last activity within 30 minutes. |
+| ⚪ finished | grey | Older, or the agent explicitly completed. |
+| 🔴 failed | red | Explicit failure or an API error. |
+| ⚪❔ stale | grey with `?` | A start was seen but no stop, and the file has been untouched for 5 minutes. State is uncertain. |
 
 Each agent also shows where its state came from. "Estimated from file activity" means there was no hook or explicit status, so Desk guessed from how recently the session file changed.
 
@@ -84,7 +84,14 @@ Each agent also shows where its state came from. "Estimated from file activity" 
 
 **Stop.** `/subdeck:desk stop`.
 
-Example view: [desk-smoke.png](research/desk-smoke.png).
+Example view (agent detail with Prompt, Tool calls and Final report expanded; synthetic data):
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="assets/desk-agent-detail-light.png">
+    <img src="assets/desk-agent-detail-dark.png" alt="Desk agent detail with prompt, tool calls and final report" width="700">
+  </picture>
+</p>
 
 ## 6. Using a non-Claude model (e.g. GLM)
 

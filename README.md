@@ -1,26 +1,108 @@
-# SubDeck
+<div align="center">
+
+<img src="docs/assets/banner.svg" alt="SubDeck: manager + sub-agents toolkit for Claude Code, with a local agent dashboard" width="100%">
+
+<br>
+
+[![GitHub](https://img.shields.io/badge/GitHub-emiirhandemirci-181717?logo=github&logoColor=white)](https://github.com/emiirhandemirci)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Emirhan_Demirci-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/emirhan-demirci-/)
+
+![version](https://img.shields.io/badge/version-0.2.1-6366f1)
+![node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white)
+![plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757)
+![deps](https://img.shields.io/badge/dependencies-zero-22c55e)
 
 **New here? Read the [User Guide](docs/USER_GUIDE.md).**
 
-SubDeck is a private Claude Code plugin marketplace for running a manager session with sub-agents.
-The manager delegates to worker, researcher and verifier agents and reads short reports; you get a live, IDE-independent view of what every agent is doing.
-Everything is deterministic (hooks, bash, awk); the model is never called just to produce status.
+</div>
 
-## Components (`plugins/subdeck`)
+SubDeck is a private Claude Code plugin marketplace for running a **manager session with sub-agents**. The manager delegates to worker, researcher and verifier agents and reads short reports. You get a live, IDE-independent view of what every agent is doing. Everything is deterministic (hooks, bash, awk); the model is never called just to produce status.
 
-- Agents: `worker-sonnet` (default), `worker-opus` (critical work only), `researcher` (read-only), `verifier` (independent checks, no commits).
-- Skills: `/subdeck:orchestrator` (manager rulebook), `/subdeck:task` (launch an agent directly), `/subdeck:status` (live agent table), `/subdeck:pr` (pre-push checklist and approval gate, never pushes by itself).
-- Hooks: `SubagentStart` / `SubagentStop` write events to `<project>/.subdeck/` (git-ignore it).
-- Scripts: event logger, `status.sh` (bash + awk renderer), `run-hook.cmd` (Windows/POSIX launcher).
-- Templates: `CLAUDE.local.md.template`, `decision.md.template`.
+## What you get
+
+<table>
+  <tr>
+    <td width="33%" valign="top">🧭<br><b>Manager rulebook</b><br>Delegate, do not do the work yourself. <code>/subdeck:orchestrator</code></td>
+    <td width="33%" valign="top">🤖<br><b>Four agents</b><br>Worker (sonnet, opus), researcher (read-only) and verifier (independent checks).</td>
+    <td width="33%" valign="top">📟<br><b>Live status table</b><br>Running and finished agents in the terminal: <code>/subdeck:status</code></td>
+  </tr>
+  <tr>
+    <td valign="top">🖥️<br><b>SubDeck Desk</b><br>Local web dashboard for Claude Code and Cursor agents. Read-only, <code>127.0.0.1</code> only.</td>
+    <td valign="top">🚦<br><b>Push gate</b><br>Pre-push checklist that asks first. It never pushes by itself. <code>/subdeck:pr</code></td>
+    <td valign="top">🪶<br><b>Zero dependencies</b><br>Bash and awk for the plugin, plain Node for Desk. No jq, no npm install.</td>
+  </tr>
+</table>
 
 ## SubDeck Desk
 
-A local, read-only web dashboard for AI coding agents (Claude Code and Cursor): projects, sessions, sub-agents, live state. Start it with `/subdeck:desk` or `node desk/server.mjs`; it serves on `127.0.0.1` only. Details in `desk/README.md`.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/desk-overview-light.png">
+    <img src="docs/assets/desk-overview-dark.png" alt="SubDeck Desk overview: projects, agent map and detail pane" width="900">
+  </picture>
+</p>
 
-## Install
+Projects on the left, the agent tree in the middle, details on the right. Start it with `/subdeck:desk` or `node desk/server.mjs`. Details in [desk/README.md](desk/README.md).
 
-Local marketplace (persistent). Inside a Claude Code session:
+<details>
+<summary><b>Agent detail</b>: prompt, tool calls, final report</summary>
+<br>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/desk-agent-detail-light.png">
+    <img src="docs/assets/desk-agent-detail-dark.png" alt="Agent detail with prompt, tool calls and final report expanded" width="700">
+  </picture>
+</p>
+</details>
+
+## How it fits together
+
+```mermaid
+flowchart LR
+  classDef src fill:#1e293b,stroke:#64748b,color:#e2e8f0
+  classDef core fill:#312e81,stroke:#818cf8,color:#eef2ff
+  classDef out fill:#14532d,stroke:#4ade80,color:#f0fdf4
+  H["Claude Code hooks"]:::src --> E[".subdeck/events.jsonl"]:::core
+  E --> S["/subdeck:status"]:::out
+  E --> C
+  T["Claude Code transcripts"]:::src --> C["Desk core"]:::core
+  Q["Cursor SQLite"]:::src --> C
+  C --> A["API and SSE"]:::core --> B["Browser UI"]:::out
+```
+
+```mermaid
+flowchart LR
+  classDef you fill:#1e293b,stroke:#94a3b8,color:#f8fafc
+  classDef mgr fill:#312e81,stroke:#818cf8,color:#eef2ff
+  classDef wrk fill:#9a3412,stroke:#fb923c,color:#fff7ed
+  classDef ver fill:#14532d,stroke:#4ade80,color:#f0fdf4
+  U(["You"]):::you --> M["Manager<br/>orchestrator skill"]:::mgr
+  M --> W["Worker"]:::wrk
+  M --> R["Researcher"]:::wrk
+  W --> V["Verifier"]:::ver
+  R --> V
+  V --> M
+  M -->|"short report"| U
+```
+
+## Quick start
+
+1. Install the plugin (see below).
+2. In your project, copy `plugins/subdeck/templates/CLAUDE.local.md.template` to `CLAUDE.local.md` (private, git-ignored) and fill in the placeholders. Add `.subdeck/` to `.gitignore`.
+3. Start Claude Code and run `/subdeck:orchestrator`, then `/subdeck:desk` to open the dashboard.
+
+| Command | What it does |
+|---|---|
+| `/subdeck:orchestrator` | Loads the manager rulebook. |
+| `/subdeck:task` | Launches an agent directly, without the manager window. |
+| `/subdeck:status` | Live agent table (`--all` includes finished agents). |
+| `/subdeck:desk` | Starts (or prints the URL of) Desk; `stop` stops it. |
+| `/subdeck:pr` | Pre-push checklist and approval gate. |
+
+<details>
+<summary><b>Install</b></summary>
+
+Local marketplace (persistent), inside a Claude Code session:
 
 ```
 /plugin marketplace add <path-to>/SubDeck
@@ -28,30 +110,20 @@ Local marketplace (persistent). Inside a Claude Code session:
 /reload-plugins
 ```
 
-Same from a terminal: `claude plugin marketplace add <path-to>/SubDeck` then `claude plugin install subdeck@subdeck`.
+Same from a terminal: `claude plugin marketplace add <path-to>/SubDeck` then `claude plugin install subdeck@subdeck`. Session only, nothing installed: `claude --plugin-dir <path-to>/SubDeck/plugins/subdeck`.
 
-Session only, nothing installed:
+Check the manifests with `claude plugin validate .` and `claude plugin validate ./plugins/subdeck`. Command forms are in `docs/research/plugin-manifest.md`.
+</details>
 
-```
-claude --plugin-dir <path-to>/SubDeck/plugins/subdeck
-```
+<details>
+<summary><b>Components and requirements</b></summary>
 
-Check the manifests with `claude plugin validate .` (repo root) and `claude plugin validate ./plugins/subdeck`. Command forms are documented in `docs/research/plugin-manifest.md`.
-
-## Quick start
-
-1. In your project, copy `plugins/subdeck/templates/CLAUDE.local.md.template` to `CLAUDE.local.md` (private, git-ignored) and fill in the `{{PLACEHOLDERS}}`.
-2. Start Claude Code in the project and run `/subdeck:orchestrator` (or just make a request; the skill loads on its own).
-3. Launch an agent without the manager window: `/subdeck:task`.
-4. Watch agents: `/subdeck:status` (add `--all` for finished agents), or from any terminal:
-   `bash <path-to>/SubDeck/plugins/subdeck/scripts/status.sh --all <project>`
-5. Before pushing: `/subdeck:pr` (it asks first; nothing is pushed without an explicit yes).
-
-## Requirements
-
-- Bash and awk on the path (Git Bash on Windows). No jq, node or python at runtime.
-- Claude Code with plugin support; git.
+- Agents: `worker-sonnet` (default), `worker-opus` (critical work only), `researcher` (read-only), `verifier` (no commits), plus `*-current` variants that inherit the session model.
+- Hooks: `SubagentStart` / `SubagentStop` write events to `<project>/.subdeck/`.
+- Scripts: event logger, `status.sh` (bash + awk), `run-hook.cmd` (Windows/POSIX launcher). Templates: `CLAUDE.local.md.template`, `decision.md.template`.
+- Requirements: Bash and awk (Git Bash on Windows), Claude Code with plugin support, git. Desk needs Node 22.13 or newer.
+</details>
 
 ## Status
 
-v0.1 is implemented: agents, hooks, status renderer, four skills, templates, decision log. It was run end to end (parallel worker + researcher, then verifier, plus `/subdeck:status` and `/subdeck:pr`); see `docs/demo/v0.1-demo.md`. SubDeck Desk v0.2 (monitoring only) is implemented. Remaining items and roadmap are in `docs/design.md`. Decisions are in `docs/decisions/`.
+v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end; see [docs/demo/v0.1-demo.md](docs/demo/v0.1-demo.md). Desk v0.2 (monitoring only) is implemented. Roadmap in [docs/design.md](docs/design.md), decisions in [docs/decisions/](docs/decisions/).

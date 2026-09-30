@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-labelledby="t d">
+  <title id="t">SubDeck</title>
+  <desc id="d">Manager + sub-agents toolkit for Claude Code, with a local agent dashboard</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="0.55" stop-color="#1b1f4b"/>
+      <stop offset="1" stop-color="#3b1d6e"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#60a5fa"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="title" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#c4b5fd"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.85" cy="0.2" r="0.7">
+      <stop offset="0" stop-color="#60a5fa" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#60a5fa" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="300" rx="20" fill="url(#bg)"/>
+  <rect width="1200" height="300" rx="20" fill="url(#glow)"/>
+
+  <!-- logo mark -->
+  <g transform="translate(70 86)">
+    <rect width="128" height="128" rx="32" fill="url(#mark)"/>
+    <rect x="27" y="32" width="74" height="16" rx="8" fill="#fff"/>
+    <rect x="27" y="58" width="53" height="16" rx="8" fill="#fff" opacity="0.85"/>
+    <rect x="27" y="84" width="32" height="16" rx="8" fill="#fff" opacity="0.7"/>
+  </g>
+
+  <!-- text -->
+  <text x="232" y="150" font-family="'Segoe UI', system-ui, -apple-system, Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="84" font-weight="800" fill="url(#title)" letter-spacing="-2">SubDeck</text>
+  <text x="236" y="196" font-family="'Segoe UI', system-ui, -apple-system, Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="26" fill="#cbd5e1">Manager + sub-agents toolkit for Claude Code,</text>
+  <text x="236" y="230" font-family="'Segoe UI', system-ui, -apple-system, Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="26" fill="#cbd5e1">with a local agent dashboard</text>
+
+  <!-- agent tree motif -->
+  <g stroke="#94a3b8" stroke-opacity="0.55" stroke-width="2.5" fill="none" stroke-linecap="round">
+    <path d="M1010 92 V150 H960"/>
+    <path d="M1010 150 H1060 V200"/>
+    <path d="M1010 92 H1100 V150"/>
+    <path d="M1060 200 H1020"/>
+  </g>
+  <circle cx="1010" cy="92" r="16" fill="#60a5fa"/>
+  <circle cx="1010" cy="150" r="12" fill="#22c55e"/>
+  <circle cx="960" cy="150" r="10" fill="#22c55e"/>
+  <circle cx="1100" cy="150" r="10" fill="#fbbf24"/>
+  <circle cx="1060" cy="200" r="10" fill="#94a3b8"/>
+  <circle cx="1020" cy="200" r="10" fill="#f87171"/>
+</svg>
