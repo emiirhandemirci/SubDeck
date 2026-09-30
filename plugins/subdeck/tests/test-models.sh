@@ -66,6 +66,36 @@ out="$(run reset)"; has "$out" 'nothing to remove' "reset twice is harmless"
 out="$(run frobnicate)"; rc=$?; [ $rc -eq 0 ] && ok "unknown arg exits 0" || bad "unknown arg exit $rc"
 has "$out" "warning: ignored argument 'frobnicate'" "unknown arg warned"
 
+# other top-level members are preserved; unparsable files untouched; override warnings
+mkdir -p "$H/.subdeck"
+printf '%s\n' '{"desk":{"days":30,"note":"a,b}"},"modelPolicy":{"worker":"opus"},"list":[1,2]}' > "$H/.subdeck/config.json"
+out="$(run set verifier=haiku)"
+validjson "$H/.subdeck/config.json" && ok "mixed file JSON valid after set" || bad "mixed file invalid after set"
+grep -q '"desk":{"days":30,"note":"a,b}"}' "$H/.subdeck/config.json" && ok "desk kept verbatim after set" || bad "desk lost after set"
+grep -q '"list":\[1,2\]' "$H/.subdeck/config.json" && ok "list kept after set" || bad "list lost"
+out="$(run show)"; has "$out" '^worker +opus +user' "old modelPolicy value kept after set"; has "$out" '^verifier +haiku +user' "new value set in mixed file"
+out="$(run reset)"
+validjson2() { node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(j.modelPolicy||j.desk.days!==30)process.exit(1)' "$1" 2>/dev/null; }
+validjson2 "$H/.subdeck/config.json" && ok "reset keeps desk, removes modelPolicy" || bad "reset result wrong"
+has "$out" 'other settings kept' "reset message"
+printf '%s' '{"desk": {"days": 3}, oops' > "$H/.subdeck/config.json"
+b4="$(cat "$H/.subdeck/config.json")"
+out="$(run set worker=haiku)"; rc=$?
+[ $rc -eq 0 ] && ok "unparsable set exits 0" || bad "unparsable set exit $rc"
+has "$out" 'not a valid JSON object; left untouched' "unparsable set message"
+out="$(run reset)"; has "$out" 'left untouched' "unparsable reset message"
+[ "$b4" = "$(cat "$H/.subdeck/config.json")" ] && ok "unparsable file unchanged" || bad "unparsable file modified"
+rm -f "$H/.subdeck/config.json"
+
+out="$(CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 HOME="$H" bash "$M" show "$P")"
+has "$out" 'WARNING: CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on' "FORCE env warns"
+out="$(run show)"; if printf '%s' "$out" | grep -q WARNING; then bad "warning without cause"; else ok "no warning by default"; fi
+mkdir -p "$P/.claude"; printf '%s\n' '{"env":{"CLAUDE_CODE_SUBAGENT_MODEL_FORCE":"1"}}' > "$P/.claude/settings.json"
+out="$(run show)"; has "$out" 'WARNING: CLAUDE_CODE_SUBAGENT_MODEL_FORCE' "FORCE in settings env warns"
+printf '%s\n' '{"availableModels":["sonnet"]}' > "$P/.claude/settings.json"
+out="$(run show)"; has "$out" 'WARNING: availableModels' "availableModels warns"
+rm -rf "$P/.claude"
+
 rm -rf "$H" "$P"
 echo "$PASS passed, $FAIL failed"
 [ $FAIL -eq 0 ]

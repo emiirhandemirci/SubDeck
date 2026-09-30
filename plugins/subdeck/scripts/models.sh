@@ -3,12 +3,14 @@
 #
 #   bash <plugin>/scripts/models.sh [show]                         effective policy + source of each value
 #   bash <plugin>/scripts/models.sh set key=value ... [--project]  write user (default) or project config
-#   bash <plugin>/scripts/models.sh reset [--project]              delete that config file
+#   bash <plugin>/scripts/models.sh reset [--project]              remove the modelPolicy of that config file
 # A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
 # Precedence: built-in defaults < ~/.subdeck/config.json < <project>/.subdeck/config.json
 # Keys: mode (auto|named|current), worker, escalation, researcher, verifier, explore
 # Values: sonnet|opus|haiku|fable|inherit, a full model id (claude-...), or another backend's model id.
-# The config file is owned by this script: `set` rewrites it as {"modelPolicy":{...}} (other keys are dropped).
+# `set`/`reset` only replace/remove the modelPolicy member; other top-level members are re-emitted verbatim.
+# A file that is not a JSON object is left untouched (message, exit 0).
+# `show` warns when a setting would defeat the policy (CLAUDE_CODE_SUBAGENT_MODEL_FORCE, availableModels).
 # No jq/node. Always exits 0 (a failing injected command would abort the skill).
 
 KEYS="mode worker escalation researcher verifier explore"
@@ -63,13 +65,74 @@ resolve() { # alias -> resolved id text
   done
   echo "latest $1 (alias; real id shown by /subdeck:status)"
 }
-write_file() { # file, then key=value pairs
-  local f="$1"; shift
+
+# members FILE: print each top-level member of a JSON object on its own line (raw text), except modelPolicy.
+# Returns 1 when the file is not a well-formed JSON object; an absent or blank file has no members (returns 0).
+members() {
+  [ -f "$1" ] || return 0
+  tr -d '\r' < "$1" | tr '\n' ' ' | awk '
+    { t = t $0 }
+    END {
+      gsub(/^[ \t]+|[ \t]+$/, "", t)
+      if (t == "") exit 0
+      n = length(t)
+      if (substr(t,1,1) != "{" || substr(t,n,1) != "}") exit 1
+      depth = 0; ins = 0; esc = 0; cur = ""
+      for (i = 1; i <= n; i++) {
+        c = substr(t, i, 1)
+        if (ins) { cur = cur c; if (esc) esc = 0; else if (c == "\\") esc = 1; else if (c == "\"") ins = 0; continue }
+        if (c == "\"") { ins = 1; cur = cur c; continue }
+        if (c == "{" || c == "[") { depth++; if (depth == 1) continue }
+        else if (c == "}" || c == "]") {
+          depth--
+          if (depth < 0) exit 1
+          if (depth == 0) { if (i != n) exit 1; emit(); continue }
+        }
+        else if (c == "," && depth == 1) { emit(); continue }
+        cur = cur c
+      }
+      if (ins || depth != 0) exit 1
+    }
+    function emit() {
+      gsub(/^[ \t]+|[ \t]+$/, "", cur)
+      if (cur != "" && cur !~ /^"modelPolicy"[ \t]*:/) print cur
+      cur = ""
+    }'
+}
+
+# write_file FILE OTHERS [key=value ...]: OTHERS = newline-separated raw members kept verbatim.
+write_file() {
+  local f="$1" others="$2" line out="" body="" kv
+  shift 2
   mkdir -p "$(dirname "$f")" 2>/dev/null
-  local out="" kv
-  for kv in "$@"; do out="$out,\"${kv%%=*}\":\"${kv#*=}\""; done
-  if printf '{"modelPolicy":{%s}}\n' "${out#,}" > "$f" 2>/dev/null; then return 0; fi
+  while IFS= read -r line; do if [ -n "$line" ]; then body="$body$line,"; fi; done <<< "$others"
+  if [ $# -gt 0 ]; then
+    for kv in "$@"; do out="$out,\"${kv%%=*}\":\"${kv#*=}\""; done
+    body="$body\"modelPolicy\":{${out#,}},"
+  fi
+  if printf '{%s}\n' "${body%,}" > "$f" 2>/dev/null; then return 0; fi
   echo "error: could not write $f"; return 1
+}
+
+setting_env() { # NAME -> value from process env, else from Claude settings files
+  local var="$1" val f
+  val="${!var}"; if [ -n "$val" ]; then echo "$val"; return; fi
+  for f in "$PROJECT/.claude/settings.local.json" "$PROJECT/.claude/settings.json" "$HOME/.claude/settings.json"; do
+    val="$(getval "$f" "$var")"; if [ -n "$val" ]; then echo "$val"; return; fi
+  done
+}
+warn_overrides() {
+  local v f
+  v="$(setting_env CLAUDE_CODE_SUBAGENT_MODEL_FORCE)"
+  case "$v" in
+    ""|0|false) ;;
+    *) echo "WARNING: CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on: Claude Code ignores this policy and runs every subagent on one model (CLAUDE_CODE_SUBAGENT_MODEL, else the session model). Unset it to use /subdeck:models." ;;
+  esac
+  for f in "$PROJECT/.claude/settings.local.json" "$PROJECT/.claude/settings.json" "$HOME/.claude/settings.json"; do
+    if [ -f "$f" ] && grep -q '"availableModels"' "$f"; then
+      echo "WARNING: availableModels in $f may block a policy model; Claude Code then substitutes another model."; break
+    fi
+  done
 }
 
 show() {
@@ -91,6 +154,7 @@ show() {
   echo
   echo "user file:    $UFILE$([ -f "$UFILE" ] || echo ' (absent)')"
   echo "project file: $PFILE$([ -f "$PFILE" ] || echo ' (absent)')"
+  warn_overrides
   echo "Manager model: chosen in Claude Code with /model (not part of this policy)."
   echo "Usage: /subdeck:models set worker=haiku verifier=opus [--project] | reset [--project]"
 }
@@ -100,9 +164,13 @@ for b in "${BADARGS[@]}"; do echo "warning: ignored argument '$b'"; done
 case "$CMD" in
   show) show ;;
   reset)
-    if [ -f "$TARGET" ]; then
+    if [ ! -f "$TARGET" ]; then echo "reset: nothing to remove ($TARGET absent)"
+    elif ! OTHERS="$(members "$TARGET")"; then echo "error: $TARGET is not a valid JSON object; left untouched (fix or delete it by hand)."
+    elif [ -z "$OTHERS" ]; then
       if rm -f "$TARGET" 2>/dev/null; then echo "reset: removed $TARGET"; else echo "error: could not remove $TARGET"; fi
-    else echo "reset: nothing to remove ($TARGET absent)"; fi
+    else
+      if write_file "$TARGET" "$OTHERS"; then echo "reset: removed modelPolicy from $TARGET (other settings kept)"; fi
+    fi
     echo; show ;;
   set)
     if [ ${#PAIRS[@]} -eq 0 ]; then echo "error: set needs key=value pairs, e.g. set worker=haiku"; echo "valid keys: $KEYS"; exit 0; fi
@@ -117,13 +185,16 @@ case "$CMD" in
       else NEW+=("$k=$v"); fi
     done
     if [ $ERR -ne 0 ]; then echo "nothing written."; exit 0; fi
+    if ! OTHERS="$(members "$TARGET")"; then
+      echo "error: $TARGET is not a valid JSON object; left untouched (fix or delete it by hand)."; exit 0
+    fi
     MERGED=()
     for k in $KEYS; do
       val="$(getval "$TARGET" "$k")"
       for kv in "${NEW[@]}"; do if [ "${kv%%=*}" = "$k" ]; then val="${kv#*=}"; fi; done
       if [ -n "$val" ]; then MERGED+=("$k=$val"); fi
     done
-    if write_file "$TARGET" "${MERGED[@]}"; then echo "wrote $TARGET"; fi
+    if write_file "$TARGET" "$OTHERS" "${MERGED[@]}"; then echo "wrote $TARGET"; fi
     echo; show ;;
 esac
 exit 0
