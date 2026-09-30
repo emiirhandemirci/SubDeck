@@ -1,5 +1,5 @@
 // desk/server.mjs
-// SubDeck Desk: local, read-only dashboard of AI coding agent sessions (spec docs/superpowers/specs/2026-09-29-subdeck-desk-design.md).
+// SubDeck Desk: local, read-only dashboard of AI coding agent sessions.
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';

@@ -38,4 +38,4 @@ node --test "desk/test/*.test.mjs"
 bash plugins/subdeck/tests/test-desk-launcher.sh
 ```
 
-Design: `docs/superpowers/specs/2026-09-29-subdeck-desk-design.md`. Decisions: `docs/decisions/0015` to `0019`. Smoke check on real data: `docs/research/desk-smoke.md`.
+Design: see this README and `docs/design.md`. Decisions: `docs/decisions/0015` to `0019`. Smoke check on real data: `docs/research/desk-smoke.md`.

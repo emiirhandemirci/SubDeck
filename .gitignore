@@ -9,3 +9,7 @@ desktop.ini
 *.swp
 *.log
 node_modules/
+
+# internal process artifacts (kept locally)
+docs/superpowers/
+docs/tasks/
