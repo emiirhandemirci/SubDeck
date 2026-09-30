@@ -1,5 +1,5 @@
 {
-  "description": "SubDeck event logger: records subagent start/stop and input-needed notifications to .subdeck/events.jsonl",
+  "description": "SubDeck hooks: event logger (subagent start/stop, input-needed) to .subdeck/events.jsonl; local desktop notifications (toggle with /subdeck:notify); Bash/Write/Edit guard",
   "hooks": {
     "SubagentStart": [
       {
@@ -21,6 +21,12 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.cmd\" log-event SubagentStop",
             "shell": "bash",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.cmd\" notify hook agent",
+            "shell": "bash",
+            "timeout": 10
           }
         ]
       }
@@ -32,6 +38,42 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.cmd\" log-event Notification",
+            "shell": "bash",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "permission_prompt|elicitation_dialog|agent_needs_input|idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.cmd\" notify hook waiting",
+            "shell": "bash",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.cmd\" notify hook done",
+            "shell": "bash",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.cmd\" guard",
             "shell": "bash",
             "timeout": 10
           }
