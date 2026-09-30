@@ -51,5 +51,14 @@ else
 fi
 [ $RC -eq 0 ] && ok "bad dir exit 0" || bad "bad dir exit 0"
 
+# installed layout: script copied without a sibling desk/, Desk only in the marketplace clone
+CACHE="$HOME/cache/subdeck/subdeck/0.2.1"; mkdir -p "$CACHE/scripts"; cp "$LAUNCH" "$CACHE/scripts/desk.sh"
+FAKEH="$(mktemp -d)"; mkdir -p "$FAKEH/.claude/plugins/marketplaces/subdeck"; cp -r "$DESK" "$FAKEH/.claude/plugins/marketplaces/subdeck/desk"
+OUT="$(HOME="$FAKEH" USERPROFILE="$FAKEH" SUBDECK_DESK_DIR= bash "$CACHE/scripts/desk.sh" start)"
+has "$OUT" '^SubDeck Desk: http' "installed layout finds Desk in the marketplace clone"
+HOME="$FAKEH" USERPROFILE="$FAKEH" bash "$CACHE/scripts/desk.sh" stop >/dev/null
+OUT="$(HOME="$HOME/empty" USERPROFILE="$HOME/empty" SUBDECK_DESK_DIR= bash "$CACHE/scripts/desk.sh" start)"
+has "$OUT" 'not found.*marketplaces/subdeck/desk' "not-found message lists tried locations"
+
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

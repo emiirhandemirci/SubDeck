@@ -23,7 +23,7 @@ SubDeck is a private Claude Code plugin marketplace for running a **manager sess
 <table>
   <tr>
     <td width="33%" valign="top">🧭<br><b>Manager rulebook</b><br>Delegate, do not do the work yourself. <code>/subdeck:orchestrator</code></td>
-    <td width="33%" valign="top">🤖<br><b>Four agents</b><br>Worker (sonnet, opus), researcher (read-only) and verifier (independent checks).</td>
+    <td width="33%" valign="top">🤖<br><b>Seven agents</b><br>Worker (sonnet, opus, current), researcher and verifier (each with a current-model variant).</td>
     <td width="33%" valign="top">📟<br><b>Live status table</b><br>Running and finished agents in the terminal: <code>/subdeck:status</code></td>
   </tr>
   <tr>

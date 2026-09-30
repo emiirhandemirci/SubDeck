@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SubDeck Desk launcher: bash plugins/subdeck/scripts/desk.sh [start|stop|status]   (always exits 0)
-# Desk location: $SUBDECK_DESK_DIR (the desk/ folder of a SubDeck checkout), else <repo>/desk relative to this script.
+# Desk location: $SUBDECK_DESK_DIR (the desk/ folder of a SubDeck checkout), else <repo>/desk relative to this script,
+# else the marketplace clone <claude config dir>/plugins/marketplaces/subdeck/desk (installed from GitHub).
 # Runtime file: ~/.subdeck/desk.json {pid, port, startedAt, version}; log: ~/.subdeck/desk.log
 
 CMD="${1:-start}"
@@ -10,9 +11,12 @@ RT="$RT_DIR/desk.json"
 LOG="$RT_DIR/desk.log"
 TIP='Tip: in VS Code or Cursor run "Simple Browser: Show" and paste the URL to open Desk in an editor tab.'
 
+CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+MKT_DESK="$CFG/plugins/marketplaces/subdeck/desk"
 find_desk() {
   if [ -n "${SUBDECK_DESK_DIR:-}" ] && [ -f "$SUBDECK_DESK_DIR/server.mjs" ]; then printf '%s' "$SUBDECK_DESK_DIR"; return; fi
   if [ -f "$HERE/../../../desk/server.mjs" ]; then (cd "$HERE/../../../desk" && pwd); return; fi
+  if [ -f "$MKT_DESK/server.mjs" ]; then printf '%s' "$MKT_DESK"; return; fi
   printf ''
 }
 is_windows() { case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return 1 ;; esac; }
@@ -40,7 +44,7 @@ case "$CMD" in
   start|*)
     if alive; then echo "SubDeck Desk: $(url)"; echo "$TIP"; exit 0; fi
     DESK="$(find_desk)"
-    if [ -z "$DESK" ]; then echo "SubDeck Desk not found. Set SUBDECK_DESK_DIR to the desk/ folder of a SubDeck checkout."; exit 0; fi
+    if [ -z "$DESK" ]; then echo "SubDeck Desk not found. Tried: \$SUBDECK_DESK_DIR (${SUBDECK_DESK_DIR:-unset}), $HERE/../../../desk, $MKT_DESK. Set SUBDECK_DESK_DIR to the desk/ folder of a SubDeck checkout."; exit 0; fi
     mkdir -p "$RT_DIR"
     rm -f "$RT"
     if is_windows; then
