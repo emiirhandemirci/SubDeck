@@ -1,7 +1,7 @@
 // desk/test/model.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clip, deriveState, validateAdapterSession, makeSource, sessionIdOf, projectIdOf, RUNNING_MS, IDLE_MS, STALE_MS } from '../lib/model.mjs';
+import { clip, deriveState, validateAdapterSession, makeSource, sessionIdOf, projectIdOf, RUNNING_MS, IDLE_MS, STALE_MS, WAITING_MS, STATES } from '../lib/model.mjs';
 
 test('clip: code points, single line, ellipsis', () => {
   assert.equal(clip('a\nb\tc', 80), 'a b c');
@@ -61,4 +61,16 @@ test('failed is a supported fixed state; runStartedAt is an optional string', ()
   assert.equal(validateAdapterSession({ ...base, runStartedAt: '2026-09-29T10:00:00.000Z' }).ok, true);
   assert.equal(validateAdapterSession({ ...base, runStartedAt: 5 }).ok, false);
   assert.deepEqual(deriveState(base.stateBasis, 0), { state: 'failed', stateSource: 'field' });
+});
+
+test('waiting: state list, basis validation and expiry back to the mtime rule', () => {
+  assert.ok(STATES.includes('waiting'));
+  const now = Date.parse('2026-09-29T12:00:00Z');
+  const at = ms => new Date(now - ms).toISOString();
+  assert.deepEqual(deriveState({ kind: 'waiting', at: at(1000), stateSource: 'field', fallbackAt: at(1000) }, now), { state: 'waiting', stateSource: 'field' });
+  assert.deepEqual(deriveState({ kind: 'waiting', at: at(1000), stateSource: 'hook', fallbackAt: at(1000) }, now), { state: 'waiting', stateSource: 'hook' });
+  assert.equal(deriveState({ kind: 'waiting', at: at(WAITING_MS + 1000), stateSource: 'field', fallbackAt: at(WAITING_MS + 1000) }, now).state, 'finished');
+  assert.equal(deriveState({ kind: 'waiting', at: null, stateSource: 'field' }, now).state, 'unknown');
+  assert.equal(validateAdapterSession({ ...good(), stateBasis: { kind: 'waiting', at: null, stateSource: 'field' } }).ok, true);
+  assert.equal(validateAdapterSession({ ...good(), stateBasis: { kind: 'fixed', state: 'waiting', stateSource: 'hook' } }).ok, true);
 });

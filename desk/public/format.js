@@ -1,6 +1,6 @@
 // Pure display helpers shared by the browser UI and Node tests. No DOM access here.
 
-export const STATE_LABEL = { running: 'running', idle: 'idle', finished: 'finished', failed: 'failed', stale: 'stale?', unknown: 'unknown' };
+export const STATE_LABEL = { waiting: 'waiting', running: 'running', idle: 'idle', finished: 'finished', failed: 'failed', stale: 'stale?', unknown: 'unknown' };
 export const SOURCE_LABEL = { hook: 'from hook', field: 'from tool status', mtime: 'estimated from file activity', none: 'unknown' };
 export const TOOL_BADGE = { 'claude-code': 'Claude', cursor: 'Cursor' };
 export const GROUP_ORDER = ['Active now', 'Today', 'Last 7 days', 'Older'];
@@ -39,7 +39,7 @@ export function formatClock(iso) {
 }
 
 export function recencyGroup(p, nowMs) {
-  if (p.runningCount > 0) return 'Active now';
+  if (p.runningCount > 0 || p.waitingCount > 0) return 'Active now';
   const t = p.lastActivityAt ? Date.parse(p.lastActivityAt) : NaN;
   if (!Number.isFinite(t)) return 'Older';
   const midnight = new Date(nowMs); midnight.setHours(0, 0, 0, 0);
@@ -60,7 +60,7 @@ export function filterProjects(projects, { text = '', onlyActive = false }, nowM
     if (q && !p.name.toLowerCase().includes(q) && !(p.path || '').toLowerCase().includes(q)) return false;
     if (onlyActive) {
       const t = p.lastActivityAt ? Date.parse(p.lastActivityAt) : NaN;
-      return p.runningCount > 0 || (Number.isFinite(t) && nowMs - t < 1800000);
+      return p.runningCount > 0 || p.waitingCount > 0 || (Number.isFinite(t) && nowMs - t < 1800000);
     }
     return true;
   });

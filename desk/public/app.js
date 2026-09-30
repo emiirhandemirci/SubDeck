@@ -11,7 +11,7 @@ const S = {
   sources: [], server: null, projects: [], project: null, sessions: [], detail: null,
   selectedProject: store.get('project', null), selectedSession: null,
   filter: store.get('filter', ''), onlyActive: store.get('onlyActive', false),
-  lastHeartbeat: 0, lastRunning: null,
+  lastHeartbeat: 0, lastRunning: null, lastWaiting: null,
   content: null, contentFor: null, contentKey: null, open: { prompt: false, tools: false, report: true },
 };
 
@@ -19,6 +19,15 @@ function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.
 async function getJSON(url) { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); }
 function dot(state) { const d = el('span', `dot ${state}`); d.setAttribute('aria-hidden', 'true'); return d; }
 function stateWord(state) { return el('span', `state-word chip ${state}`, STATE_LABEL[state] || state); }
+// Waiting count: server-side per-project counts when available, else what the selected project's tree shows.
+function updateWaiting() {
+  const own = S.sessions.reduce((n, s) => n + (s.state === 'waiting') + s.children.filter(c => c.state === 'waiting').length, 0);
+  const total = S.projects.some(p => typeof p.waitingCount === 'number') ? S.projects.reduce((n, p) => n + (p.waitingCount || 0), 0) : own;
+  const b = $('waitingCount');
+  b.hidden = total <= 0;
+  b.textContent = total > 0 ? `${total} waiting` : '';
+  b.title = total > 0 ? 'Sessions or agents blocked on your input (permission, question or plan approval)' : '';
+}
 function toolBadge(tool) { return el('span', `badge tool tool-${tool}`, TOOL_BADGE[tool] || tool); }
 
 // Rebuilding a list drops keyboard focus; remember the focused item's id and restore it (only if it was focused).
@@ -47,7 +56,7 @@ function renderSources() {
 }
 
 // ---------- projects ----------
-function renderProjects() { keepFocus($('projects'), renderProjectsInner); }
+function renderProjects() { keepFocus($('projects'), renderProjectsInner); updateWaiting(); }
 function renderProjectsInner() {
   const box = $('projects');
   const scroll = box.scrollTop;
@@ -70,6 +79,7 @@ function renderProjectsInner() {
       row.append(path);
       const meta = el('div', 'meta');
       for (const t of p.tools) meta.append(toolBadge(t));
+      if (p.waitingCount > 0) { const pill = el('span', 'pill waiting'); pill.append(dot('waiting'), document.createTextNode(`${p.waitingCount} waiting`)); meta.append(pill); }
       if (p.runningCount > 0) { const pill = el('span', 'pill running'); pill.append(dot('running'), document.createTextNode(`${p.runningCount} running`)); meta.append(pill); }
       row.append(meta);
       row.addEventListener('click', () => selectProject(p.id, true));
@@ -105,7 +115,7 @@ function sessionLine(s, cls) {
   return line;
 }
 
-function renderMap() { keepFocus($('map'), renderMapInner); }
+function renderMap() { keepFocus($('map'), renderMapInner); updateWaiting(); }
 function renderMapInner() {
   const box = $('map');
   const scroll = box.scrollTop;
@@ -113,7 +123,7 @@ function renderMapInner() {
   if (!S.selectedProject || !S.project) { box.append(el('p', 'empty', 'Select a project')); return; }
   if (!S.sessions.length) { box.append(el('p', 'empty', 'No sessions in this project.')); return; }
   for (const s of S.sessions) {
-    const card = el('div', `card st-${s.state}`);
+    const card = el('div', `card st-${s.state}`);   // sessions arrive waiting-first from the API
     const head = sessionLine(s, 'head');
     head.insertBefore(toolBadge(s.tool), head.children[1]);
     card.append(head);
@@ -127,6 +137,9 @@ function renderMapInner() {
   }
   if (!box.querySelector('[tabindex="0"]')) { const first = box.querySelector('[role=treeitem]'); if (first) first.tabIndex = 0; }
   box.scrollTop = scroll;
+  const waiting = S.sessions.reduce((n, s) => n + (s.state === 'waiting') + s.children.filter(c => c.state === 'waiting').length, 0);
+  if (S.lastWaiting !== null && waiting > S.lastWaiting) $('announce').textContent = `${waiting} waiting for input`;
+  S.lastWaiting = waiting;
   const running = S.sessions.reduce((n, s) => n + (s.state === 'running') + s.children.filter(c => c.state === 'running').length, 0);
   if (S.lastRunning !== null && running !== S.lastRunning) $('announce').textContent = `${running} running`;
   S.lastRunning = running;

@@ -15,6 +15,10 @@ export const rec = {
   text: (ts, text, u = null, model) => ({ type: 'assistant', timestamp: ts, requestId: 'r1', message: msg([{ type: 'text', text }], u, model) }),
   thinking: ts => ({ type: 'assistant', timestamp: ts, message: msg([{ type: 'thinking', thinking: 'THINKING_MARKER' }], null) }),
   tool: (ts, name, input, u = null) => ({ type: 'assistant', timestamp: ts, requestId: 'r2', message: msg([{ type: 'tool_use', id: 't1', name, input }], u) }),
+  // pending blocking tools (no tool_result yet)
+  ask: ts => ({ type: 'assistant', timestamp: ts, message: { ...msg([{ type: 'tool_use', id: 'q1', name: 'AskUserQuestion', input: { questions: [{ question: 'QUESTION_MARKER' }] } }], null), stop_reason: 'tool_use' } }),
+  exitPlan: ts => ({ type: 'assistant', timestamp: ts, message: { ...msg([{ type: 'tool_use', id: 'q2', name: 'ExitPlanMode', input: { plan: 'PLAN_MARKER' } }], null), stop_reason: 'tool_use' } }),
+  answer: ts => ({ type: 'user', timestamp: ts, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'q1', content: 'ANSWER_MARKER' }] } }),
   // sub-agent transcript run boundaries
   endTurn: (ts, text = 'done') => ({ type: 'assistant', timestamp: ts, message: { role: 'assistant', model: 'claude-sonnet-4-5', stop_reason: 'end_turn', content: [{ type: 'text', text }] } }),
   apiError: ts => ({ type: 'assistant', timestamp: ts, isApiErrorMessage: true, error: 'API_ERROR_MARKER', message: { role: 'assistant', model: 'claude-sonnet-4-5', stop_reason: 'stop_sequence', content: [{ type: 'text', text: 'API_ERROR_MARKER' }] } }),

@@ -4,6 +4,8 @@
 # Run from any terminal (Git Bash, macOS, Linux); no model call, no jq/node:
 #   bash <plugin>/scripts/status.sh [--all] [project_dir]
 # project_dir defaults to $CLAUDE_PROJECT_DIR, else the current directory.
+# STATE shows `waiting` when the agent is blocked on you: a Notification hook event (permission prompt,
+# question dialog) newer than its transcript's last write, or a trailing AskUserQuestion/ExitPlanMode call.
 # Default view: running agents + the last 10 finished; --all shows every agent.
 # Reads <project>/.subdeck/events.jsonl and <project>/.subdeck/events.d/*.json.
 
@@ -64,6 +66,13 @@ fold() {
   {
     line = $2
     ev = field(line, "event")
+    if (ev == "Notification") {
+      # only waiting-type notifications (idle_prompt etc. are ignored); keyed by agent id, else session id
+      if (line !~ /"notification_type":"(permission_prompt|elicitation_dialog|agent_needs_input)"/) next
+      e = epoch(field(line, "ts")); k = field(line, "agent_id"); k = (k != "") ? "a:" k : "s:" field(line, "session_id")
+      if (e > ntf[k]) ntf[k] = e
+      next
+    }
     if (ev != "SubagentStart" && ev != "SubagentStop") next
     id = field(line, "agent_id"); if (id == "") id = "unknown"
     e = epoch(field(line, "ts"))
@@ -124,7 +133,9 @@ fold() {
   function row(id, state, g,   d, sp) {
     d = (state == "running") ? now - st[id] : stop[id] - st[id]
     if (!(g in gpath)) { gpath[g] = ""; for (sp in path) if (sess(sp) == g) { gpath[g] = parentof(sp); break } }
-    printf "%s\001%s\001%s\001%s\001%s\001%s\001%s\001%s\001%s\001%s\n", id, (id in type ? type[id] : "-"), (st[id] ? hms(st[id]) : "-"), dur(d), state, agentpath(id), g, gpath[g], (d < 0 ? 0 : d), (id in msg ? msg[id] : "")
+    w = ""
+    if (state == "running") { w = ntf["a:" id] + 0; if (ntf["s:" sess(id)] + 0 > w) w = ntf["s:" sess(id)] + 0; if (w <= st[id]) w = "" }
+    printf "%s\001%s\001%s\001%s\001%s\001%s\001%s\001%s\001%s\001%s\001%s\n", id, (id in type ? type[id] : "-"), (st[id] ? hms(st[id]) : "-"), dur(d), state, agentpath(id), g, gpath[g], (d < 0 ? 0 : d), w, (id in msg ? msg[id] : "")
   }'
 }
 
@@ -294,7 +305,7 @@ esac
 STALE_MIN="${SUBDECK_STALE_MIN:-5}"
 case "$STALE_MIN" in ""|*[!0-9]*) STALE_MIN=5 ;; esac
 prev="<none>"
-while IFS=$'\001' read -r id type start dur state path sid spath secs msg; do
+while IFS=$'\001' read -r id type start dur state path sid spath secs wts msg; do
   if [ "$sid" != "$prev" ]; then
     [ "$prev" != "<none>" ] && echo
     st="$(session_title "$sid" "$(norm_path "$spath")")"
@@ -306,6 +317,20 @@ while IFS=$'\001' read -r id type start dur state path sid spath secs msg; do
   short="${id:0:8}"
   np="$(norm_path "$path")"
   if [ "$state" = running ]; then
+    # waiting: Notification newer than the transcript's last write, or a trailing blocking tool call
+    if [ -n "$wts" ]; then
+      if [ -f "$np" ]; then
+        mt="$(stat -c %Y "$np" 2>/dev/null || stat -f %m "$np" 2>/dev/null)"
+        [ -n "$mt" ] && [ "$mt" -lt $(( wts + 2 )) ] && state=waiting
+      else
+        state=waiting
+      fi
+    fi
+    if [ "$state" = running ] && [ -f "$np" ] && tail -n 1 "$np" 2>/dev/null | grep -Eq '"type":"tool_use","id":"[^"]*","name":"(AskUserQuestion|ExitPlanMode)"'; then state=waiting; fi
+  fi
+  if [ "$state" = waiting ]; then
+    act="$(tail_activity "$np")"
+  elif [ "$state" = running ]; then
     # stale?: no Stop and the transcript untouched for STALE_MIN minutes (missing file: Start age)
     if [ -f "$np" ]; then
       [ -n "$(find "$np" -maxdepth 0 -mmin +"$STALE_MIN" 2>/dev/null)" ] && state="stale?"

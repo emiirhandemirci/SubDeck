@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto';
 export const RUNNING_MS = 120000;
 export const IDLE_MS = 1800000;
 export const STALE_MS = 300000;
-export const STATES = ['running', 'idle', 'finished', 'failed', 'stale', 'unknown'];
+export const WAITING_MS = 21600000;   // a pending prompt older than this is treated as abandoned
+export const STATES = ['waiting', 'running', 'idle', 'finished', 'failed', 'stale', 'unknown'];
 export const STATE_SOURCES = ['hook', 'field', 'mtime', 'none'];
 const KINDS = ['user', 'assistant', 'tool', 'other'];
 const TITLE_SOURCES = ['explicit', 'summary', 'meta', 'fallback'];
@@ -25,7 +26,9 @@ export function deriveState(basis, nowMs) {
   const t = basis.at ? Date.parse(basis.at) : NaN;
   if (!Number.isFinite(t)) return { state: 'unknown', stateSource: 'none' };
   const age = nowMs - t;
+  if (basis.kind === 'waiting' && Number.isFinite(t) && age <= WAITING_MS) return { state: 'waiting', stateSource: basis.stateSource };
   if (basis.kind === 'hookOpen') return { state: age > STALE_MS ? 'stale' : 'running', stateSource: 'hook' };
+  if (basis.kind === 'waiting') return deriveState({ kind: 'mtime', at: basis.fallbackAt || null, stateSource: 'mtime' }, nowMs);
   if (basis.kind === 'mtime') return { state: age < RUNNING_MS ? 'running' : age < IDLE_MS ? 'idle' : 'finished', stateSource: 'mtime' };
   return { state: 'unknown', stateSource: 'none' };
 }
@@ -46,7 +49,7 @@ export function validateAdapterSession(s) {
   if (!s.tokens || !optNum(s.tokens.context) || !optNum(s.tokens.total)) return fail('tokens');
   if (s.lastActivity && !KINDS.includes(s.lastActivity.kind)) return fail('lastActivity.kind');
   const b = s.stateBasis;
-  if (!b || !['fixed', 'mtime', 'hookOpen'].includes(b.kind)) return fail('stateBasis');
+  if (!b || !['fixed', 'mtime', 'hookOpen', 'waiting'].includes(b.kind)) return fail('stateBasis');
   if (b.kind === 'fixed' && (!STATES.includes(b.state) || !STATE_SOURCES.includes(b.stateSource))) return fail('stateBasis.fixed');
   return { ok: true };
 }

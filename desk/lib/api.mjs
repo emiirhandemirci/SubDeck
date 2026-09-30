@@ -30,8 +30,9 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     const project = snap.projects.find(p => p.id === id);
     if (!project) return null;
     const own = snap.sessions.filter(s => s.projectId === id);
-    const byUpdated = (a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt));
-    const childOrder = (a, b) => (b.state === 'running') - (a.state === 'running') || String(b.createdAt).localeCompare(String(a.createdAt));
+    const w = x => (x.state === 'waiting' ? 1 : 0);   // blocked-on-user first
+    const byUpdated = (a, b) => w(b) - w(a) || String(b.updatedAt).localeCompare(String(a.updatedAt));
+    const childOrder = (a, b) => w(b) - w(a) || (b.state === 'running') - (a.state === 'running') || String(b.createdAt).localeCompare(String(a.createdAt));
     const sessions = own.filter(s => !s.parentId).sort(byUpdated).map(s => ({
       ...s, children: own.filter(c => c.parentId === s.id).sort(childOrder).map(c => ({ ...c, children: [] })),
     }));

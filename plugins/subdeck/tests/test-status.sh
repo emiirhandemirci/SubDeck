@@ -210,6 +210,41 @@ grep -qF 'allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/status.sh" *)'
 grep -qF 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/status.sh" $ARGUMENTS "${CLAUDE_PROJECT_DIR}" || true' "$SK" && ok "skill: injection passes project dir, never fails" || bad "skill: injection passes project dir, never fails"
 grep -q '^```!$' "$SK" && ok "skill: injection fence" || bad "skill: injection fence"
 
+# waiting: Notification newer than the transcript's last write, or a trailing blocking tool call
+isoat() { date -u -d "@$(( $(date +%s) + $1 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$(( $(date +%s) + $1 ))" +%Y-%m-%dT%H:%M:%SZ; }
+PW="$(mktemp -d)"; mkdir -p "$PW/.subdeck"
+for id in w1wwwwww w2wwwwww w3wwwwww w4wwwwww w5wwwwww; do
+  printf '%s
+' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"npm test"}}]}}' > "$T/s1/subagents/agent-$id.jsonl"
+done
+# 05: trailing AskUserQuestion, no notification
+printf '%s
+' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[]}}]}}' > "$T/s1/subagents/agent-w5wwwwww.jsonl"
+nt() { printf '{"ts":"%s","event":"Notification","agent_id":"%s","agent_type":"","transcript_path":"","session_id":"%s","payload":{"notification_type":"%s","message":"secret text"}}
+' "$1" "$2" "$3" "$4"; }
+{
+  for id in w1wwwwww w2wwwwww w3wwwwww w4wwwwww w5wwwwww; do ev "$(isoat -100)" SubagentStart "$id" worker-sonnet "$T/s1.jsonl"; done
+  nt "$(isoat 20)" "" s1 permission_prompt      # after the last transcript write -> 01..04 waiting (session key), unless resolved below
+} > "$PW/.subdeck/events.jsonl"
+OUT="$(bash "$STATUS" "$PW")"
+has "$OUT" '^w1wwwwww .* waiting ' "waiting: permission_prompt newer than transcript write"
+has "$OUT" '^w5wwwwww .* waiting ' "waiting: trailing AskUserQuestion tool call"
+hasnt "$OUT" 'secret text' "waiting: notification message never shown"
+PR="$(mktemp -d)"; mkdir -p "$PR/.subdeck"
+{ ev "$(isoat -100)" SubagentStart w1wwwwww worker-sonnet "$T/s1.jsonl"; nt "$(isoat -60)" "" s1 permission_prompt; } > "$PR/.subdeck/events.jsonl"
+OUT="$(bash "$STATUS" "$PR")"
+has "$OUT" '^w1wwwwww .* running ' "resolved: transcript written after the notification -> running"
+PI="$(mktemp -d)"; mkdir -p "$PI/.subdeck"
+{ ev "$(isoat -100)" SubagentStart w2wwwwww worker-sonnet "$T/s1.jsonl"; nt "$(isoat 20)" "" s1 idle_prompt; } > "$PI/.subdeck/events.jsonl"
+OUT="$(bash "$STATUS" "$PI")"
+has "$OUT" '^w2wwwwww .* running ' "idle_prompt is not waiting"
+PA="$(mktemp -d)"; mkdir -p "$PA/.subdeck"
+{ ev "$(isoat -100)" SubagentStart w3wwwwww worker-sonnet "$T/s1.jsonl"; ev "$(isoat -99)" SubagentStart w4wwwwww worker-sonnet "$T/s1.jsonl"; nt "$(isoat 20)" w3wwwwww s1 elicitation_dialog; } > "$PA/.subdeck/events.jsonl"
+OUT="$(bash "$STATUS" "$PA")"
+has "$OUT" '^w3wwwwww .* waiting ' "agent-keyed notification -> that agent waiting"
+has "$OUT" '^w4wwwwww .* running ' "agent-keyed notification leaves the other agent running"
+rm -rf "$PW" "$PR" "$PI" "$PA"
+
 rm -rf "$P" "$P2" "$P3" "$P4" "$T"
 echo "SUMMARY: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

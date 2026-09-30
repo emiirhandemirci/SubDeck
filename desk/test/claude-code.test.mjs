@@ -389,3 +389,74 @@ test('toolTarget: first meaningful argument, clipped to one line', () => {
   assert.equal(toolTarget(null), '');
   assert.equal(toolTarget({ n: 1 }), '');
 });
+
+// ---- waiting state (task 031) ----
+test('summarizeRecords: trailing AskUserQuestion / ExitPlanMode without a result is pending; an answer clears it', () => {
+  const at = n => `2026-09-29T10:00:0${n}.000Z`;
+  assert.deepEqual(summarizeRecords([rec.user(at(1), '/p'), rec.ask(at(2))]).pending, { at: at(2), name: 'AskUserQuestion' });
+  assert.deepEqual(summarizeRecords([rec.exitPlan(at(2))]).pending, { at: at(2), name: 'ExitPlanMode' });
+  assert.equal(summarizeRecords([rec.ask(at(2)), rec.answer(at(3))]).pending, null);
+  assert.equal(summarizeRecords([rec.ask(at(2)), rec.answer(at(3)), rec.text(at(4), 'ok')]).pending, null);
+  assert.equal(summarizeRecords([rec.tool(at(2), 'Bash', { command: 'ls' })]).pending, null);   // ordinary tool: unknowable from the transcript
+  assert.equal(JSON.stringify(summarizeRecords([rec.ask(at(2))])).includes('QUESTION_MARKER'), false);
+});
+
+function waitingScenario({ notif = null, transcript }) {
+  const root = tmpDir('desk-cc-wait-');
+  const NOW = Date.now();
+  const ago = ms => new Date(NOW - ms).toISOString();
+  const proj = path.join(root, 'work', 'Delta');
+  fs.mkdirSync(path.join(proj, '.subdeck'), { recursive: true });
+  const projects = path.join(root, 'claude', 'projects');
+  const f = path.join(projects, 'slug-d', 'sess-d.jsonl');
+  writeJsonl(f, [rec.user(ago(120000), proj), ...transcript({ ago, proj })], { mtimeMs: NOW - 30000 });
+  if (notif) fs.writeFileSync(path.join(proj, '.subdeck', 'events.jsonl'), JSON.stringify({ ts: notif.ts(ago), event: 'Notification', agent_id: '', agent_type: '', transcript_path: f, session_id: 'sess-d',
+    payload: { notification_type: notif.type, message: 'NOTIF_MESSAGE_MARKER' } }) + '\n');
+  return { env: { now: () => NOW, days: 14, platform: process.platform, claudeProjectsDir: projects }, NOW };
+}
+const waitState = async sc => { const r = await claude.scan(sc.env, { since: null, cache: new Map() }); return { s: r.sessions[0], d: deriveState(r.sessions[0].stateBasis, sc.NOW) }; };
+
+test('waiting: pending question / plan approval -> waiting (field)', async () => {
+  for (const mk of [rec.ask, rec.exitPlan]) {
+    const { d } = await waitState(waitingScenario({ transcript: ({ ago }) => [mk(ago(30000))] }));
+    assert.deepEqual(d, { state: 'waiting', stateSource: 'field' });
+  }
+});
+
+test('waiting: answered question -> running by mtime again', async () => {
+  const { d } = await waitState(waitingScenario({ transcript: ({ ago }) => [rec.ask(ago(60000)), rec.answer(ago(30000))] }));
+  assert.deepEqual(d, { state: 'running', stateSource: 'mtime' });
+});
+
+test('waiting: a very old pending question expires to the mtime rule', async () => {
+  const sc = waitingScenario({ transcript: ({ ago }) => [rec.ask(ago(30000))] });
+  const later = deriveState((await claude.scan(sc.env, { since: null, cache: new Map() })).sessions[0].stateBasis, sc.NOW + 7 * 3600000);
+  assert.equal(later.state, 'finished');
+});
+
+test('waiting: Notification permission_prompt newer than the last transcript write -> waiting (hook)', async () => {
+  const sc = waitingScenario({ notif: { type: 'permission_prompt', ts: ago => ago(29000) }, transcript: ({ ago }) => [rec.tool(ago(31000), 'Bash', { command: 'ls' })] });
+  const { s, d } = await waitState(sc);
+  assert.deepEqual(d, { state: 'waiting', stateSource: 'hook' });
+  assert.equal(JSON.stringify(s).includes('NOTIF_MESSAGE_MARKER'), false);
+});
+
+test('waiting: Notification older than later activity, or idle_prompt, does not mean waiting', async () => {
+  const old = await waitState(waitingScenario({ notif: { type: 'permission_prompt', ts: ago => ago(100000) }, transcript: ({ ago }) => [rec.tool(ago(31000), 'Bash', {})] }));
+  assert.equal(old.d.state, 'running');
+  const idle = await waitState(waitingScenario({ notif: { type: 'idle_prompt', ts: ago => ago(29000) }, transcript: ({ ago }) => [rec.text(ago(31000), 'hi')] }));
+  assert.equal(idle.d.state, 'running');
+});
+
+test('readHooks: Notification events are kept per session for waiting types only', async () => {
+  const proj = tmpDir('subdeck-notif-');
+  const d = path.join(proj, '.subdeck');
+  fs.mkdirSync(d);
+  const n = (ts, type, sid) => JSON.stringify({ ts, event: 'Notification', agent_id: '', session_id: sid, payload: { notification_type: type } });
+  fs.writeFileSync(path.join(d, 'events.jsonl'), [n('2026-01-01T00:00:00Z', 'permission_prompt', 's1'), n('2026-01-01T00:00:09Z', 'elicitation_dialog', 's1'),
+    n('2026-01-01T00:00:20Z', 'idle_prompt', 's1'), n('2026-01-01T00:00:05Z', 'agent_needs_input', 's2')].join('\n') + '\n');
+  const h = await readHooks(proj, new Map());
+  assert.equal(h.notifs.get('s:s1'), '2026-01-01T00:00:09.000Z');
+  assert.equal(h.notifs.get('s:s2'), '2026-01-01T00:00:05.000Z');
+  assert.equal(h.agents.size, 0);
+});
