@@ -42,7 +42,7 @@ Lists, snapshots and live updates carry only titles (up to 120 characters), a sh
 
 ## Context usage
 
-Each session and agent row shows a thin context bar: the last known context tokens divided by the model's context window. Claude models use 200k; 1M is assumed only when the model id carries a  marker or the observed context already exceeds 200k (transcripts normally record the plain API id, so a 1M session below 200k is shown against 200k). Other tools' models have no known window, so only the token count is shown. Colours: under 60% neutral, 60 to 85% amber, above 85% red; the percentage is always printed and the bar is a  with a text equivalent. Projects show the summed tokens of their sessions and agents ( in : reported total, else latest context, per session). These are token counts, not cost. Sessions from tools without usage data show nothing.
+Each session and agent row shows a thin context bar: the last known context tokens divided by the model's context window. Claude models use 200k; 1M is assumed only when the model id carries a `[1m]` marker or the observed context already exceeds 200k (transcripts normally record the plain API id, so a 1M session below 200k is shown against 200k). Other tools' models have no known window, so only the token count is shown. Colours: under 60% neutral, 60 to 85% amber, above 85% red; the percentage is always printed and the bar is a `role=meter` with a text equivalent. Projects show the summed tokens of their sessions and agents (`tokenTotal` in `/api/projects`: reported total, else latest context, per session). These are token counts, not cost. Sessions from tools without usage data show nothing.
 
 ## Tests
 
