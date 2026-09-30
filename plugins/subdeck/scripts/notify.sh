@@ -33,8 +33,7 @@ done
 [ -n "$CMD" ] || CMD=show
 # hook mode reads the payload (no forks: this runs on every Stop/Notification)
 PAYLOAD=""
-if [ "$CMD" = hook ]; then IFS= read -r -d '' PAYLOAD || true; PAYLOAD="${PAYLOAD//$''/}"; PAYLOAD="${PAYLOAD//$'
-'/}"; fi
+if [ "$CMD" = hook ]; then IFS= read -r -d '' PAYLOAD || true; PAYLOAD="${PAYLOAD//$'\r'/}"; PAYLOAD="${PAYLOAD//$'\n'/}"; fi
 if [ -z "$PROJECT" ]; then
   PROJECT="${CLAUDE_PROJECT_DIR:-}"
   if [ -z "$PROJECT" ] && [ -n "$PAYLOAD" ]; then
@@ -52,8 +51,7 @@ notify_member() {
   NM=""
   [ -f "$1" ] || return 0
   local c
-  c="$(<"$1")" 2>/dev/null; c="${c//$''/}"; c="${c//$'
-'/}"
+  c="$(<"$1")" 2>/dev/null; c="${c//$'\r'/}"; c="${c//$'\n'/}"
   if [[ "$c" =~ \"notify\"[[:space:]]*:[[:space:]]*\{[^\}]*\} ]]; then NM="${BASH_REMATCH[0]}"; fi
 }
 RE_EN='"enabled"[[:space:]]*:[[:space:]]*(true|false)'

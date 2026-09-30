@@ -87,6 +87,16 @@ for k in waiting done agent; do
 done
 out="$(hook agent "$LEAK")"; has "$out" "agent abx finished" "agent type sanitised"
 
+# multi-line CRLF config is parsed
+C="$(mktemp -d)"; mkdir -p "$C/.subdeck"; printf '{
+  "notify": {
+    "enabled": true,
+    "events": ["agent"]
+  }
+}
+' > "$C/.subdeck/config.json"
+out="$(HOME="$H" bash "$N" show "$C")"; has "$out" '^events +agent +project' "CRLF multi-line config parsed"
+
 # test subcommand
 out="$(HOME="$H" SUBDECK_NOTIFY_DRYRUN=1 SUBDECK_NOTIFY_OS=linux bash "$N" test "$P")"
 has "$out" "notify-send 'SubDeck' 'my-proj: test notification'" "test fires sample"
