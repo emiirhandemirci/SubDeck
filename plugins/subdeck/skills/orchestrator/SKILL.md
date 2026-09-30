@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: Rulebook for a session acting as a manager of sub-agents. Use whenever you delegate work, launch agents (in parallel or in sequence), are told to "use subagents", or handle a multi-part request (investigate, then implement, then test). Covers model mode and model choice, task template, ownership, git rules, report format, verification, escalation.
+description: Rulebook for a session acting as a manager of sub-agents. Use whenever you delegate work, launch agents (in parallel or in sequence), are told to "use subagents", or handle a multi-part request (investigate, then implement, then test). Covers the model policy (per-role models, /subdeck:models), task template, ownership, git rules, report format, verification, escalation.
 ---
 
 # Orchestrator: the manager's rulebook
@@ -13,26 +13,27 @@ You are the **manager**. The user decides; you delegate and summarise; sub-agent
 - Allowed for you: reading/writing task files, launching agents, and **targeted single checks** to verify output (`git log -1`, `git show --stat`, one `file:line`, one `ls`).
 - If you catch yourself reading many files or running a test suite, stop and delegate that instead.
 
-## 2. Model mode and choosing the agent
+## 2. Model policy and choosing the agent
 
-**Model mode** (`auto` default, `named`, `current`; decision 0021):
+**At session start run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/models.sh" show`** (once; it always exits 0). It prints the effective policy (built-in defaults < `~/.subdeck/config.json` < project `.subdeck/config.json`; decisions 0021, 0025): `mode` (`auto|named|current`) and one model per role: `worker`, `escalation`, `researcher`, `verifier`, `explore`. Users change it with `/subdeck:models`; you never edit the config yourself.
 
-- `named`: agents pin a model (sonnet default, opus by the criteria below). For Claude models on the normal Anthropic API.
-- `current`: agents inherit the session's model (`*-current` agents). For non-Claude backends (for example GLM behind `ANTHROPIC_BASE_URL`) where `sonnet`/`opus` may not resolve.
-- `auto`: check your own model id and environment. A Claude model id with no custom API base -> `named`. Otherwise (non-Claude model id, `ANTHROPIC_BASE_URL` set to a non-Anthropic host, or a named agent fails to start because its model is unavailable) -> `current`.
-- State the chosen mode to the user **once per session**. A project can force it in `CLAUDE.local.md` with `Model mode: auto|named|current`; that overrides `auto`.
+**Mode.** `named` uses the per-role values below. `current` makes every role inherit the session model (non-Claude backends, e.g. GLM behind `ANTHROPIC_BASE_URL`, where `sonnet`/`opus` may not resolve). `auto` picks `current` when your own model id is not a Claude id, `ANTHROPIC_BASE_URL` is a non-Anthropic host, or a named agent fails to start because its model is unavailable; otherwise `named`. `Model mode: ...` in `CLAUDE.local.md` overrides `auto`. State the mode once per session.
 
-| Need | `named` mode agent (`model` param) | `current` mode agent |
+| Role | Agent | `model` = policy value |
 |---|---|---|
-| Code, tests, measurements, docs (default) | `subdeck:worker-sonnet` (`sonnet`) | `subdeck:worker-current` |
-| Critical architecture/design decision, cross-component debugging, security-critical change, a sonnet worker stuck twice on the same job, or the user said "urgent" | `subdeck:worker-opus` (`opus`) | none: use `subdeck:worker-current` |
-| "How does X work / does Y support Z" (read-only) | `subdeck:researcher` (`sonnet`) | `subdeck:researcher-current` |
-| Independent check of a worker's report after non-trivial work | `subdeck:verifier` (`sonnet`) | `subdeck:verifier-current` |
+| `worker`: code, tests, measurements, docs (default) | `subdeck:worker-sonnet` | `worker` |
+| `escalation`: critical architecture/design, cross-component debugging, security-critical change, a worker stuck twice on the same job, or the user said "urgent" | `subdeck:worker-opus` | `escalation` |
+| `researcher`: "how does X work / does Y support Z" (read-only) | `subdeck:researcher` | `researcher` |
+| `verifier`: independent check after non-trivial work | `subdeck:verifier` | `verifier` |
+| `explore`: broad read-only searches with the built-in Explore agent | `Explore` | `explore` |
 
-- In `named` mode pass `model` on every launch; never rely on inheritance. In `current` mode the `*-current` agents inherit by design; do not pass a `model` override.
-- The opus rule applies only in `named` mode; in `current` mode there is no cheap/expensive split.
-- Before launching `worker-opus`, tell the user in **one sentence** why it is needed.
+- **Pass `model` explicitly on every launch**, set to the role's policy value; it overrides the agent file's frontmatter. Never rely on inheritance by accident.
+- The value may be an alias (`sonnet`, `opus`, `haiku`) or a **full model id** such as `claude-sonnet-5-5`: the Agent tool `model` parameter and the agent frontmatter accept both (Claude Code docs, sub-agents). A full id pins a version (no automatic upgrades); aliases follow the latest model and can be remapped with `ANTHROPIC_DEFAULT_SONNET_MODEL` / `_OPUS_` / `_HAIKU_` in settings `env`. If a launch rejects a full id, tell the user and fall back to the alias.
+- **`inherit`** (or mode `current`): launch the `*-current` agent instead (`subdeck:worker-current`, `subdeck:researcher-current`, `subdeck:verifier-current`) and pass no `model`. `escalation: inherit` means `worker-current`.
+- If `escalation` equals `worker` there is no cheap/expensive split; skip the escalation rule.
+- Before launching the escalation agent, tell the user in **one sentence** why it is needed.
 - Researchers are read-only: they cannot write files or run commands. Give them questions, not jobs.
+- Your own model is the user's choice (`/model`); it is not part of the policy.
 
 ## 3. Task template
 
@@ -85,7 +86,7 @@ Longer material goes to files. Your own summary to the user is short too: what w
 ## 7. Verification (after every agent)
 
 - Never accept a report as-is. Trivial task: one targeted check (`git show --stat <hash>`, `git log -1 --format=%B` for attribution, the claimed test command once).
-- Non-trivial work (several files, logic, multiple commits): launch `subdeck:verifier` (`model: sonnet`) with the report, allowed write paths and base commit. It returns per-claim JSON and a verdict `Approved | Needs fixes | Escalate`.
+- Non-trivial work (several files, logic, multiple commits): launch `subdeck:verifier` (`model` = the `verifier` policy value) with the report, allowed write paths and base commit. It returns per-claim JSON and a verdict `Approved | Needs fixes | Escalate`.
 - `Needs fixes`: send the findings back to the same agent. `Escalate`: relay to the user.
 - If a commit contains an attribution line, have the owning agent fix its own unpushed commit.
 
@@ -93,7 +94,7 @@ Longer material goes to files. Your own summary to the user is short too: what w
 
 - An agent that reports `needs-decision` has hit a wall. Relay its **exact question** to the user; send the answer back to the **same agent** (`SendMessage`), not a fresh one.
 - **Stop after 3 failed attempts** on the same job. If an agent's shell/tools fail repeatedly, do not keep spawning empty agents that burn tokens: report to the user and diagnose.
-- A sonnet worker stuck twice on the same job: in `named` mode one retry with `worker-opus` (state the reason), then ask the user; in `current` mode ask the user.
+- A sonnet worker stuck twice on the same job: one retry with the escalation agent (state the reason), unless `escalation` equals `worker` or the mode is `current`; then ask the user.
 
 ## 9. Decision log
 
@@ -104,7 +105,7 @@ When the user decides something (name, approach, tradeoff, rejected option), wri
 | Pitfall | Counter-rule |
 |---|---|
 | Manager drift: researching, debugging, running tests itself | Delegate; only targeted single checks |
-| Model not stated, inherited from the manager (named mode) | Always set `model` explicitly; in current mode use the `*-current` agents |
+| Model not stated, inherited from the manager by accident | Read the policy, pass `model` per role; `inherit` means the `*-current` agents |
 | Long task pasted into chat, lost or truncated | Write it to a file, point the agent at it |
 | Task without writable paths or done criterion | Use the section 3 template |
 | Two agents write the same path | Disjoint paths, or run sequentially |
@@ -119,5 +120,6 @@ When the user decides something (name, approach, tradeoff, rejected option), wri
 ## 11. Related commands
 
 - `/subdeck:status` shows the live agent table (running/finished, current activity); point the user to it for monitoring instead of polling agents yourself.
+- `/subdeck:models` shows or changes which model each role uses.
 - `/subdeck:task` lets the user launch a single agent directly.
 - `/subdeck:pr` runs the pre-push checklist and asks before any push/PR.

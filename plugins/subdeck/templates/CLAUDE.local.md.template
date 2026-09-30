@@ -12,6 +12,8 @@ Delete this line and the placeholder list at the end once filled in.
 
 ## Model choice
 
+- Which model each role uses is configurable: run `/subdeck:models` to see or change the policy (worker, escalation, researcher, verifier, explore); the orchestrator reads it at session start.
+
 - Model mode: {{MODEL_MODE}} (auto|named|current). `auto` picks `current` on non-Claude backends, else `named`; `current` uses the `*-current` agents that inherit the session model.
 - Default: `subdeck:worker-sonnet`.
 - `subdeck:worker-opus` only for critical architecture or design, cross-component debugging, security-critical work, a sonnet worker stuck twice on the same job, or an explicit "urgent" from the user. State the reason to the user in one sentence.

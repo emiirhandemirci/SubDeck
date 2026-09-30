@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# SubDeck model policy: show / set / reset the per-role model policy (decision 0025).
+#
+#   bash <plugin>/scripts/models.sh [show]                         effective policy + source of each value
+#   bash <plugin>/scripts/models.sh set key=value ... [--project]  write user (default) or project config
+#   bash <plugin>/scripts/models.sh reset [--project]              delete that config file
+# A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
+# Precedence: built-in defaults < ~/.subdeck/config.json < <project>/.subdeck/config.json
+# Keys: mode (auto|named|current), worker, escalation, researcher, verifier, explore
+# Values: sonnet|opus|haiku|fable|inherit, a full model id (claude-...), or another backend's model id.
+# The config file is owned by this script: `set` rewrites it as {"modelPolicy":{...}} (other keys are dropped).
+# No jq/node. Always exits 0 (a failing injected command would abort the skill).
+
+KEYS="mode worker escalation researcher verifier explore"
+default_of() {
+  case "$1" in
+    mode) echo auto ;; worker) echo sonnet ;; escalation) echo opus ;;
+    researcher) echo sonnet ;; verifier) echo sonnet ;; explore) echo haiku ;;
+  esac
+}
+
+CMD=""; SCOPE=user; PROJECT=""; PAIRS=(); BADARGS=()
+for a in "$@"; do
+  a="${a%$'\r'}"
+  case "$a" in
+    "") ;;
+    --project) SCOPE=project ;;
+    --*) BADARGS+=("$a") ;;
+    show|set|reset) if [ -z "$CMD" ]; then CMD="$a"; else BADARGS+=("$a"); fi ;;
+    *=*) PAIRS+=("$a") ;;
+    *) if [ -d "$a" ]; then PROJECT="$a"; else BADARGS+=("$a"); fi ;;
+  esac
+done
+[ -n "$CMD" ] || CMD=show
+[ -n "$PROJECT" ] || PROJECT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+UFILE="${HOME}/.subdeck/config.json"
+PFILE="$PROJECT/.subdeck/config.json"
+if [ "$SCOPE" = project ]; then TARGET="$PFILE"; else TARGET="$UFILE"; fi
+
+getval() { # file key -> value or empty
+  [ -f "$1" ] || return 0
+  tr -d '\r' < "$1" | grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed 's/^[^:]*:[[:space:]]*"//; s/"$//'
+}
+valid_key() { case " $KEYS " in *" $1 "*) return 0 ;; esac; return 1; }
+valid_val() { # key value
+  if [ "$1" = mode ]; then case "$2" in auto|named|current) return 0 ;; esac; return 1; fi
+  case "$2" in sonnet|opus|haiku|fable|inherit) return 0 ;; esac
+  printf '%s' "$2" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$'
+}
+resolve() { # alias -> resolved id text
+  local up var val f
+  case "$1" in
+    sonnet|opus|haiku|fable) ;;
+    inherit) echo "session model (whatever /model is set to)"; return ;;
+    *) echo "pinned id"; return ;;
+  esac
+  up="$(printf '%s' "$1" | tr 'a-z' 'A-Z')"; var="ANTHROPIC_DEFAULT_${up}_MODEL"
+  val="${!var}"
+  if [ -n "$val" ]; then echo "$val (env $var)"; return; fi
+  for f in "$PROJECT/.claude/settings.local.json" "$PROJECT/.claude/settings.json" "$HOME/.claude/settings.json"; do
+    val="$(getval "$f" "$var")"
+    if [ -n "$val" ]; then echo "$val (settings $var)"; return; fi
+  done
+  echo "latest $1 (alias; real id shown by /subdeck:status)"
+}
+write_file() { # file, then key=value pairs
+  local f="$1"; shift
+  mkdir -p "$(dirname "$f")" 2>/dev/null
+  local out="" kv
+  for kv in "$@"; do out="$out,\"${kv%%=*}\":\"${kv#*=}\""; done
+  if printf '{"modelPolicy":{%s}}\n' "${out#,}" > "$f" 2>/dev/null; then return 0; fi
+  echo "error: could not write $f"; return 1
+}
+
+show() {
+  local k v src val ids=""
+  echo "SubDeck model policy (defaults < user < project)"
+  printf '%-11s %-24s %s\n' KEY VALUE SOURCE
+  for k in $KEYS; do
+    v="$(default_of "$k")"; src="default"
+    val="$(getval "$UFILE" "$k")"; if [ -n "$val" ]; then v="$val"; src="user"; fi
+    val="$(getval "$PFILE" "$k")"; if [ -n "$val" ]; then v="$val"; src="project"; fi
+    printf '%-11s %-24s %s\n' "$k" "$v" "$src"
+    if [ "$k" != mode ]; then ids="$ids$k|$v"$'\n'; fi
+  done
+  echo
+  echo "Resolved models:"
+  printf '%s' "$ids" | while IFS='|' read -r k v; do
+    [ -n "$k" ] && printf '  %-11s %s -> %s\n' "$k" "$v" "$(resolve "$v")"
+  done
+  echo
+  echo "user file:    $UFILE$([ -f "$UFILE" ] || echo ' (absent)')"
+  echo "project file: $PFILE$([ -f "$PFILE" ] || echo ' (absent)')"
+  echo "Manager model: chosen in Claude Code with /model (not part of this policy)."
+  echo "Usage: /subdeck:models set worker=haiku verifier=opus [--project] | reset [--project]"
+}
+
+for b in "${BADARGS[@]}"; do echo "warning: ignored argument '$b'"; done
+
+case "$CMD" in
+  show) show ;;
+  reset)
+    if [ -f "$TARGET" ]; then
+      if rm -f "$TARGET" 2>/dev/null; then echo "reset: removed $TARGET"; else echo "error: could not remove $TARGET"; fi
+    else echo "reset: nothing to remove ($TARGET absent)"; fi
+    echo; show ;;
+  set)
+    if [ ${#PAIRS[@]} -eq 0 ]; then echo "error: set needs key=value pairs, e.g. set worker=haiku"; echo "valid keys: $KEYS"; exit 0; fi
+    ERR=0; NEW=()
+    for kv in "${PAIRS[@]}"; do
+      k="${kv%%=*}"; v="${kv#*=}"
+      if ! valid_key "$k"; then echo "error: unknown key '$k' (valid: $KEYS)"; ERR=1
+      elif ! valid_val "$k" "$v"; then
+        if [ "$k" = mode ]; then echo "error: invalid value '$v' for mode (valid: auto, named, current)"
+        else echo "error: invalid value '$v' for $k (valid: sonnet, opus, haiku, fable, inherit, or a model id such as claude-sonnet-5-5)"; fi
+        ERR=1
+      else NEW+=("$k=$v"); fi
+    done
+    if [ $ERR -ne 0 ]; then echo "nothing written."; exit 0; fi
+    MERGED=()
+    for k in $KEYS; do
+      val="$(getval "$TARGET" "$k")"
+      for kv in "${NEW[@]}"; do if [ "${kv%%=*}" = "$k" ]; then val="${kv#*=}"; fi; done
+      if [ -n "$val" ]; then MERGED+=("$k=$val"); fi
+    done
+    if write_file "$TARGET" "${MERGED[@]}"; then echo "wrote $TARGET"; fi
+    echo; show ;;
+esac
+exit 0
