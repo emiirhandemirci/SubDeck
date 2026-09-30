@@ -20,6 +20,14 @@ function dot(state) { const d = el('span', `dot ${state}`); d.setAttribute('aria
 function stateWord(state) { return el('span', 'state-word', STATE_LABEL[state] || state); }
 function toolBadge(tool) { return el('span', 'badge', TOOL_BADGE[tool] || tool); }
 
+// Rebuilding a list drops keyboard focus; remember the focused item's id and restore it (only if it was focused).
+function keepFocus(box, fn) {
+  const a = document.activeElement;
+  const id = a && box.contains(a) && a !== box ? a.dataset.id : null;
+  fn();
+  if (id) { const n = box.querySelector(`[data-id="${CSS.escape(id)}"]`); if (n) { n.tabIndex = 0; n.focus({ preventScroll: true }); } }
+}
+
 // ---------- header ----------
 function renderSources() {
   const box = $('sources');
@@ -38,7 +46,8 @@ function renderSources() {
 }
 
 // ---------- projects ----------
-function renderProjects() {
+function renderProjects() { keepFocus($('projects'), renderProjectsInner); }
+function renderProjectsInner() {
   const box = $('projects');
   const scroll = box.scrollTop;
   box.replaceChildren();
@@ -71,6 +80,7 @@ function renderProjects() {
 }
 
 async function selectProject(id, focus) {
+  if (id !== S.selectedProject) { S.selectedSession = null; S.detail = null; renderDetail(); }
   S.selectedProject = id; store.set('project', id);
   renderProjects();
   if (focus) { const r = $('projects').querySelector(`[data-id="${CSS.escape(id)}"]`); if (r) r.focus(); }
@@ -92,7 +102,8 @@ function sessionLine(s, cls) {
   return line;
 }
 
-function renderMap() {
+function renderMap() { keepFocus($('map'), renderMapInner); }
+function renderMapInner() {
   const box = $('map');
   const scroll = box.scrollTop;
   box.replaceChildren();
