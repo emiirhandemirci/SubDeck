@@ -125,7 +125,7 @@ Local marketplace (persistent), inside a Claude Code session:
 
 Same from a terminal: `claude plugin marketplace add <path-to>/SubDeck` then `claude plugin install subdeck@subdeck`. Session only, nothing installed: `claude --plugin-dir <path-to>/SubDeck/plugins/subdeck`.
 
-Check the manifests with `claude plugin validate .` and `claude plugin validate ./plugins/subdeck`. Command forms are in `docs/research/plugin-manifest.md`.
+Check the manifests with `claude plugin validate .` and `claude plugin validate ./plugins/subdeck`.
 </details>
 
 <details>
@@ -139,7 +139,7 @@ Check the manifests with `claude plugin validate .` and `claude plugin validate 
 
 ## Status
 
-v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end; see [docs/demo/v0.1-demo.md](docs/demo/v0.1-demo.md). Desk v0.2 (monitoring only) is implemented. Roadmap in [docs/design.md](docs/design.md), decisions in [docs/decisions/](docs/decisions/).
+v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. Desk v0.2 (monitoring only) is implemented. Roadmap and decision records live in `internal/design.md` and `internal/decisions/` (private, maintainers only).
 
 ## License
 

@@ -4,7 +4,7 @@ Talk to the user in **Turkish**. Everything written into this repository (code, 
 
 ## First step
 
-Read `docs/design.md` completely before doing anything else. It holds all decisions, the v0.1 plugin design, research findings, roadmap, and open questions. You have no other memory of the design conversation.
+Read `internal/design.md` (private, maintainers only) completely before doing anything else, if it is present. It holds all decisions, the v0.1 plugin design, research findings, roadmap, and open questions. You have no other memory of the design conversation.
 
 ## Working model
 

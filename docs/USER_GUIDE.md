@@ -138,5 +138,3 @@ Note: the agent prompts were tuned on Claude. Behaviour on other models is untes
 ## 9. Where to learn more
 
 - [desk/README.md](../desk/README.md) for Desk internals, data sources and environment overrides.
-- [docs/design.md](design.md) for the overall design and roadmap.
-- [docs/decisions/](decisions/) for the decision records.

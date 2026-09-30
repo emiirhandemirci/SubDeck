@@ -10,6 +10,5 @@ desktop.ini
 *.log
 node_modules/
 
-# internal process artifacts (kept locally)
-docs/superpowers/
-docs/tasks/
+# private maintainer notes (separate private repo, working copy kept locally)
+internal/
