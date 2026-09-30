@@ -1,6 +1,6 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
-import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, markdownLite, formatToolTime } from './format.js';
+import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, markdownLite, formatToolTime, contextUsage } from './format.js';
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -33,6 +33,25 @@ function toolBadge(tool) {
   const src = S.sources.find(x => x.id === tool);
   if (src && src.experimental) b.title = `${src.label}: experimental support (parts of this tool's data format are unverified)`;
   return b;
+}
+
+// Thin context-usage bar; role=meter with a text equivalent. Colour is never the only signal (percentage is printed too).
+function usageBar(u) {
+  const m = el('span', `usage ${u.level}`);
+  m.setAttribute('role', 'meter');
+  m.setAttribute('aria-label', 'Context usage');
+  m.setAttribute('aria-valuemin', '0'); m.setAttribute('aria-valuemax', '100'); m.setAttribute('aria-valuenow', String(u.pct));
+  m.setAttribute('aria-valuetext', u.text + (u.level === 'high' ? ', nearly full' : ''));
+  m.title = `Context: ${u.tokens.toLocaleString('en-US')} of ${u.window.toLocaleString('en-US')} tokens (${u.pct}%)`;
+  const fill = el('span', 'usage-fill'); fill.style.width = `${u.pct}%`;
+  m.append(fill);
+  return m;
+}
+function projectTokens(p) {
+  if (!p || p.tokenTotal === null || p.tokenTotal === undefined) return null;
+  const t = el('span', 'tag tokens', `${formatTokens(p.tokenTotal)} tokens`);
+  t.title = `${p.tokenTotal.toLocaleString('en-US')} tokens across this project's sessions and agents (latest context or reported total per session; usage, not cost)`;
+  return t;
 }
 
 // Rebuilding a list drops keyboard focus; remember the focused item's id and restore it (only if it was focused).
@@ -94,6 +113,7 @@ function renderProjectsInner() {
       for (const t of p.tools) meta.append(toolBadge(t));
       if (p.waitingCount > 0) { const pill = el('span', 'pill waiting'); pill.append(dot('waiting'), document.createTextNode(`${p.waitingCount} waiting`)); meta.append(pill); }
       if (p.runningCount > 0) { const pill = el('span', 'pill running'); pill.append(dot('running'), document.createTextNode(`${p.runningCount} running`)); meta.append(pill); }
+      const pt = projectTokens(p); if (pt) meta.append(pt);
       row.append(meta);
       row.addEventListener('click', () => selectProject(p.id, true));
       box.append(row);
@@ -122,7 +142,9 @@ function sessionLine(s, cls) {
   line.setAttribute('aria-selected', String(s.id === S.selectedSession));
   line.append(dot(s.state), el('span', 'title', s.title), stateWord(s.state));
   if (s.agentType && cls === 'agent') line.append(el('span', 'tag mono', s.agentType));
-  line.append(el('span', 'meta-line muted', `${formatDuration(s.durationMs)} · ${formatTokens(s.tokens.context)}`));
+  const u = contextUsage(s);
+  line.append(el('span', 'meta-line muted', u ? `${formatDuration(s.durationMs)} · ${u.pct === null ? u.text : `${formatTokens(u.tokens)} · ${u.pct}%`}` : formatDuration(s.durationMs)));
+  if (u && u.pct !== null) line.append(usageBar(u));
   if (s.archived) line.append(el('span', 'tag', 'archived'));
   line.addEventListener('click', ev => { ev.stopPropagation(); selectSession(s.id, false); });
   return line;
@@ -135,6 +157,10 @@ function renderMapInner() {
   box.replaceChildren();
   if (!S.selectedProject || !S.project) { box.append(el('p', 'empty', 'Select a project')); return; }
   if (!S.sessions.length) { box.append(el('p', 'empty', 'No sessions in this project.')); return; }
+  const ph = el('div', 'proj-head');
+  ph.append(el('span', 'name', S.project.name));
+  const pht = projectTokens(S.project); if (pht) ph.append(pht);
+  box.append(ph);
   for (const s of S.sessions) {
     const card = el('div', `card st-${s.state}`);   // sessions arrive waiting-first from the API
     const head = sessionLine(s, 'head');
@@ -264,7 +290,8 @@ function renderDetail() {
   if (s.model) sub.append(el('span', 'mono', s.model));
   if (s.parent) sub.append(el('span', null, `Spawned by ${s.parent.title}`));
   const subDur = el('span', null, formatDuration(s.durationMs)); subDur.id = 'headDuration';
-  sub.append(subDur, el('span', null, formatTokens(s.tokens.context)));
+  sub.append(subDur);
+  const su = contextUsage(s); if (su) sub.append(el('span', null, su.text));
   box.append(sub);
   const dl = el('dl', 'kv');
   const row = (k, v) => { dl.append(el('dt', null, k)); const dd = el('dd'); if (v instanceof Node) dd.append(v); else dd.textContent = v ?? '-'; dl.append(dd); };
@@ -280,7 +307,9 @@ function renderDetail() {
   row('Updated', when(s.updatedAt));
   row('Ended', when(s.endedAt));
   const dur = el('span', null, formatDuration(s.durationMs)); dur.id = 'detailDuration'; row('Duration', dur);
-  row('Tokens', s.tokens.context === null ? '-' : `${formatTokens(s.tokens.context)} context`);
+  const du = contextUsage(s);
+  if (du) { const w = el('span'); w.append(document.createTextNode(`${du.text} context`)); if (du.pct !== null) { const b = usageBar(du); b.classList.add('block'); w.append(b); } row('Tokens', w); }
+  else row('Tokens', '-');
   const la = s.lastActivity;
   row('Last activity', la ? [la.kind, la.toolName, la.summary].filter(Boolean).join(' · ') + ` (${relativeTime(la.at, now)})` : '-');
   if (s.parent) row('Parent', s.parent.title);

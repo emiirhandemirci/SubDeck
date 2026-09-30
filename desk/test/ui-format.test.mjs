@@ -80,3 +80,27 @@ test('formatToolTime', () => {
   assert.equal(f.formatToolTime(null), '');
   assert.match(f.formatToolTime('2026-09-29T10:00:05.000Z'), /^\d\d:\d\d:\d\d$/);
 });
+
+test('contextWindow: Claude 200k default, 1M only on marker or proof, unknown otherwise', () => {
+  assert.equal(f.contextWindow('claude-sonnet-4-5', 50000), 200000);
+  assert.equal(f.contextWindow('claude-opus-4-1[1m]', 50000), 1000000);
+  assert.equal(f.contextWindow('sonnet[1m]', 10), 1000000);
+  assert.equal(f.contextWindow('claude-sonnet-4-5', 350000), 1000000);
+  assert.equal(f.contextWindow('gpt-5', 100), null);
+  assert.equal(f.contextWindow('gemini-2.5-pro', 100), null);
+  assert.equal(f.contextWindow(null, 100), null);
+});
+
+test('contextUsage: thresholds, unknown model, no data', () => {
+  const s = (model, context) => ({ model, tokens: { context, total: null } });
+  assert.equal(f.contextUsage(s('claude-x', null)), null);
+  assert.equal(f.contextUsage({ model: 'claude-x' }), null);
+  assert.equal(f.contextUsage(s('claude-x', 0)).pct, 0);
+  const a = f.contextUsage(s('claude-sonnet-4-5', 100000));
+  assert.deepEqual([a.pct, a.level, a.text], [50, 'low', '100.0k of 200.0k tokens (50%)']);
+  assert.equal(f.contextUsage(s('claude-sonnet-4-5', 120000)).level, 'mid');
+  assert.equal(f.contextUsage(s('claude-sonnet-4-5', 170000)).level, 'mid');
+  assert.equal(f.contextUsage(s('claude-sonnet-4-5', 171000)).level, 'high');
+  const u = f.contextUsage(s('gpt-5', 5000));
+  assert.deepEqual([u.pct, u.level, u.text], [null, null, '5.0k tokens']);
+});

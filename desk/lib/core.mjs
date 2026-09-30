@@ -133,13 +133,15 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
 
   function finishProjects(projects, sessions) {
     const byId = new Map([...projects.values()].map(p => [p.id, { ...p, tools: new Set(p.tools) }]));
-    for (const p of byId.values()) { p.sessionCount = 0; p.agentCount = 0; p.runningCount = 0; p.waitingCount = 0; p.lastActivityAt = null; }
+    for (const p of byId.values()) { p.sessionCount = 0; p.agentCount = 0; p.runningCount = 0; p.waitingCount = 0; p.lastActivityAt = null; p.tokenTotal = null; }
     for (const s of sessions) {
       const p = byId.get(s.projectId);
       p.agentCount++;
       if (!s.parentId) p.sessionCount++;
       if (s.state === 'running') p.runningCount++;
       if (s.state === 'waiting') p.waitingCount++;
+      const tk = s.tokens.total ?? s.tokens.context;   // adapters without usage data contribute nothing (no fake zeros)
+      if (Number.isFinite(tk)) p.tokenTotal = (p.tokenTotal || 0) + tk;
       if (s.updatedAt && (!p.lastActivityAt || s.updatedAt > p.lastActivityAt)) p.lastActivityAt = s.updatedAt;
     }
     return [...byId.values()].map(p => ({ ...p, tools: [...p.tools].sort() }))

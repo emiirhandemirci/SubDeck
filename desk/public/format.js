@@ -109,3 +109,28 @@ export function formatToolTime(iso) {
   const t = iso ? new Date(iso) : null;
   return t && !Number.isNaN(t.getTime()) ? formatClock(iso) : '';
 }
+
+// ---------- context usage ----------
+// Claude Code marks 1M-context models with a "[1m]" suffix in the model setting (e.g. "sonnet[1m]"), but transcripts
+// usually record the plain API model id. So 1M is assumed only when the id says so, or when the observed context
+// already exceeds 200k (which proves a larger window). Everything else Claude is 200k. Non-Claude models: unknown.
+export function contextWindow(model, ctx) {
+  const id = typeof model === 'string' ? model.toLowerCase() : '';
+  if (!/^claude[-.]|^(opus|sonnet|haiku)\b|anthropic\/claude|\.claude-/.test(id)) return null;
+  if (/\[1m\]|[-_]1m\b/.test(id)) return 1000000;
+  if (Number.isFinite(ctx) && ctx > 200000) return 1000000;
+  return 200000;
+}
+
+export function usageLevel(pct) { return pct > 85 ? 'high' : pct >= 60 ? 'mid' : 'low'; }
+
+/** null when there is no usage data; else { tokens, window, pct, level, text }. pct/window/level are null for unknown models. */
+export function contextUsage(session) {
+  const ctx = session && session.tokens ? session.tokens.context : null;
+  if (ctx === null || ctx === undefined || !Number.isFinite(ctx)) return null;
+  const window = contextWindow(session.model, ctx);
+  if (!window) return { tokens: ctx, window: null, pct: null, level: null, text: `${formatTokens(ctx)} tokens` };
+  const pct = Math.min(100, Math.round((ctx / window) * 100));
+  return { tokens: ctx, window, pct, level: usageLevel(ctx / window * 100),
+    text: `${formatTokens(ctx)} of ${formatTokens(window)} tokens (${pct}%)` };
+}

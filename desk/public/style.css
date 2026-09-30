@@ -4,6 +4,7 @@
   --bg: #0a0c10; --panel: #0f1217; --card: #151920; --raised: #1c212a; --hover: #1a1f28; --sel: #1b2a4a;
   --border: #242a35; --border-strong: #323a49;
   --text: #e7eaf0; --muted: #98a2b3; --accent: #6b9bff; --focus: #7fa8ff;
+  --use-low: #6b9bff; --use-mid: #f0b429; --use-high: #ff6b6b;
   --waiting: #ff8a3d; --running: #3ddc84; --idle: #f0b429; --finished: #8b95a5; --failed: #ff6b6b; --stale: #8b95a5;
   --claude: #e8a06e; --cursor: #7dc4ff; --codex: #5fd4b8; --copilot: #b79cff; --gemini: #ff7eb6; --cline: #e6d36a; --opencode: #8fd16a;
   --r-sm: 6px; --r: 10px; --r-lg: 14px;
@@ -20,6 +21,7 @@
     --bg: #eef0f4; --panel: #ffffff; --card: #ffffff; --raised: #f3f5f8; --hover: #f1f4f9; --sel: #e4edff;
     --border: #dfe3ea; --border-strong: #c9d0db;
     --text: #12161d; --muted: #566073; --accent: #2456d6; --focus: #2456d6;
+    --use-low: #2456d6; --use-mid: #a06400; --use-high: #c1271f;
     --waiting: #b34700; --running: #147a45; --idle: #8f5f00; --finished: #5d6675; --failed: #c1271f; --stale: #5d6675;
     --claude: #a4531a; --cursor: #0b63a8; --codex: #0d7a63; --copilot: #6a3fc9; --gemini: #b3236b; --cline: #7a6a00; --opencode: #3f7a17;
     --shadow: 0 1px 2px rgba(16,24,40,.06), 0 2px 8px rgba(16,24,40,.06);
@@ -189,3 +191,13 @@ ol.calls code { border: 0; background: transparent; padding: 0; color: var(--tex
   .dot.running, .dot.waiting, .live.on::before { animation: none; }
   * { transition: none !important; }
 }
+
+/* ---------- context usage ---------- */
+.usage { flex-basis: 100%; display: block; height: 4px; margin: 0 0 2px 18px; border-radius: 999px; background: var(--raised); border: 1px solid var(--border); overflow: hidden; }
+.usage.block { margin: 6px 0 0; max-width: 240px; }
+.usage-fill { display: block; height: 100%; background: var(--use-low); }
+.usage.mid .usage-fill { background: var(--use-mid); }
+.usage.high .usage-fill { background: var(--use-high); }
+.proj-head { display: flex; align-items: center; gap: var(--s2); margin: 0 4px var(--s3); flex-wrap: wrap; }
+.proj-head .name { font-weight: 650; }
+.tag.tokens { font-variant-numeric: tabular-nums; }

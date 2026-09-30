@@ -175,3 +175,17 @@ test('experimental flag flows into the source', async () => {
   assert.equal(s.find(x => x.id === 'codex').experimental, true);
   assert.equal(s.find(x => x.id === 'cursor').experimental, false);
 });
+
+test('project tokenTotal sums sessions and agents; null without usage data', async () => {
+  const a = adapter('claude-code', 'claude', ok([
+    sess({ tool: 'claude-code', nativeId: 'a', tokens: { context: 100, total: null } }),
+    sess({ tool: 'claude-code', nativeId: 'b', parentNativeId: 'a', tokens: { context: 50, total: 900 } }),
+    sess({ tool: 'claude-code', nativeId: 'c', tokens: { context: null, total: null } }),
+  ]));
+  const b = adapter('cursor', 'cursor', ok([sess({ tool: 'cursor', nativeId: 'x', projectPath: 'E:/Other', tokens: { context: null, total: null } })]));
+  const core = createCore({ env, adapters: [a, b], now: () => NOW });
+  await core.scanAll();
+  const byName = Object.fromEntries(core.snapshot().projects.map(p => [p.name, p.tokenTotal]));
+  assert.equal(byName.SubDeck, 1000);
+  assert.equal(byName.Other, null);
+});
