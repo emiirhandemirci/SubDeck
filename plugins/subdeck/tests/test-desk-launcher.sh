@@ -52,7 +52,7 @@ fi
 [ $RC -eq 0 ] && ok "bad dir exit 0" || bad "bad dir exit 0"
 
 # installed layout: script copied without a sibling desk/, Desk only in the marketplace clone
-CACHE="$HOME/cache/subdeck/subdeck/0.2.1"; mkdir -p "$CACHE/scripts"; cp "$LAUNCH" "$CACHE/scripts/desk.sh"
+CACHE="$HOME/cache/subdeck/subdeck/current"; mkdir -p "$CACHE/scripts"; cp "$LAUNCH" "$CACHE/scripts/desk.sh"
 FAKEH="$(mktemp -d)"; mkdir -p "$FAKEH/.claude/plugins/marketplaces/subdeck"; cp -r "$DESK" "$FAKEH/.claude/plugins/marketplaces/subdeck/desk"
 OUT="$(HOME="$FAKEH" USERPROFILE="$FAKEH" SUBDECK_DESK_DIR= bash "$CACHE/scripts/desk.sh" start)"
 has "$OUT" '^SubDeck Desk: http' "installed layout finds Desk in the marketplace clone"

@@ -48,6 +48,7 @@ Add `.subdeck/` to your project's `.gitignore`; the hooks write agent events the
 | `/subdeck:task` | Launches an agent (`worker-sonnet`, `worker-opus`, `researcher`, `verifier`, or the `*-current` variants) with a task text or task file. | `/subdeck:task researcher find where login errors are handled` |
 | `/subdeck:status` | Prints the live table of running and recently finished sub-agents, including the real model id (MODEL column; on narrow terminals ACTIVITY is dropped first, then MODEL). `--all` shows more. | `/subdeck:status --all` |
 | `/subdeck:pr` | Pre-push checklist and approval gate. It never pushes by itself. | `/subdeck:pr release notes` |
+| `/subdeck:models` | Shows the model policy (which model each sub-agent role runs on, and where each value comes from), or changes it with `set` / `reset`. `--project` writes to this project only. | `/subdeck:models set worker=haiku verifier=opus` |
 | `/subdeck:desk` | Starts Desk (or prints its URL if it is already running). | `/subdeck:desk` |
 | `/subdeck:desk stop` | Stops Desk. `status` prints the URL or says it is not running. | `/subdeck:desk stop` |
 
@@ -116,7 +117,33 @@ Example view (agent detail with Prompt, Tool calls and Final report expanded; sy
   </picture>
 </p>
 
-## 6. Using a non-Claude model (e.g. GLM)
+## 6. Choosing models
+
+SubDeck picks the model of each sub-agent role from a small policy. Defaults: workers, researchers and verifiers on Sonnet, the escalation worker on Opus, Explore on Haiku. Your own (manager) model is separate: switch it with `/model`.
+
+Show the effective policy, with the source of each value (default, user or project) and what each alias resolves to:
+
+```
+/subdeck:models
+```
+
+Change it:
+
+```
+/subdeck:models set worker=haiku verifier=opus
+/subdeck:models set worker=claude-sonnet-5-5 --project
+/subdeck:models set mode=current
+/subdeck:models reset [--project]
+```
+
+- Roles: `worker`, `escalation`, `researcher`, `verifier`, `explore`. `mode` is `auto` (default), `named` or `current`.
+- Values: `sonnet`, `opus`, `haiku`, `fable`, `inherit` (use the session's model), or a full model id such as `claude-sonnet-5-5`. Other ids are accepted as free text for non-Claude backends.
+- Files: `~/.subdeck/config.json` (all projects) and `<project>/.subdeck/config.json` (this project, wins). Both are local; do not commit them.
+- Aliases follow the latest model, so `sonnet` upgrades automatically. A full id pins a version. To remap an alias, set `ANTHROPIC_DEFAULT_SONNET_MODEL` (and `_OPUS_`, `_HAIKU_`) in your Claude Code settings `env`.
+- The real model id used by an agent shows in Desk and `/subdeck:status`.
+- Invalid keys or values are rejected and nothing is written. If `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is set (or an organization `availableModels` list applies), Claude Code overrides the policy and `/subdeck:models` prints a warning.
+
+## 7. Using a non-Claude model (e.g. GLM)
 
 Normally the plugin agents pin `model: sonnet` or `model: opus`. If you run Claude Code against another backend (for example GLM through an Anthropic-compatible `ANTHROPIC_BASE_URL`), those aliases may not resolve. SubDeck therefore has a **model mode**:
 
@@ -130,13 +157,13 @@ Optional: instead of using the `*-current` agents, you can remap the aliases so 
 
 Note: the agent prompts were tuned on Claude. Behaviour on other models is untested.
 
-## 7. Privacy
+## 8. Privacy
 
 - Local only: Desk binds `127.0.0.1` and rejects requests with a foreign `Host` header.
 - Prompt, tool calls and final report are read from your local transcript only when you open an agent. They are never stored, cached or logged; tool output and thinking text are never served.
 - Start with `--no-content` to turn content reading off completely.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 **Desk says it is already running.** Only one instance runs at a time. Open the printed URL, or run `/subdeck:desk stop` and start again.
 
@@ -150,6 +177,6 @@ Note: the agent prompts were tuned on Claude. Behaviour on other models is untes
 
 **States look wrong for projects without the plugin.** In projects where the plugin is installed, hooks record exact start and stop events. Without it, Desk falls back to session files and file activity, so states are estimates and can lag by a few minutes.
 
-## 9. Where to learn more
+## 10. Where to learn more
 
 - [desk/README.md](../desk/README.md) for Desk internals, data sources and environment overrides.

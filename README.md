@@ -111,6 +111,7 @@ flowchart LR
 | `/subdeck:status` | Live agent table with the real model id per agent (`--all` includes finished agents). |
 | `/subdeck:desk` | Starts (or prints the URL of) Desk; `stop` stops it. |
 | `/subdeck:pr` | Pre-push checklist and approval gate. |
+| `/subdeck:models` | Shows or changes which model each sub-agent role uses (`/subdeck:models set worker=haiku`). |
 
 <details>
 <summary><b>Install</b></summary>
