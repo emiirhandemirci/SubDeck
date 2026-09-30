@@ -62,9 +62,21 @@ function userActivity(r) {
   return { at, kind: 'user', toolName: null, summary: null };   // user prompts are never summarized
 }
 
-export function summarizeRecords(records) {
-  const out = { tokens: null, model: null, customTitle: null, aiTitle: null, lastActivity: null };
+const isToolResultUser = c => Array.isArray(c) && c.some(b => b && b.type === 'tool_result');
+
+/** fromStart: the records begin at the top of the file, so the first user record opens run 1. */
+export function summarizeRecords(records, { fromStart = true } = {}) {
+  const out = { tokens: null, model: null, customTitle: null, aiTitle: null, lastActivity: null, runStartedAt: null, ended: null };
+  let prevEnded = fromStart;   // true: the next prompt-like user record starts a new run
   for (const r of records) {
+    if (r.type === 'user' && r.message && typeof r.message === 'object' && !isToolResultUser(r.message.content)) {
+      if (prevEnded) { out.runStartedAt = toIso(r.timestamp); out.ended = null; prevEnded = false; }
+    } else if (r.type === 'assistant' && r.message && typeof r.message === 'object') {
+      const at = toIso(r.timestamp);
+      if (r.isApiErrorMessage === true) { out.ended = at ? { state: 'failed', at } : null; prevEnded = true; }
+      else if (r.message.stop_reason === 'end_turn') { out.ended = at ? { state: 'finished', at } : null; prevEnded = true; }
+      else { out.ended = null; prevEnded = false; }
+    }
     if (r.type === 'custom-title' && typeof r.customTitle === 'string' && r.customTitle.trim()) out.customTitle = r.customTitle;
     else if (r.type === 'ai-title' && typeof r.aiTitle === 'string' && r.aiTitle.trim()) out.aiTitle = r.aiTitle;
     else if (r.type === 'assistant' && r.message && typeof r.message === 'object') {
@@ -99,7 +111,8 @@ async function readOnce(file, size, tailBytes) {
   const cwdRec = head.records.find(r => typeof r.cwd === 'string' && r.cwd);
   const tsRec = head.records.find(r => toIso(r.timestamp));
   const bad = tail.bad + (size > headLen + tailBytes ? head.bad : 0);
-  return { cwd: cwdRec ? cwdRec.cwd : null, createdAt: tsRec ? toIso(tsRec.timestamp) : null, ...summarizeRecords(tail.records), bad };
+  return { cwd: cwdRec ? cwdRec.cwd : null, createdAt: tsRec ? toIso(tsRec.timestamp) : null,
+    ...summarizeRecords(tail.records, { fromStart: size <= tailBytes || size <= headLen }), bad };
 }
 
 /** Cached by file path; entry reused while size and mtime are unchanged. */
@@ -111,6 +124,75 @@ export async function readTranscript(file, st, cache, { growIfNoUsage }) {
   if (growIfNoUsage && value.tokens === null && st.size > TAIL_BYTES) value = await readOnce(file, st.size, TAIL_MAX_BYTES);
   cache.set('t:' + file, { sig, value });
   return value;
+}
+
+// ---- explicit completion records in the parent transcript ----
+const DONE = { completed: 'finished', killed: 'finished', stopped: 'finished', cancelled: 'finished', canceled: 'finished', failed: 'failed', error: 'failed' };
+const CHUNK = 8 * 1024 * 1024;
+const tag = (text, name) => { const m = new RegExp('<' + name + '>([^<]*)</' + name + '>').exec(text); return m ? m[1].trim() : null; };
+
+/** Pulls completion facts out of one parent-transcript record; returns [{agentId,status,at,durationMs}]. Reads ids/status/time only. */
+export function completionsOf(o) {
+  const at = toIso(o.timestamp);
+  if (!at) return [];
+  const out = [];
+  let text = null, dur = null;
+  if (o.type === 'attachment' && o.attachment && o.attachment.commandMode === 'task-notification' && typeof o.attachment.prompt === 'string') {
+    text = o.attachment.prompt;
+    const u = o.attachment.usage;
+    if (u && Number.isFinite(u.durationMs)) dur = u.durationMs;
+  } else if (o.type === 'queue-operation' && o.operation === 'enqueue' && typeof o.content === 'string') text = o.content;
+  else if (o.type === 'user' && o.message && typeof o.message.content === 'string') text = o.message.content;
+  if (text !== null) {
+    if (!text.includes('<task-notification>')) return [];
+    const agentId = tag(text, 'task-id');
+    const status = tag(text, 'status');
+    if (dur === null) { const d = tag(text, 'duration_ms'); if (d !== null && Number.isFinite(Number(d))) dur = Number(d); }
+    if (agentId && DONE[status]) out.push({ agentId, status: DONE[status], at, durationMs: dur });
+    return out;
+  }
+  const t = o.toolUseResult;
+  if (o.type === 'user' && t && typeof t === 'object' && typeof t.agentId === 'string' && DONE[t.status]) {
+    out.push({ agentId: t.agentId, status: DONE[t.status], at, durationMs: Number.isFinite(t.totalDurationMs) ? t.totalDurationMs : null });
+  }
+  return out;
+}
+
+/** Latest completion per agent id. Incremental: only bytes appended since the last scan are read (cache key c:<file>). */
+export async function readCompletions(file, st, cache) {
+  const key = 'c:' + file;
+  let c = cache.get(key);
+  if (!c || st.size < c.offset) c = { offset: 0, agents: new Map() };
+  if (st.size > c.offset) {
+    const fh = await fs.open(file, 'r');
+    try {
+      let pos = c.offset;
+      let carry = Buffer.alloc(0);
+      while (pos < st.size) {
+        const len = Math.min(CHUNK, st.size - pos);
+        const buf = Buffer.alloc(len);
+        const { bytesRead } = await fh.read(buf, 0, len, pos);
+        if (!bytesRead) break;
+        pos += bytesRead;
+        const all = carry.length ? Buffer.concat([carry, buf.subarray(0, bytesRead)]) : buf.subarray(0, bytesRead);
+        const nl = all.lastIndexOf(0x0a);
+        if (nl < 0) { carry = Buffer.from(all); continue; }
+        for (const line of all.subarray(0, nl).toString('utf8').split('\n')) {
+          if (!line.includes('task-notification') && !(line.includes('"toolUseResult"') && line.includes('"agentId"'))) continue;
+          let o; try { o = JSON.parse(line); } catch { continue; }
+          if (!o || typeof o !== 'object') continue;
+          for (const d of completionsOf(o)) {
+            const prev = c.agents.get(d.agentId);
+            if (!prev || Date.parse(d.at) >= Date.parse(prev.at)) c.agents.set(d.agentId, d);
+          }
+        }
+        carry = Buffer.from(all.subarray(nl + 1));
+      }
+      c.offset = pos - carry.length;
+    } finally { await fh.close(); }
+  }
+  cache.set(key, c);
+  return c.agents;
 }
 
 // appended to desk/adapters/claude-code.mjs
@@ -190,8 +272,18 @@ function subTitle(meta, agentId) {
   return { title: `agent ${agentId.slice(0, 8)}`, titleSource: 'fallback' };
 }
 
-function subBasis(hook, mtimeIso) {
+/** Explicit end of the latest run: parent record (if not older than the latest run start) else the sub-agent's own last record. */
+export function latestCompletion(tr, notif) {
+  let n = notif || null;
+  if (n && tr.runStartedAt && Date.parse(n.at) < Date.parse(tr.runStartedAt)) n = null;   // belongs to an earlier run
+  if (n) return { state: n.status, at: n.at, runStartedAt: n.durationMs !== null ? new Date(Date.parse(n.at) - n.durationMs).toISOString() : tr.runStartedAt };
+  if (tr.ended) return { state: tr.ended.state, at: tr.ended.at, runStartedAt: tr.runStartedAt };
+  return null;
+}
+
+function subBasis(hook, mtimeIso, done) {
   if (hook && hook.stop) return { kind: 'fixed', state: 'finished', stateSource: 'hook' };
+  if (done) return { kind: 'fixed', state: done.state, stateSource: 'field' };
   if (hook && hook.start) return { kind: 'hookOpen', at: mtimeIso || hook.start, stateSource: 'hook' };
   return { kind: 'mtime', at: mtimeIso, stateSource: 'mtime' };
 }
@@ -221,13 +313,14 @@ async function scan(env, { cache }) {
       if (Math.max(st.mtimeMs, ...subs.map(s => s.st.mtimeMs)) < cutoff) continue;
       const top = await readTranscript(file, st, cache, { growIfNoUsage: false });
       skipped += top.bad;
+      const completions = subs.length ? await readCompletions(file, st, cache) : new Map();
       for (const s of subs) {
         s.tr = await readTranscript(s.file, s.st, cache, { growIfNoUsage: true });
         s.meta = await readMeta(s.file.replace(/\.jsonl$/, '.meta.json'), cache);
         skipped += s.tr.bad;
       }
       const projectPath = top.cwd || (subs.find(s => s.tr.cwd) || {}).tr?.cwd || null;
-      groups.push({ uuid, file, st, top, subs, projectPath, projectLabel: projectPath ? null : slug.name });
+      groups.push({ uuid, file, st, top, subs, completions, projectPath, projectLabel: projectPath ? null : slug.name });
     }
   }
   // hook events, once per project
@@ -259,12 +352,15 @@ async function scan(env, { cache }) {
       seen.add(s.agentId);
       const hook = hooks.get(s.agentId);
       const smt = msToIso(s.st.mtimeMs);
+      const done = latestCompletion(s.tr, g.completions.get(s.agentId));
+      const runStartedAt = (hook && hook.stop) ? null : ((done && done.runStartedAt) || s.tr.runStartedAt || null);
       sessions.push({ ...base, nativeId: s.agentId, parentNativeId: g.uuid, depth: 1, ...subTitle(s.meta, s.agentId),
         agentType: (s.meta && s.meta.agentType) || (hook && hook.agentType) || null,
         model: (s.meta && s.meta.model) || s.tr.model,
-        createdAt: earlier(s.tr.createdAt, hook && hook.start) || smt, updatedAt: smt, endedAt: (hook && hook.stop) || null,
+        createdAt: earlier(s.tr.createdAt, hook && hook.start) || smt, updatedAt: smt, endedAt: (hook && hook.stop) || (done && done.at) || null,
+        ...(runStartedAt ? { runStartedAt } : {}),
         tokens: { context: s.tr.tokens, total: null }, lastActivity: s.tr.lastActivity,
-        refs: { file: s.file, db: null, key: null }, stateBasis: subBasis(hook, smt) });
+        refs: { file: s.file, db: null, key: null }, stateBasis: subBasis(hook, smt, done) });
     }
     for (const [agentId, hook] of hooks) {
       if (seen.has(agentId) || hook.sessionId !== g.uuid) continue;

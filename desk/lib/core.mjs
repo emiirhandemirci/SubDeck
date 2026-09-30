@@ -80,7 +80,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
           id, nativeId: s.nativeId, tool: a.tool, sourceId: a.tool, projectId: p.id, parentId: null, depth: 0,
           title: s.title, titleSource: s.titleSource, agentType: s.agentType ?? null, model: s.model ?? null,
           state: 'unknown', stateSource: 'none',
-          createdAt: s.createdAt ?? null, updatedAt: s.updatedAt ?? null, endedAt: s.endedAt ?? null, durationMs: null,
+          createdAt: s.createdAt ?? null, runStartedAt: s.runStartedAt ?? null, updatedAt: s.updatedAt ?? null, endedAt: s.endedAt ?? null, durationMs: null,
           tokens: { context: s.tokens.context ?? null, total: s.tokens.total ?? null },
           lastActivity: la ? { at: la.at ?? null, kind: la.kind, toolName: la.toolName ?? null, summary: la.summary ?? null } : null,
           refs: { file: s.refs?.file ?? null, db: s.refs?.db ?? null, key: s.refs?.key ?? null },
@@ -124,9 +124,9 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
     for (const s of sessions) {
       const { state, stateSource } = deriveState(bases.get(s.id), t);
       s.state = state; s.stateSource = stateSource;
-      const c = s.createdAt ? Date.parse(s.createdAt) : NaN;
+      const c = Date.parse(s.runStartedAt || s.createdAt);   // latest run when known, else first start
       if (!Number.isFinite(c)) { s.durationMs = null; continue; }
-      const endIso = state === 'finished' ? (s.endedAt || s.updatedAt) : null;
+      const endIso = (state === 'finished' || state === 'failed') ? (s.endedAt || s.updatedAt) : null;
       s.durationMs = Math.max(0, (endIso ? Date.parse(endIso) : t) - c);
     }
   }

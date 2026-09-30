@@ -53,3 +53,12 @@ test('makeSource defaults', () => {
     id: 'cursor', tool: 'cursor', label: 'Cursor', adapterVersion: '1', detected: false, health: 'ok', lastError: null,
     lastScanAt: null, scanMs: null, counts: { projects: 0, sessions: 0, running: 0, skipped: 0 } });
 });
+
+test('failed is a supported fixed state; runStartedAt is an optional string', () => {
+  const base = { nativeId: 'a', tool: 't', title: 'x', titleSource: 'meta', projectPath: '/p', tokens: { context: null, total: null },
+    stateBasis: { kind: 'fixed', state: 'failed', stateSource: 'field' } };
+  assert.equal(validateAdapterSession(base).ok, true);
+  assert.equal(validateAdapterSession({ ...base, runStartedAt: '2026-09-29T10:00:00.000Z' }).ok, true);
+  assert.equal(validateAdapterSession({ ...base, runStartedAt: 5 }).ok, false);
+  assert.deepEqual(deriveState(base.stateBasis, 0), { state: 'failed', stateSource: 'field' });
+});

@@ -128,3 +128,21 @@ test('watchTargets unions adapter paths with tool', async () => {
   await core.scanAll();
   assert.deepEqual(core.watchTargets(), [{ tool: 'cursor', path: '/w/cursor', recursive: true }]);
 });
+
+test('duration uses runStartedAt; failed and finished end at endedAt', async () => {
+  const mk = (id, over) => sess({ nativeId: id, tool: 'claude-code', parentNativeId: null, ...over });
+  const a = adapter('claude-code', 'claude', ok([
+    mk('r1', { createdAt: iso(50000000), runStartedAt: iso(30000), stateBasis: { kind: 'mtime', at: iso(1000), stateSource: 'mtime' } }),
+    mk('f1', { createdAt: iso(50000000), runStartedAt: iso(30000), endedAt: iso(10000), stateBasis: { kind: 'fixed', state: 'failed', stateSource: 'field' } }),
+    mk('d1', { createdAt: iso(50000), endedAt: iso(20000), stateBasis: { kind: 'fixed', state: 'finished', stateSource: 'field' } }),
+  ]));
+  const core = createCore({ env, adapters: [a], now: () => NOW });
+  await core.scanAll();
+  const by = Object.fromEntries(core.snapshot().sessions.map(s => [s.nativeId, s]));
+  assert.equal(by.r1.durationMs, 30000);
+  assert.equal(by.f1.state, 'failed');
+  assert.equal(by.f1.durationMs, 20000);
+  assert.equal(by.d1.durationMs, 30000);
+  assert.equal(by.r1.runStartedAt, iso(30000));
+  assert.equal(by.d1.runStartedAt, null);
+});

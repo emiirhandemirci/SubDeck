@@ -202,3 +202,135 @@ test('readHooks ignores a trailing partial line in events.jsonl (not malformed)'
   assert.equal(h.bad, 0);
   assert.ok(h.agents.has('zz1'));
 });
+
+// ---- explicit completion signals (task 023) ----
+function completionScenario(build) {
+  const root = tmpDir('desk-cc-done-');
+  const NOW = Date.now();
+  const ago = ms => new Date(NOW - ms).toISOString();
+  const proj = path.join(root, 'work', 'Gamma');
+  fs.mkdirSync(proj, { recursive: true });
+  const dir = path.join(root, 'claude', 'projects', 'slug-g');
+  const parent = path.join(dir, 'sess-g.jsonl');
+  const subDir = path.join(dir, 'sess-g', 'subagents');
+  const sub = (id, records, mtimeAgo) => writeJsonl(path.join(subDir, `agent-${id}.jsonl`), records, { mtimeMs: NOW - mtimeAgo });
+  const parentRecs = build({ ago, sub, proj, NOW });
+  writeJsonl(parent, [rec.user(ago(3600000), proj), ...parentRecs], { mtimeMs: NOW - 1000 });
+  const env = { now: () => NOW, days: 14, platform: process.platform, claudeProjectsDir: path.join(root, 'claude', 'projects') };
+  return { env, NOW, ago, proj, parent, subDir };
+}
+const scanBy = async (sc, cache = new Map()) => {
+  const r = await claude.scan(sc.env, { since: null, cache });
+  return { r, by: Object.fromEntries(r.sessions.map(s => [s.nativeId, s])) };
+};
+const st = (s, now) => deriveState(s.stateBasis, now);
+
+test('completion: background notification (attachment) -> finished/field even with a fresh mtime', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('aaaa', [rec.user(ago(70000), proj), rec.tool(ago(60000), 'Edit', {}), rec.endTurn(ago(50000))], 5000);
+    return [rec.launched(ago(80000), 'aaaa'), rec.notifyAttachment(ago(49000), 'aaaa', 'completed', 21000)];
+  });
+  const { by } = await scanBy(sc);
+  assert.deepEqual(st(by.aaaa, sc.NOW), { state: 'finished', stateSource: 'field' });
+  assert.equal(by.aaaa.endedAt, sc.ago(49000));
+  assert.equal(by.aaaa.runStartedAt, sc.ago(49000 + 21000));   // notification durationMs preferred
+});
+
+test('completion: failed notification (queue-operation + user forms, no usage) -> failed/field', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('bbbb', [rec.user(ago(70000), proj), rec.apiError(ago(60000))], 60000);
+    return [rec.launched(ago(80000), 'bbbb'), rec.notifyQueue(ago(59000), 'bbbb', 'failed'), rec.notifyUser(ago(58000), 'bbbb', 'failed')];
+  });
+  const { by } = await scanBy(sc);
+  assert.deepEqual(st(by.bbbb, sc.NOW), { state: 'failed', stateSource: 'field' });
+  assert.equal(by.bbbb.endedAt, sc.ago(58000));
+});
+
+test('completion: killed -> finished; unknown task ids (bash tasks) are ignored', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('cccc', [rec.user(ago(70000), proj), rec.text(ago(60000), 'x')], 60000);
+    return [rec.notifyQueue(ago(50000), 'cccc', 'killed'), rec.notifyAttachment(ago(40000), 'bash123', 'completed', 5)];
+  });
+  const { by, r } = await scanBy(sc);
+  assert.deepEqual(st(by.cccc, sc.NOW), { state: 'finished', stateSource: 'field' });
+  assert.equal(by.bash123, undefined);
+  assert.equal(r.skipped, 0);
+});
+
+test('completion: sub-agent transcript ends with end_turn / API error and no parent record -> field', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('dd01', [rec.user(ago(70000), proj), rec.endTurn(ago(50000))], 50000);
+    sub('dd02', [rec.user(ago(70000), proj), rec.text(ago(60000), 'x'), rec.apiError(ago(50000))], 50000);
+    sub('dd03', [rec.user(ago(70000), proj), rec.tool(ago(50000), 'Bash', { command: 'ls' })], 50000);   // still running
+    return [];
+  });
+  const { by } = await scanBy(sc);
+  assert.deepEqual(st(by.dd01, sc.NOW), { state: 'finished', stateSource: 'field' });
+  assert.equal(by.dd01.endedAt, sc.ago(50000));
+  assert.deepEqual(st(by.dd02, sc.NOW), { state: 'failed', stateSource: 'field' });
+  assert.deepEqual(st(by.dd03, sc.NOW), { state: 'running', stateSource: 'mtime' });
+  assert.equal(by.dd03.endedAt, null);
+});
+
+test('completion: resumed after completion -> mtime state again, run duration from the resume', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('eeee', [rec.user(ago(900000), proj), rec.endTurn(ago(880000)), rec.resume(ago(20000)), rec.tool(ago(10000), 'Read', { file_path: 'x' })], 10000);
+    return [rec.notifyAttachment(ago(879000), 'eeee', 'completed', 21000)];
+  });
+  const { by } = await scanBy(sc);
+  assert.deepEqual(st(by.eeee, sc.NOW), { state: 'running', stateSource: 'mtime' });
+  assert.equal(by.eeee.endedAt, null);
+  assert.equal(by.eeee.runStartedAt, sc.ago(20000));
+  assert.equal(by.eeee.createdAt, sc.ago(900000));
+});
+
+test('completion: resumed, second run also completed -> finished with the latest run window', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('ffff', [rec.user(ago(900000), proj), rec.endTurn(ago(880000)), rec.resume(ago(60000)), rec.endTurn(ago(44000))], 44000);
+    return [rec.notifyAttachment(ago(879000), 'ffff', 'completed', 21000), rec.notifyAttachment(ago(43000), 'ffff', 'completed', 16000)];
+  });
+  const { by } = await scanBy(sc);
+  assert.deepEqual(st(by.ffff, sc.NOW), { state: 'finished', stateSource: 'field' });
+  assert.equal(by.ffff.endedAt, sc.ago(43000));
+  assert.equal(by.ffff.runStartedAt, sc.ago(43000 + 16000));
+});
+
+test('completion: foreground Agent tool_result in the parent (status + agentId)', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('gggg', [rec.user(ago(70000), proj), rec.text(ago(50000), 'x')], 2000);
+    sub('hhhh', [rec.user(ago(70000), proj), rec.text(ago(50000), 'x')], 2000);
+    return [rec.foregroundResult(ago(40000), 'gggg', 'completed', 12000), rec.foregroundResult(ago(30000), 'hhhh', 'failed', 3000)];
+  });
+  const { by } = await scanBy(sc);
+  assert.deepEqual(st(by.gggg, sc.NOW), { state: 'finished', stateSource: 'field' });
+  assert.equal(by.gggg.endedAt, sc.ago(40000));
+  assert.equal(by.gggg.runStartedAt, sc.ago(52000));
+  assert.deepEqual(st(by.hhhh, sc.NOW), { state: 'failed', stateSource: 'field' });
+});
+
+test('completion: hook Stop keeps the top priority (stateSource hook)', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('iiii', [rec.user(ago(70000), proj), rec.endTurn(ago(50000))], 50000);
+    fs.mkdirSync(path.join(proj, '.subdeck'), { recursive: true });
+    const ev = (ts, event) => JSON.stringify({ ts, event, agent_id: 'iiii', agent_type: 'w', session_id: 'sess-g', transcript_path: '/x' });
+    fs.writeFileSync(path.join(proj, '.subdeck', 'events.jsonl'), [ev(ago(70000), 'SubagentStart'), ev(ago(45000), 'SubagentStop')].join('\n') + '\n');
+    return [rec.notifyAttachment(ago(49000), 'iiii', 'failed')];
+  });
+  const { by } = await scanBy(sc);
+  assert.deepEqual(by.iiii.stateBasis, { kind: 'fixed', state: 'finished', stateSource: 'hook' });
+});
+
+test('completion: parent read is incremental and never leaks message content', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('jjjj', [rec.user(ago(70000), proj), rec.text(ago(50000), 'x')], 1000);
+    return [rec.launched(ago(60000), 'jjjj'), rec.foregroundResult(ago(59000), 'other', 'completed', 1)];
+  });
+  const cache = new Map();
+  let { by } = await scanBy(sc, cache);
+  assert.equal(st(by.jjjj, sc.NOW).state, 'running');
+  fs.appendFileSync(sc.parent, JSON.stringify(rec.notifyAttachment(sc.ago(500), 'jjjj', 'completed', 9000)) + '\n');
+  ({ by } = await scanBy(sc, cache));
+  assert.deepEqual(st(by.jjjj, sc.NOW), { state: 'finished', stateSource: 'field' });
+  const json = JSON.stringify(by);
+  for (const m of ['NOTIFY_RESULT_MARKER', 'API_ERROR_MARKER', 'FG_RESULT_MARKER', 'RESUME_PROMPT_MARKER']) assert.ok(!json.includes(m), m);
+});

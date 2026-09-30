@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 export const RUNNING_MS = 120000;
 export const IDLE_MS = 1800000;
 export const STALE_MS = 300000;
-export const STATES = ['running', 'idle', 'finished', 'stale', 'unknown'];
+export const STATES = ['running', 'idle', 'finished', 'failed', 'stale', 'unknown'];
 export const STATE_SOURCES = ['hook', 'field', 'mtime', 'none'];
 const KINDS = ['user', 'assistant', 'tool', 'other'];
 const TITLE_SOURCES = ['explicit', 'summary', 'meta', 'fallback'];
@@ -42,7 +42,7 @@ export function validateAdapterSession(s) {
   if (!str(s.title)) return fail('title');
   if (!TITLE_SOURCES.includes(s.titleSource)) return fail('titleSource');
   if (!str(s.projectPath) && !str(s.projectLabel)) return fail('project');
-  for (const k of ['parentNativeId', 'agentType', 'model', 'createdAt', 'updatedAt', 'endedAt']) if (!optStr(s[k])) return fail(k);
+  for (const k of ['parentNativeId', 'agentType', 'model', 'createdAt', 'runStartedAt', 'updatedAt', 'endedAt']) if (!optStr(s[k])) return fail(k);
   if (!s.tokens || !optNum(s.tokens.context) || !optNum(s.tokens.total)) return fail('tokens');
   if (s.lastActivity && !KINDS.includes(s.lastActivity.kind)) return fail('lastActivity.kind');
   const b = s.stateBasis;

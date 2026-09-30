@@ -47,6 +47,7 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 .dot.running { background: var(--running); animation: pulse 1.6s infinite; }
 .dot.idle { background: var(--idle); }
 .dot.finished, .dot.stale { background: var(--finished); }
+.dot.failed { background: var(--error); }
 .dot.unknown { border: 1.5px solid var(--muted); }
 .state-word { font-size: 12px; color: var(--muted); }
 .tag { font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--badge); color: var(--muted); }

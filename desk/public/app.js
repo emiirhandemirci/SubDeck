@@ -171,6 +171,7 @@ function renderDetail() {
   const st = el('span'); st.append(dot(s.state), document.createTextNode(` ${STATE_LABEL[s.state]} (${SOURCE_LABEL[s.stateSource]})`));
   row('State', st);
   row('Started', when(s.createdAt));
+  if (s.runStartedAt) row('Latest run started', when(s.runStartedAt));
   row('Updated', when(s.updatedAt));
   row('Ended', when(s.endedAt));
   const dur = el('span', null, formatDuration(s.durationMs)); dur.id = 'detailDuration'; row('Duration', dur);
@@ -199,7 +200,7 @@ function renderDetail() {
 setInterval(() => {   // live duration for running/idle sessions
   const s = S.detail;
   const d = $('detailDuration');
-  if (s && d && (s.state === 'running' || s.state === 'idle') && s.createdAt) d.textContent = formatDuration(Date.now() - Date.parse(s.createdAt));
+  if (s && d && (s.state === 'running' || s.state === 'idle') && (s.runStartedAt || s.createdAt)) d.textContent = formatDuration(Date.now() - Date.parse(s.runStartedAt || s.createdAt));
   const live = $('live');
   const fresh = Date.now() - S.lastHeartbeat < 40000;
   live.textContent = fresh ? 'Live' : 'Reconnecting…';
