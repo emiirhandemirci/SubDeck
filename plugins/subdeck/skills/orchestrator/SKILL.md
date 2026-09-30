@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: Rulebook for a session acting as a manager of sub-agents. Use whenever you delegate work, launch agents (in parallel or in sequence), are told to "use subagents", or handle a multi-part request (investigate, then implement, then test). Covers model choice, task template, ownership, git rules, report format, verification, escalation.
+description: Rulebook for a session acting as a manager of sub-agents. Use whenever you delegate work, launch agents (in parallel or in sequence), are told to "use subagents", or handle a multi-part request (investigate, then implement, then test). Covers model mode and model choice, task template, ownership, git rules, report format, verification, escalation.
 ---
 
 # Orchestrator: the manager's rulebook
@@ -13,18 +13,26 @@ You are the **manager**. The user decides; you delegate and summarise; sub-agent
 - Allowed for you: reading/writing task files, launching agents, and **targeted single checks** to verify output (`git log -1`, `git show --stat`, one `file:line`, one `ls`).
 - If you catch yourself reading many files or running a test suite, stop and delegate that instead.
 
-## 2. Choosing the agent (always set `model` explicitly)
+## 2. Model mode and choosing the agent
 
-| Need | Agent | `model` param |
+**Model mode** (`auto` default, `named`, `current`; decision 0021):
+
+- `named`: agents pin a model (sonnet default, opus by the criteria below). For Claude models on the normal Anthropic API.
+- `current`: agents inherit the session's model (`*-current` agents). For non-Claude backends (for example GLM behind `ANTHROPIC_BASE_URL`) where `sonnet`/`opus` may not resolve.
+- `auto`: check your own model id and environment. A Claude model id with no custom API base -> `named`. Otherwise (non-Claude model id, `ANTHROPIC_BASE_URL` set to a non-Anthropic host, or a named agent fails to start because its model is unavailable) -> `current`.
+- State the chosen mode to the user **once per session**. A project can force it in `CLAUDE.local.md` with `Model mode: auto|named|current`; that overrides `auto`.
+
+| Need | `named` mode agent (`model` param) | `current` mode agent |
 |---|---|---|
-| Code, tests, measurements, docs (default) | `subdeck:worker-sonnet` | `sonnet` |
-| Critical architecture/design decision, cross-component debugging, security-critical change, a sonnet worker stuck twice on the same job, or the user said "urgent" | `subdeck:worker-opus` | `opus` |
-| "How does X work / does Y support Z" (read-only) | `subdeck:researcher` | `sonnet` |
-| Independent check of a worker's report after non-trivial work | `subdeck:verifier` | `sonnet` |
+| Code, tests, measurements, docs (default) | `subdeck:worker-sonnet` (`sonnet`) | `subdeck:worker-current` |
+| Critical architecture/design decision, cross-component debugging, security-critical change, a sonnet worker stuck twice on the same job, or the user said "urgent" | `subdeck:worker-opus` (`opus`) | none: use `subdeck:worker-current` |
+| "How does X work / does Y support Z" (read-only) | `subdeck:researcher` (`sonnet`) | `subdeck:researcher-current` |
+| Independent check of a worker's report after non-trivial work | `subdeck:verifier` (`sonnet`) | `subdeck:verifier-current` |
 
-- Pass `model` on every launch; never rely on inheritance.
+- In `named` mode pass `model` on every launch; never rely on inheritance. In `current` mode the `*-current` agents inherit by design; do not pass a `model` override.
+- The opus rule applies only in `named` mode; in `current` mode there is no cheap/expensive split.
 - Before launching `worker-opus`, tell the user in **one sentence** why it is needed.
-- `subdeck:researcher` is read-only: it cannot write files or run commands. Give it questions, not jobs.
+- Researchers are read-only: they cannot write files or run commands. Give them questions, not jobs.
 
 ## 3. Task template
 
@@ -85,7 +93,7 @@ Longer material goes to files. Your own summary to the user is short too: what w
 
 - An agent that reports `needs-decision` has hit a wall. Relay its **exact question** to the user; send the answer back to the **same agent** (`SendMessage`), not a fresh one.
 - **Stop after 3 failed attempts** on the same job. If an agent's shell/tools fail repeatedly, do not keep spawning empty agents that burn tokens: report to the user and diagnose.
-- A sonnet worker stuck twice on the same job: one retry with `worker-opus` (state the reason), then ask the user.
+- A sonnet worker stuck twice on the same job: in `named` mode one retry with `worker-opus` (state the reason), then ask the user; in `current` mode ask the user.
 
 ## 9. Decision log
 
@@ -96,7 +104,7 @@ When the user decides something (name, approach, tradeoff, rejected option), wri
 | Pitfall | Counter-rule |
 |---|---|
 | Manager drift: researching, debugging, running tests itself | Delegate; only targeted single checks |
-| Model not stated, inherited from the manager | Always set `model` explicitly |
+| Model not stated, inherited from the manager (named mode) | Always set `model` explicitly; in current mode use the `*-current` agents |
 | Long task pasted into chat, lost or truncated | Write it to a file, point the agent at it |
 | Task without writable paths or done criterion | Use the section 3 template |
 | Two agents write the same path | Disjoint paths, or run sequentially |

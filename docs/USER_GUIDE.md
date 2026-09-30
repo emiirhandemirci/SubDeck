@@ -35,7 +35,7 @@ Add `.subdeck/` to your project's `.gitignore`; the hooks write agent events the
 | Command | What it does | Example |
 |---|---|---|
 | `/subdeck:orchestrator` | Loads the manager rulebook: delegate, do not do the work yourself. | `/subdeck:orchestrator` |
-| `/subdeck:task` | Launches an agent (`worker-sonnet`, `worker-opus`, `researcher`, `verifier`) with a task text or task file. | `/subdeck:task researcher find where login errors are handled` |
+| `/subdeck:task` | Launches an agent (`worker-sonnet`, `worker-opus`, `researcher`, `verifier`, or the `*-current` variants) with a task text or task file. | `/subdeck:task researcher find where login errors are handled` |
 | `/subdeck:status` | Prints the live table of running and recently finished sub-agents. `--all` shows more. | `/subdeck:status --all` |
 | `/subdeck:pr` | Pre-push checklist and approval gate. It never pushes by itself. | `/subdeck:pr release notes` |
 | `/subdeck:desk` | Starts Desk (or prints its URL if it is already running). | `/subdeck:desk` |
@@ -86,13 +86,27 @@ Each agent also shows where its state came from. "Estimated from file activity" 
 
 Example view: [desk-smoke.png](research/desk-smoke.png).
 
-## 6. Privacy
+## 6. Using a non-Claude model (e.g. GLM)
+
+Normally the plugin agents pin `model: sonnet` or `model: opus`. If you run Claude Code against another backend (for example GLM through an Anthropic-compatible `ANTHROPIC_BASE_URL`), those aliases may not resolve. SubDeck therefore has a **model mode**:
+
+- `named`: the existing agents with pinned models (`worker-sonnet`, `worker-opus`, `researcher`, `verifier`).
+- `current`: the inherit agents `worker-current`, `researcher-current`, `verifier-current`. They have `model: inherit`, so they run on whatever model the session uses. There is no cheap/expensive split and no opus escalation in this mode.
+- `auto` (default): the manager picks `current` when its own model id is not a Claude model, when `ANTHROPIC_BASE_URL` points to a non-Anthropic host, or when a named agent fails to start because its model is unavailable; otherwise `named`. It states the chosen mode once per session.
+
+To force a mode, put `Model mode: auto|named|current` in your project's `CLAUDE.local.md` (the template has the line). You can also launch an inherit agent directly: `/subdeck:task worker-current <task>`.
+
+Optional: instead of using the `*-current` agents, you can remap the aliases so `sonnet` and `opus` resolve to your backend's models, with `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` (each takes a full model name), or set `CLAUDE_CODE_SUBAGENT_MODEL` for sub-agents without a model of their own. Sources: [model configuration](https://code.claude.com/docs/en/model-config) (environment variables) and [sub-agents](https://code.claude.com/docs/en/sub-agents) (`model` accepts an alias, a full model ID, or `inherit`, "use the same model as the main conversation"; resolution order).
+
+Note: the agent prompts were tuned on Claude. Behaviour on other models is untested.
+
+## 7. Privacy
 
 - Local only: Desk binds `127.0.0.1` and rejects requests with a foreign `Host` header.
 - Prompt, tool calls and final report are read from your local transcript only when you open an agent. They are never stored, cached or logged; tool output and thinking text are never served.
 - Start with `--no-content` to turn content reading off completely.
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 **Desk says it is already running.** Only one instance runs at a time. Open the printed URL, or run `/subdeck:desk stop` and start again.
 
@@ -104,7 +118,7 @@ Example view: [desk-smoke.png](research/desk-smoke.png).
 
 **States look wrong for projects without the plugin.** In projects where the plugin is installed, hooks record exact start and stop events. Without it, Desk falls back to session files and file activity, so states are estimates and can lag by a few minutes.
 
-## 8. Where to learn more
+## 9. Where to learn more
 
 - [desk/README.md](../desk/README.md) for Desk internals, data sources and environment overrides.
 - [docs/design.md](design.md) for the overall design and roadmap.

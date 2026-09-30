@@ -12,11 +12,12 @@ Delete this line and the placeholder list at the end once filled in.
 
 ## Model choice
 
+- Model mode: {{MODEL_MODE}} (auto|named|current). `auto` picks `current` on non-Claude backends, else `named`; `current` uses the `*-current` agents that inherit the session model.
 - Default: `subdeck:worker-sonnet`.
 - `subdeck:worker-opus` only for critical architecture or design, cross-component debugging, security-critical work, a sonnet worker stuck twice on the same job, or an explicit "urgent" from the user. State the reason to the user in one sentence.
 - `subdeck:researcher` for any reading or investigation (read-only).
 - `subdeck:verifier` for independent checks of finished work (no commits).
-- Always set the model explicitly when launching an agent; never rely on inheritance.
+- In `named` mode always set the model explicitly when launching an agent; never rely on inheritance. In `current` mode use `subdeck:worker-current`, `subdeck:researcher-current`, `subdeck:verifier-current` (no opus rule).
 
 ## Ownership and parallelism
 
@@ -67,6 +68,7 @@ Delete this line and the placeholder list at the end once filled in.
 ## Placeholders to fill in
 
 - `{{PROJECT_NAME}}`: the project's name.
+- `{{MODEL_MODE}}`: `auto`, `named` or `current` (use `auto` if unsure).
 - `{{USER_LANGUAGE}}`: language the manager speaks with the user.
 - `{{TEST_COMMAND}}`: command that runs the project's tests.
 - `{{PROTECTED_PATHS}}`: paths no agent may edit (or "none").
