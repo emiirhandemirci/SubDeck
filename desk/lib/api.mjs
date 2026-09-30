@@ -2,6 +2,7 @@
 // Pure request handling for Desk (spec section 8). No sockets here; server.mjs wires it to node:http.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
@@ -76,7 +77,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       if (STATIC[p]) return await serveStatic(req, res, STATIC[p]);
       if (req.method === 'HEAD') return json(res, 405, { error: 'method not allowed' });
       const snap = core.snapshot();
-      if (p === '/api/sources') return json(res, 200, { generatedAt: iso(), server: { version, startedAt, days }, sources: snap.sources });
+      if (p === '/api/sources') return json(res, 200, { generatedAt: iso(), server: { version, startedAt, days }, home: os.homedir(), sources: snap.sources });
       if (p === '/api/projects') return json(res, 200, { generatedAt: iso(), projects: snap.projects });
       if (p === '/api/stream') return openStream(res);
       let m = /^\/api\/projects\/([A-Za-z0-9._-]+)$/.exec(p);

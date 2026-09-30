@@ -1,6 +1,6 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
-import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, markdownLite, formatToolTime, contextUsage } from './format.js';
+import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, markdownLite, formatToolTime, contextUsage } from './format.js';
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -8,7 +8,7 @@ const store = {
   set(k, v) { try { localStorage.setItem('desk.' + k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
 };
 const S = {
-  sources: [], server: null, projects: [], project: null, sessions: [], detail: null,
+  sources: [], server: null, home: null, projects: [], project: null, sessions: [], detail: null,
   selectedProject: store.get('project', null), selectedSession: null,
   filter: store.get('filter', ''), onlyActive: store.get('onlyActive', false),
   lastHeartbeat: 0, lastRunning: null, lastWaiting: null,
@@ -107,7 +107,8 @@ function renderProjectsInner() {
       row.tabIndex = p.id === S.selectedProject ? 0 : -1;
       row.setAttribute('aria-selected', String(p.id === S.selectedProject));
       row.append(el('div', 'name', p.name));
-      const path = el('div', 'path', middleEllipsis(p.path || '', 48)); path.title = p.path || '';
+      const shown = tildify(p.path || '', S.home);
+      const path = el('div', 'path', middleEllipsis(shown, 48)); path.title = shown;
       row.append(path);
       const meta = el('div', 'meta');
       for (const t of p.tools) meta.append(toolBadge(t));
@@ -317,7 +318,8 @@ function renderDetail() {
   const refPath = s.refs.file || s.refs.db;
   if (refPath) {
     const wrap = el('span', 'refs');
-    const code = el('code', null, s.refs.key ? `${refPath} [${s.refs.key}]` : refPath);
+    const shownRef = tildify(refPath, S.home);
+    const code = el('code', null, s.refs.key ? `${shownRef} [${s.refs.key}]` : shownRef);
     const btn = el('button', 'copy', 'Copy path');
     btn.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(refPath); btn.textContent = 'Copied'; }
@@ -371,7 +373,7 @@ $('filter').addEventListener('input', e => { S.filter = e.target.value; store.se
 $('onlyActive').addEventListener('change', e => { S.onlyActive = e.target.checked; store.set('onlyActive', S.onlyActive); renderProjects(); });
 
 // ---------- data flow ----------
-async function loadSources() { const d = await getJSON('/api/sources'); S.sources = d.sources; S.server = d.server; renderSources(); renderProjects(); }
+async function loadSources() { const d = await getJSON('/api/sources'); S.sources = d.sources; S.server = d.server; S.home = d.home; renderSources(); renderProjects(); }
 async function loadProjects() { S.projects = (await getJSON('/api/projects')).projects; renderProjects(); }
 async function loadAll() {
   await Promise.all([loadSources(), loadProjects()]);

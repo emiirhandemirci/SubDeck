@@ -66,6 +66,18 @@ export function filterProjects(projects, { text = '', onlyActive = false }, nowM
   });
 }
 
+// Display-only: replace a leading home directory with "~" (case-insensitive, either separator).
+export function tildify(p, home) {
+  if (typeof p !== 'string' || !p || typeof home !== 'string' || !home) return p;
+  const norm = s => s.replace(/\\/g, '/').toLowerCase();
+  const h = norm(home).replace(/\/+$/, '');
+  if (!h) return p;
+  const n = norm(p);
+  if (n === h) return '~';
+  if (n.startsWith(h + '/')) return '~' + p.slice(h.length);
+  return p;
+}
+
 export function middleEllipsis(s, max) {
   if (!s) return '';
   const a = Array.from(s);
