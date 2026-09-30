@@ -12,8 +12,8 @@ import { parseArgs } from '../server.mjs';
 const SERVER = fileURLToPath(new URL('../server.mjs', import.meta.url));
 
 test('parseArgs', () => {
-  assert.deepEqual(parseArgs([]), { port: null, open: false, days: 14, warnings: [] });
-  assert.deepEqual(parseArgs(['--port', '0', '--open', '--days', '3']), { port: 0, open: true, days: 3, warnings: [] });
+  assert.deepEqual(parseArgs([]), { port: null, open: false, days: 14, noContent: false, warnings: [] });
+  assert.deepEqual(parseArgs(['--port', '0', '--open', '--days', '3']), { port: 0, open: true, days: 3, noContent: false, warnings: [] });
   const bad = parseArgs(['--days', '999', '--frobnicate']);
   assert.equal(bad.days, 14);
   assert.equal(bad.warnings.length, 2);
@@ -42,7 +42,7 @@ test('starts, writes desk.json, answers, second start exits 0, cleans up', async
   const rt = JSON.parse(fs.readFileSync(path.join(home, '.subdeck', 'desk.json'), 'utf8'));
   assert.equal(rt.port, port);
   assert.equal(rt.pid, a.child.pid);
-  assert.equal(rt.version, '0.2.0');
+  assert.equal(rt.version, '0.2.1');
   const res = await fetch(`http://127.0.0.1:${port}/api/sources`);
   assert.equal(res.status, 200);
   assert.equal((await res.json()).sources[0].id, 'claude-code');
@@ -56,4 +56,9 @@ test('starts, writes desk.json, answers, second start exits 0, cleans up', async
   a.child.kill('SIGTERM');
   await a.exited;
   if (process.platform !== 'win32') assert.equal(fs.existsSync(path.join(home, '.subdeck', 'desk.json')), false);
+});
+
+test("parseArgs: --no-content", () => {
+  assert.equal(parseArgs(["--no-content"]).noContent, true);
+  assert.equal(parseArgs(["--no-content"]).warnings.length, 0);
 });

@@ -1,6 +1,6 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
-import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis } from './format.js';
+import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, markdownLite, formatToolTime } from './format.js';
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -12,6 +12,7 @@ const S = {
   selectedProject: store.get('project', null), selectedSession: null,
   filter: store.get('filter', ''), onlyActive: store.get('onlyActive', false),
   lastHeartbeat: 0, lastRunning: null,
+  content: null, contentFor: null, contentKey: null, open: { prompt: false, tools: false, report: true },
 };
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined && text !== null) e.textContent = String(text); return e; }
@@ -153,6 +154,76 @@ async function loadDetail() {
   if (!S.selectedSession) { S.detail = null; renderDetail(); return; }
   try { S.detail = (await getJSON(`/api/sessions/${encodeURIComponent(S.selectedSession)}`)).session; } catch { S.detail = null; }
   renderDetail();
+  loadContent();
+}
+
+// Agent content is fetched on demand only (never part of lists or SSE); refetched when the selected agent's updatedAt changes.
+async function loadContent(force) {
+  const s = S.detail;
+  if (!s) { S.content = null; S.contentFor = null; S.contentKey = null; return; }
+  const key = `${s.id}|${s.updatedAt}`;
+  if (!force && S.contentKey === key) return;
+  S.contentKey = key;
+  if (S.contentFor !== s.id) { S.content = null; S.contentFor = s.id; renderContent(); }
+  let c;
+  try { c = await getJSON(`/api/sessions/${encodeURIComponent(s.id)}/content`); }
+  catch (e) { c = { error: /: (\d+)$/.exec(e.message)?.[1] === '501' ? 'Content is not available for this tool.' : 'Content is not available.' }; }
+  if (S.selectedSession !== s.id) return;
+  S.content = c;
+  renderContent();
+}
+
+function section(name, title, count, build) {
+  const d = el('details', 'sect');
+  d.open = !!S.open[name];
+  d.addEventListener('toggle', () => { S.open[name] = d.open; });
+  const sum = el('summary', null, title);
+  if (count !== null) sum.append(el('span', 'muted', ` (${count})`));
+  d.append(sum, build());
+  return d;
+}
+
+function renderContent() {
+  const box = $('content');
+  if (!box) return;
+  box.replaceChildren();
+  const c = S.content;
+  if (!c) { box.append(el('p', 'muted', 'Loading content…')); return; }
+  if (c.error) { box.append(el('p', 'muted', c.error)); return; }
+  box.append(section('prompt', 'Prompt', null, () => {
+    const w = el('div');
+    w.append(el('pre', 'prompt', c.prompt || '(none)'));
+    if (c.promptTruncated) w.append(el('p', 'muted', 'Prompt truncated.'));
+    return w;
+  }));
+  box.append(section('tools', 'Tool calls', c.toolCallTotal ?? c.toolCalls.length, () => {
+    const w = el('div');
+    if (c.toolCallsTruncated) w.append(el('p', 'muted', `Showing the last ${c.toolCalls.length} calls.`));
+    const ol = el('ol', 'calls');
+    for (const t of c.toolCalls) {
+      const li = el('li', t.ok === false ? 'err' : null);
+      li.append(el('span', 'muted', formatToolTime(t.at)), document.createTextNode(' '), el('strong', null, t.tool));
+      if (t.target) li.append(document.createTextNode(' '), el('code', null, t.target));
+      if (t.ok === false) li.append(document.createTextNode(' '), el('span', 'tag', 'error'));
+      ol.append(li);
+    }
+    w.append(ol);
+    return w;
+  }));
+  box.append(section('report', 'Final report', null, () => {
+    const w = el('div', 'report');
+    const blocks = markdownLite(c.finalReport);
+    if (!blocks.length) w.append(el('p', 'muted', '(none)'));
+    const fill = (node, inl) => { for (const i of inl) node.append(i.code ? el('code', null, i.s) : document.createTextNode(i.s)); };
+    for (const b of blocks) {
+      if (b.type === 'p') { const p = el('p'); fill(p, b.inlines); w.append(p); }
+      else { const l = el(b.type); for (const it of b.items) { const li = el('li'); fill(li, it); l.append(li); } w.append(l); }
+    }
+    return w;
+  }));
+  const r = el('button', null, 'Refresh');
+  r.addEventListener('click', () => loadContent(true));
+  box.append(r);
 }
 
 function renderDetail() {
@@ -161,6 +232,14 @@ function renderDetail() {
   const s = S.detail;
   if (!s) { box.append(el('p', 'empty', 'Select a session or agent')); return; }
   box.append(el('h3', null, s.title));
+  const sub = el('p', 'muted');
+  sub.append(dot(s.state), document.createTextNode(` ${STATE_LABEL[s.state]}`));
+  if (s.agentType) sub.append(document.createTextNode(` · ${s.agentType}`));
+  if (s.model) sub.append(document.createTextNode(` · ${s.model}`));
+  if (s.parent) sub.append(document.createTextNode(` · Spawned by ${s.parent.title}`));
+  const subDur = el('span', null, formatDuration(s.durationMs)); subDur.id = 'headDuration';
+  sub.append(document.createTextNode(' · '), subDur, document.createTextNode(` · ${formatTokens(s.tokens.context)}`));
+  box.append(sub);
   const dl = el('dl', 'kv');
   const row = (k, v) => { dl.append(el('dt', null, k)); const dd = el('dd'); if (v instanceof Node) dd.append(v); else dd.textContent = v ?? '-'; dl.append(dd); };
   const now = Date.now();
@@ -194,13 +273,17 @@ function renderDetail() {
     row('Data', wrap);
   }
   box.append(dl);
+  const content = el('div', 'content'); content.id = 'content';
+  box.append(content);
+  renderContent();
   box.dataset.createdAt = s.createdAt || '';
 }
 
 setInterval(() => {   // live duration for running/idle sessions
   const s = S.detail;
   const d = $('detailDuration');
-  if (s && d && (s.state === 'running' || s.state === 'idle') && (s.runStartedAt || s.createdAt)) d.textContent = formatDuration(Date.now() - Date.parse(s.runStartedAt || s.createdAt));
+  const hd = $('headDuration');
+  if (s && d && (s.state === 'running' || s.state === 'idle') && (s.runStartedAt || s.createdAt)) { d.textContent = formatDuration(Date.now() - Date.parse(s.runStartedAt || s.createdAt)); if (hd) hd.textContent = d.textContent; }
   const live = $('live');
   const fresh = Date.now() - S.lastHeartbeat < 40000;
   live.textContent = fresh ? 'Live' : 'Reconnecting…';

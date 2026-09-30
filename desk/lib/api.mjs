@@ -12,7 +12,7 @@ const STATIC = {
 const CSP = "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:";
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
-export function createApi({ core, getPort, startedAt, days, version, publicDir, now = Date.now, maxStreams = 32 }) {
+export function createApi({ core, getPort, startedAt, days, version, publicDir, now = Date.now, maxStreams = 32, contentEnabled = true, adapters = [], env = null }) {
   const streams = new Set();
   const iso = () => new Date(now()).toISOString();
 
@@ -81,6 +81,16 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       if (m) { const t = projectTree(snap, m[1]); return t ? json(res, 200, t) : json(res, 404, { error: 'not found' }); }
       m = /^\/api\/sessions\/([A-Za-z0-9._-]+)$/.exec(p);
       if (m) { const d = sessionDetail(snap, m[1]); return d ? json(res, 200, d) : json(res, 404, { error: 'not found' }); }
+      m = /^\/api\/sessions\/([A-Za-z0-9._-]+)\/content$/.exec(p);
+      if (m) {
+        if (!contentEnabled) return json(res, 404, { error: 'content disabled' });
+        const s = snap.sessions.find(x => x.id === m[1]);
+        if (!s) return json(res, 404, { error: 'not found' });
+        const a = adapters.find(x => x.tool === s.tool);
+        if (!a || typeof a.timeline !== 'function') return json(res, 501, { error: 'content not available for this tool' });
+        const data = await a.timeline(env, s);   // read on demand; never stored
+        return data ? json(res, 200, data) : json(res, 404, { error: 'not found' });
+      }
       return json(res, 404, { error: 'not found' });
     } catch (e) {
       process.stderr.write(`api error: ${String(e && e.message).split('\n')[0]}\n`);

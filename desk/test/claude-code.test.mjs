@@ -334,3 +334,58 @@ test('completion: parent read is incremental and never leaks message content', a
   const json = JSON.stringify(by);
   for (const m of ['NOTIFY_RESULT_MARKER', 'API_ERROR_MARKER', 'FG_RESULT_MARKER', 'RESUME_PROMPT_MARKER']) assert.ok(!json.includes(m), m);
 });
+
+// ---- on-demand content (task 024) ----
+import { readContent, toolTarget, PROMPT_MAX, TOOL_CALLS_MAX } from '../adapters/claude-code.mjs';
+
+test('readContent: sub-agent prompt, tool calls with targets and ok/error, thinking marker, final report', async () => {
+  const f = path.join(tmpDir('desk-content-'), 'agent-a1.jsonl');
+  const at = n => `2026-09-29T10:00:0${n}.000Z`;
+  const res = (ts, id, err) => ({ type: 'user', timestamp: ts, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'OUT', ...(err ? { is_error: true } : {}) }] } });
+  const use = (ts, id, name, input) => ({ type: 'assistant', timestamp: ts, message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+  writeJsonl(f, [
+    { ...rec.user(at(0), '/p', 'Do the sub task\nsecond line'), isMeta: true },
+    use(at(1), 'u1', 'Read', { file_path: '/a/b.txt', limit: 5 }),
+    res(at(2), 'u1', false),
+    use(at(3), 'u2', 'Grep', { pattern: 'foo.*bar', path: '/src' }),
+    res(at(4), 'u2', true),
+    use(at(5), 'u3', 'Bash', { command: 'npm test', description: 'run' }),
+    rec.thinking(at(6)),
+    use(at(7), 'u4', 'Edit', { file_path: '/a/c.txt', old_string: 'x', new_string: 'y' }),
+    use(at(8), 'u5', 'Agent', { description: 'Sub helper', prompt: 'long prompt', subagent_type: 'w' }),
+    rec.endTurn(at(9), 'Final words here'),
+  ]);
+  const c = await readContent(f, { subagent: true });
+  assert.equal(c.prompt, 'Do the sub task\nsecond line');
+  assert.equal(c.promptTruncated, false);
+  assert.deepEqual(c.toolCalls.map(t => [t.tool, t.target, t.ok]), [
+    ['Read', '/a/b.txt', true], ['Grep', 'foo.*bar', false], ['Bash', 'npm test', null], ['Thinking', '', null], ['Edit', '/a/c.txt', null], ['Agent', 'Sub helper', null]]);
+  assert.equal(c.toolCalls[0].at, at(1));
+  assert.equal(c.finalReport, 'Final words here');
+  assert.equal(c.toolCallsTruncated, false);
+  assert.ok(!JSON.stringify(c).includes('THINKING_MARKER'));
+  assert.ok(!JSON.stringify(c).includes('"OUT"'));
+});
+
+test('readContent: top-level prompt skips meta/command records; caps', async () => {
+  const f = path.join(tmpDir('desk-content-'), 's.jsonl');
+  const big = 'x'.repeat(PROMPT_MAX + 50);
+  const calls = Array.from({ length: TOOL_CALLS_MAX + 20 }, (_, i) => rec.tool(T, 'Read', { file_path: `/f${i}` }));
+  writeJsonl(f, [{ ...rec.user(T, '/p', 'META'), isMeta: true }, rec.user(T, '/p', '<local-command-caveat>x'), rec.user(T, '/p', big), ...calls, rec.text(T, 'bye')]);
+  const c = await readContent(f, { subagent: false });
+  assert.equal(c.prompt.length, PROMPT_MAX);
+  assert.equal(c.promptTruncated, true);
+  assert.equal(c.toolCalls.length, TOOL_CALLS_MAX);
+  assert.equal(c.toolCalls.at(-1).target, `/f${TOOL_CALLS_MAX + 19}`);
+  assert.equal(c.toolCallsTruncated, true);
+  assert.equal(c.toolCallTotal, TOOL_CALLS_MAX + 20);
+  assert.equal(await readContent(path.join(tmpDir('x-'), 'none.jsonl'), { subagent: true }), null);
+});
+
+test('toolTarget: first meaningful argument, clipped to one line', () => {
+  assert.equal(toolTarget({ pattern: 'a', path: '/b' }), 'a');
+  assert.equal(toolTarget({ zzz: 'line1\nline2' }), 'line1 line2');
+  assert.equal(toolTarget({ command: 'y'.repeat(300) }).length, 200);
+  assert.equal(toolTarget(null), '');
+  assert.equal(toolTarget({ n: 1 }), '');
+});

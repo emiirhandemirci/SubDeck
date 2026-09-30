@@ -13,15 +13,16 @@ import { createApi } from './lib/api.mjs';
 import claudeCode from './adapters/claude-code.mjs';
 import cursor from './adapters/cursor.mjs';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.2.1';
 const DEFAULT_PORT = 4917;
 const PORT_TRIES = 20;
 
 export function parseArgs(argv) {
-  const out = { port: null, open: false, days: 14, warnings: [] };
+  const out = { port: null, open: false, days: 14, noContent: false, warnings: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--open') out.open = true;
+    else if (a === '--no-content') out.noContent = true;
     else if (a === '--port') {
       const n = Number(argv[++i]);
       if (Number.isInteger(n) && n >= 0 && n <= 65535) out.port = n; else out.warnings.push(`invalid --port ${argv[i]}, using default`);
@@ -77,7 +78,7 @@ export async function main(argv = process.argv.slice(2)) {
   const core = createCore({ env, adapters: [claudeCode, cursor] });
   const startedAt = new Date().toISOString();
   let port = null;
-  const api = createApi({ core, getPort: () => port, startedAt, days: args.days, version: VERSION,
+  const api = createApi({ core, getPort: () => port, startedAt, days: args.days, version: VERSION, contentEnabled: !args.noContent, adapters: [claudeCode, cursor], env,
     publicDir: fileURLToPath(new URL('./public/', import.meta.url)) });
   const server = http.createServer((req, res) => { api.handle(req, res); });
 

@@ -123,3 +123,42 @@ test('SSE: hello, changed, heartbeat, close, limit', async () => {
   await call(small, '/api/stream');
   assert.equal((await call(small, '/api/stream')).status, 503);
 });
+
+// ---- on-demand content (task 024) ----
+const CONTENT = { prompt: 'PROMPT_MARKER', promptTruncated: false, toolCalls: [{ at: 'T', tool: 'Read', target: '/x', ok: true }], toolCallsTruncated: false, finalReport: 'REPORT_MARKER' };
+function mkContent(opts = {}) {
+  const pub = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-pub-'));
+  const core = { snapshot: () => ({ ...snapshot, sessions: [...snapshot.sessions, S('cursor.x', { tool: 'cursor' }), S('claude.gone')] }) };
+  const adapters = [{ tool: 'claude-code', timeline: async (env, s) => (s.id === 'claude.k1' ? CONTENT : null) }, { tool: 'cursor' }];
+  return createApi({ core, adapters, env: {}, getPort: () => P, startedAt: 'x', days: 14, version: '0.2.1', publicDir: pub, ...opts });
+}
+
+test('GET /api/sessions/:id/content: data, no-store, 404, 501', async () => {
+  const api = mkContent();
+  const r = await call(api, '/api/sessions/claude.k1/content');
+  assert.equal(r.status, 200);
+  assert.equal(r.headers['Cache-Control'], 'no-store');
+  assert.deepEqual(body(r), CONTENT);
+  assert.equal((await call(api, '/api/sessions/nope/content')).status, 404);
+  assert.equal((await call(api, '/api/sessions/claude.gone/content')).status, 404);
+  assert.equal((await call(api, '/api/sessions/cursor.x/content')).status, 501);
+  assert.equal((await call(api, '/api/sessions/claude.k1/content', { method: 'POST' })).status, 405);
+});
+
+test('content endpoint: disabled flag and Host guard', async () => {
+  assert.equal((await call(mkContent({ contentEnabled: false }), '/api/sessions/claude.k1/content')).status, 404);
+  const r = await call(mkContent(), '/api/sessions/claude.k1/content', { host: 'evil.example:4917' });
+  assert.equal(r.status, 403);
+  assert.ok(!r.chunks.join('').includes('PROMPT_MARKER'));
+});
+
+test('content never appears in list, detail, snapshot or SSE payloads', async () => {
+  const api = mkContent();
+  for (const u of ['/api/sources', '/api/projects', '/api/projects/p_1', '/api/sessions/claude.k1']) {
+    const t = (await call(api, u)).chunks.join('');
+    assert.ok(!/"prompt"|"finalReport"|"toolCalls"|PROMPT_MARKER|REPORT_MARKER/.test(t), u);
+  }
+  const s = await call(api, '/api/stream');
+  api.broadcast({ projects: ['p_1'], sources: false, at: 'T' });
+  assert.ok(!/prompt|finalReport|toolCalls/.test(s.chunks.join('')));
+});

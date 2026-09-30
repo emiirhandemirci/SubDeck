@@ -66,3 +66,13 @@ button { font: inherit; padding: 2px 8px; border: 1px solid var(--border); borde
   .pane { max-height: none; }
 }
 .toggle { white-space: nowrap; flex: none; }
+
+.content { margin-top: 12px; }
+details.sect { border-top: 1px solid var(--border); padding: 6px 0; }
+details.sect summary { cursor: pointer; font-weight: 600; }
+pre.prompt { white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; background: var(--bg); padding: 6px 8px; border-radius: 6px; font-size: 12px; margin: 6px 0; }
+ol.calls { margin: 6px 0; padding-left: 22px; font-size: 12px; max-height: 360px; overflow: auto; }
+ol.calls li { word-break: break-word; }
+ol.calls li.err { color: var(--error); }
+ol.calls code, .report code { font-size: 12px; background: var(--badge); padding: 0 4px; border-radius: 4px; }
+.report p { margin: 6px 0; word-break: break-word; }

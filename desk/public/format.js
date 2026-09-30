@@ -73,3 +73,39 @@ export function middleEllipsis(s, max) {
   const keep = max - 1, head = Math.ceil(keep / 2);
   return a.slice(0, head).join('') + '…' + a.slice(a.length - (keep - head)).join('');
 }
+
+/** Markdown-lite for the final report: paragraphs, "-"/"*" and "1." lists, `inline code`. Returns data only; the UI renders it with textContent, so nothing is ever parsed as HTML. */
+export function markdownLite(text) {
+  if (typeof text !== 'string' || !text.trim()) return [];
+  const inline = s => {
+    const out = [];
+    s.split(/(`[^`]+`)/).forEach(part => {
+      if (!part) return;
+      if (part.length > 2 && part.startsWith('`') && part.endsWith('`')) out.push({ code: true, s: part.slice(1, -1) });
+      else out.push({ code: false, s: part });
+    });
+    return out;
+  };
+  const blocks = [];
+  let para = [], list = null;
+  const flushPara = () => { if (para.length) { blocks.push({ type: 'p', inlines: inline(para.join(' ')) }); para = []; } };
+  const flushList = () => { if (list) { blocks.push(list); list = null; } };
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (!line.trim()) { flushPara(); flushList(); continue; }
+    const ul = /^\s*[-*]\s+(.*)$/.exec(line), ol = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+    if (ul || ol) {
+      flushPara();
+      const type = ul ? 'ul' : 'ol';
+      if (!list || list.type !== type) { flushList(); list = { type, items: [] }; }
+      list.items.push(inline((ul || ol)[1]));
+    } else { flushList(); para.push(line.trim()); }
+  }
+  flushPara(); flushList();
+  return blocks;
+}
+
+export function formatToolTime(iso) {
+  const t = iso ? new Date(iso) : null;
+  return t && !Number.isNaN(t.getTime()) ? formatClock(iso) : '';
+}

@@ -2,6 +2,7 @@
 // Claude Code source adapter (spec 5.1). Reads transcript heads/tails only; keeps no message bodies.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import readline from 'node:readline';
 import { clip } from '../lib/model.mjs';
 import { projectKey } from '../lib/paths.mjs';
 
@@ -288,6 +289,68 @@ function subBasis(hook, mtimeIso, done) {
   return { kind: 'mtime', at: mtimeIso, stateSource: 'mtime' };
 }
 
+// ---- on-demand content (decision 0020): read only when the user opens an agent; never cached, never listed ----
+export const PROMPT_MAX = 20000;
+export const REPORT_MAX = 20000;
+export const TOOL_CALLS_MAX = 500;
+export const TARGET_MAX = 200;
+const TARGET_KEYS = ['file_path', 'notebook_path', 'pattern', 'command', 'url', 'path', 'description', 'query', 'prompt'];
+
+export function toolTarget(input) {
+  if (!input || typeof input !== 'object') return '';
+  for (const k of TARGET_KEYS) if (typeof input[k] === 'string' && input[k].trim()) return clip(input[k], TARGET_MAX) || '';
+  const v = Object.values(input).find(x => typeof x === 'string' && x.trim());
+  return v ? (clip(v, TARGET_MAX) || '') : '';
+}
+
+const textOf = c => (typeof c === 'string' ? c : Array.isArray(c) ? c.filter(b => b && b.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n') : '');
+const capText = (s, max) => { const a = Array.from(s); return a.length > max ? { text: a.slice(0, max).join(''), truncated: true } : { text: s, truncated: false }; };
+
+/** Streams one transcript and returns { prompt, promptTruncated, toolCalls, toolCallsTruncated, toolCallTotal, finalReport } or null when the file is unreadable. */
+export async function readContent(file, { subagent }) {
+  let fh;
+  try { fh = await fs.open(file, 'r'); } catch { return null; }
+  let prompt = null, finalReport = null, total = 0;
+  const calls = [];
+  const byId = new Map();
+  try {
+    const rl = readline.createInterface({ input: fh.createReadStream({ encoding: 'utf8' }), crlfDelay: Infinity });
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      let r; try { r = JSON.parse(line); } catch { continue; }
+      if (!r || typeof r !== 'object' || !r.message || typeof r.message !== 'object') continue;
+      const c = r.message.content;
+      if (r.type === 'user') {
+        if (isToolResultUser(c)) {
+          for (const b of c) if (b && b.type === 'tool_result' && byId.has(b.tool_use_id)) byId.get(b.tool_use_id).ok = b.is_error !== true;
+        } else if (prompt === null && (subagent || !r.isMeta)) {
+          const t = textOf(c);
+          if (t.trim() && (subagent || !t.startsWith('<local-command') && !t.startsWith('<command-name>'))) prompt = t;
+        }
+      } else if (r.type === 'assistant') {
+        const at = toIso(r.timestamp);
+        const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
+        const t = textOf(blocks);
+        if (t.trim()) finalReport = t;
+        for (const b of blocks) {
+          if (!b) continue;
+          if (b.type === 'tool_use' || b.type === 'thinking') {
+            total++;
+            const e = b.type === 'thinking' ? { at, tool: 'Thinking', target: '', ok: null }
+              : { at, tool: typeof b.name === 'string' ? b.name : 'tool', target: toolTarget(b.input), ok: null };
+            calls.push(e);
+            if (b.type === 'tool_use' && typeof b.id === 'string') byId.set(b.id, e);
+            if (calls.length > TOOL_CALLS_MAX) { const old = calls.shift(); for (const [k, v] of byId) if (v === old) { byId.delete(k); break; } }
+          }
+        }
+      }
+    }
+  } finally { await fh.close(); }
+  const p = capText(prompt || '', PROMPT_MAX);
+  return { prompt: prompt === null ? null : p.text, promptTruncated: p.truncated, toolCalls: calls, toolCallsTruncated: total > calls.length, toolCallTotal: total,
+    finalReport: finalReport === null ? null : capText(finalReport, REPORT_MAX).text };
+}
+
 async function scan(env, { cache }) {
   const cutoff = env.now() - env.days * 86400000;
   let skipped = 0;
@@ -382,4 +445,8 @@ export default {
     return [{ path: env.claudeProjectsDir, recursive: true }, ...((last && last.watchExtra) || []).map(p => ({ path: p, recursive: true }))];
   },
   scan,
+  async timeline(env, session) {
+    const file = session && session.refs && session.refs.file;
+    return file ? readContent(file, { subagent: session.depth > 0 }) : null;
+  },
 };
