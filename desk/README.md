@@ -29,7 +29,7 @@ Only titles (up to 120 characters) and a short last-activity summary (up to 80 c
 
 ## States
 
-`running` (activity within 2 minutes, or a hook Start without Stop), `idle` (within 30 minutes), `finished` (older), `stale` (hook Start without Stop and file untouched for 5 minutes), `error`. The state source is shown per session (`field`, `hook`, or `mtime`).
+`running` (activity within 2 minutes, or a hook Start without Stop), `idle` (within 30 minutes), `finished` (older), `stale` (hook Start without Stop and file untouched for 5 minutes), `unknown`. The state source is shown per session (`hook`, `field`, `mtime`, or `none`).
 
 ## Tests
 
