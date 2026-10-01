@@ -10,7 +10,7 @@
 # (COLUMNS) drop ACTIVITY first, then MODEL.
 # --counts prints one machine line instead of the table:
 #   running=N waiting=N failed=N idle=N finished=N stale=N
-# (same state logic as the table; failed and idle are always 0 for hook-recorded subagents).
+# (same state logic as the table; its STATE column has no failed or idle, so those two are always 0).
 # Default view: running agents + the last 10 finished; --all shows every agent.
 # Reads <project>/.subdeck/events.jsonl and <project>/.subdeck/events.d/*.json.
 

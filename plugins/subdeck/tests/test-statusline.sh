@@ -9,6 +9,7 @@ eq() { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got: $(printf '%s' "$1" |
 
 export TZ=UTC
 unset NO_COLOR SUBDECK_ASCII SUBDECK_STATUSLINE_CHAIN
+export SUBDECK_STATUSLINE_TTL=0   # cache off unless a test enables it
 P="$(mktemp -d)"; T="$(mktemp -d)"
 mkdir -p "$P/.subdeck" "$T/s1/subagents"
 ev() { printf '{"ts":"%s","event":"%s","agent_id":"%s","agent_type":"worker-sonnet","transcript_path":"%s","session_id":"s1","payload":{"agent_id":"%s","last_assistant_message":"x"}}\n' "$1" "$2" "$3" "$4" "$3"; }
@@ -52,19 +53,53 @@ eq "$OUT" "$(printf 'SubDeck ● 2 running  ◐ 1 waiting\nrc=0')" "failing chai
 OUT="$(NO_COLOR=1 SUBDECK_STATUSLINE_CHAIN='grep -o "current_dir[^,}]*"' bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$E\"}}")"
 eq "$OUT" "SubDeck | current_dir\":\"$E\"" "chain receives the same stdin"
 
-# speed: 200 agents (100 running with transcripts)
-PF="$(mktemp -d)"; mkdir -p "$PF/.subdeck"
-{
-  for i in $(seq 1 200); do
-    id="$(printf 'a%09d' "$i")"
-    ev 2026-01-01T10:00:00Z SubagentStart "$id" "$T/s1.jsonl"
-    [ $((i % 2)) = 0 ] && ev 2026-01-01T10:01:00Z SubagentStop "$id" "$T/s1.jsonl"
+# cache: reused within the TTL, refreshed after, atomic file, no leftovers
+PC="$(mktemp -d)"; mkdir -p "$PC/.subdeck"
+{ ev "$(isoat -100)" SubagentStart r1rrrrrr "$T/s1.jsonl"; } > "$PC/.subdeck/events.jsonl"
+cj() { NO_COLOR=1 SUBDECK_STATUSLINE_TTL=600 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PC\"}}"; }
+eq "$(cj)" "SubDeck ● 1 running" "cache: cold run"
+[ -f "$PC/.subdeck/statusline.cache" ] && ok "cache: file written" || bad "cache: file missing"
+grep -Eq '^[0-9]+ running=1 ' "$PC/.subdeck/statusline.cache" && ok "cache: format '<epoch> <counts>'" || bad "cache: format"
+ev "$(isoat -99)" SubagentStart r2rrrrrr "$T/s1.jsonl" >> "$PC/.subdeck/events.jsonl"
+eq "$(cj)" "SubDeck ● 1 running" "cache: warm run reuses the old counts"
+eq "$(NO_COLOR=1 SUBDECK_STATUSLINE_TTL=0 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PC\"}}")" "SubDeck ● 2 running" "cache: TTL=0 bypasses it"
+sed -i 's/^[0-9]* /1 /' "$PC/.subdeck/statusline.cache"
+eq "$(cj)" "SubDeck ● 2 running" "cache: expired entry is recomputed"
+[ "$(ls "$PC/.subdeck" | grep -c 'statusline.cache\.')" = 0 ] && ok "cache: no tmp leftovers" || bad "cache: tmp leftovers"
+printf 'junk' > "$PC/.subdeck/statusline.cache"
+eq "$(cj)" "SubDeck ● 2 running" "cache: corrupt file is ignored"
+rm -rf "$PC"
+
+# speed: cold (cache off) and warm (cache on) with 20 and 200 agents (info only unless SUBDECK_PERF_STRICT=1)
+ms_now() { date +%s%N 2>/dev/null; }
+perf() { # agents
+  local n="$1" PF i id S0 S1 best cold warm k
+  PF="$(mktemp -d)"; mkdir -p "$PF/.subdeck"
+  {
+    for i in $(seq 1 "$n"); do
+      id="$(printf 'a%09d' "$i")"
+      ev 2026-01-01T10:00:00Z SubagentStart "$id" "$T/s1.jsonl"
+      [ $((i % 2)) = 0 ] && ev 2026-01-01T10:01:00Z SubagentStop "$id" "$T/s1.jsonl"
+    done
+  } > "$PF/.subdeck/events.jsonl"
+  for i in $(seq 1 "$n"); do [ $((i % 2)) = 1 ] && cp "$T/s1/subagents/agent-r1rrrrrr.jsonl" "$T/s1/subagents/agent-$(printf 'a%09d' "$i").jsonl"; done
+  S0=$(ms_now); OUT="$(NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PF\"}}")"; S1=$(ms_now)
+  eq "$OUT" "SubDeck ● $((n / 2)) running" "$n agents: $((n / 2)) running counted"
+  cold=$(( (S1 - S0) / 1000000 ))
+  S0=$(ms_now); NO_COLOR=1 SUBDECK_STATUSLINE_TTL=30 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PF\"}}" >/dev/null
+  S1=$(ms_now); cold2=$(( (S1 - S0) / 1000000 ))   # fills the cache
+  best=999999
+  for k in 1 2 3 4 5; do
+    S0=$(ms_now); NO_COLOR=1 SUBDECK_STATUSLINE_TTL=30 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PF\"}}" >/dev/null; S1=$(ms_now)
+    warm=$(( (S1 - S0) / 1000000 )); [ "$warm" -lt "$best" ] && best="$warm"
   done
-} > "$PF/.subdeck/events.jsonl"
-for i in $(seq 1 100); do cp "$T/s1/subagents/agent-r1rrrrrr.jsonl" "$T/s1/subagents/agent-$(printf 'a%09d' $((i*2-1))).jsonl"; done
-S0=$(date +%s%N 2>/dev/null); OUT="$(NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PF\"}}")"; S1=$(date +%s%N 2>/dev/null)
-eq "$OUT" "SubDeck ● 100 running" "200 agents: 100 running counted"
-case "$S0$S1" in *N*|"") echo "info timing unavailable" ;; *) echo "info 200 agents: $(( (S1 - S0) / 1000000 )) ms" ;; esac
+  echo "info $n agents: cold ${cold} ms, warm (best of 5) ${best} ms"
+  if [ "${SUBDECK_PERF_STRICT:-0}" = 1 ]; then
+    [ "$best" -lt 300 ] && ok "$n agents: warm < 300 ms" || bad "$n agents: warm ${best} ms"
+  fi
+  rm -rf "$PF"
+}
+case "$(ms_now)" in *N*|"") echo "info timing unavailable" ;; *) perf 20; perf 200 ;; esac
 
 rm -rf "$P" "$T" "$E" "$PF"
 echo "SUMMARY: $PASS passed, $FAIL failed"

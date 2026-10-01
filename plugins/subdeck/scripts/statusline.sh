@@ -5,11 +5,12 @@
 # Zero groups are omitted; just `SubDeck` when nothing is active.
 #   SUBDECK_ASCII=1             ASCII symbols (* ~ x) instead of ● ◐ ✕
 #   NO_COLOR                    no ANSI colours (green running, orange waiting, red failed)
+#   SUBDECK_STATUSLINE_TTL      cache seconds for the counts (default 3, 0 = off); file .subdeck/statusline.cache
 #   SUBDECK_STATUSLINE_CHAIN    command of a previous status line; it gets the same stdin and its first
 #                               output line is appended after " | "
 # No jq/node; always exits 0.
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+HERE="${BASH_SOURCE[0]%/*}"; [ "$HERE" = "${BASH_SOURCE[0]}" ] && HERE="."   # no fork
 INPUT=""
 if [ ! -t 0 ]; then IFS= read -r -d '' INPUT 2>/dev/null; fi   # builtin read: no fork
 BS=$'\134'
@@ -34,7 +35,22 @@ done
 
 RUN=0; WAIT=0; FAIL=0
 if [ -d "$PROJECT/.subdeck" ]; then
-  LINE="$(bash "$HERE/status.sh" --counts "$PROJECT" 2>/dev/null)"
+  # short-TTL cache (default 3 s, SUBDECK_STATUSLINE_TTL=0 disables): "<epoch> <counts line>"; no forks when warm
+  TTL="${SUBDECK_STATUSLINE_TTL-3}"
+  case "$TTL" in ""|*[!0-9]*) TTL=3 ;; esac
+  CACHE="$PROJECT/.subdeck/statusline.cache"
+  if ! printf -v NOWT '%(%s)T' -1 2>/dev/null; then NOWT="$(date +%s)"; fi
+  LINE=""
+  if [ "$TTL" -gt 0 ] && [ -f "$CACHE" ]; then
+    read -r CT LINE < "$CACHE" 2>/dev/null
+    case "$CT" in ""|*[!0-9]*) LINE="" ;; *) [ $(( NOWT - CT )) -ge 0 ] && [ $(( NOWT - CT )) -lt "$TTL" ] || LINE="" ;; esac
+  fi
+  if [ -z "$LINE" ]; then
+    LINE="$(bash "$HERE/status.sh" --counts "$PROJECT" 2>/dev/null)"
+    if [ "$TTL" -gt 0 ] && [ -n "$LINE" ]; then
+      { printf '%s %s\n' "$NOWT" "$LINE" > "$CACHE.$$" && mv -f "$CACHE.$$" "$CACHE"; } 2>/dev/null || rm -f "$CACHE.$$" 2>/dev/null
+    fi
+  fi
   for kv in $LINE; do
     case "$kv" in
       running=[0-9]*) RUN="${kv#*=}" ;;

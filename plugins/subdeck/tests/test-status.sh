@@ -270,6 +270,41 @@ OUT="$(bash "$STATUS" --counts "$P")"
 has "$OUT" ' finished=[1-9][0-9]* ' "counts: finished agents counted (main fixture)"
 OUT="$(bash "$STATUS" --counts "$(mktemp -d)")"
 [ "$OUT" = "running=0 waiting=0 failed=0 idle=0 finished=0 stale=0" ] && ok "counts: no events -> zeros" || bad "counts: empty ($OUT)"
+# --counts must equal the per-state counts of the table (status.sh --all) for the same fixtures.
+# The table's STATE column only has running / waiting / stale? / done; failed and idle do not exist there (0).
+tcount() { printf '%s\n' "$1" | grep -Ec "^[^ ]{8} .* $2 "; }
+cmp_counts() { # dir label
+  local tab cnt r w s d exp
+  tab="$(bash "$STATUS" --all "$1")"
+  r="$(tcount "$tab" running)"; w="$(tcount "$tab" waiting)"; s="$(tcount "$tab" 'stale\?')"; d="$(tcount "$tab" done)"
+  exp="running=$r waiting=$w failed=0 idle=0 finished=$d stale=$s"
+  cnt="$(bash "$STATUS" --counts "$1")"
+  [ "$cnt" = "$exp" ] && ok "counts == table states: $2 ($cnt)" || bad "counts differ for $2: counts='$cnt' table='$exp'"
+}
+PX="$(mktemp -d)"; TX="$(mktemp -d)"; mkdir -p "$PX/.subdeck" "$TX/s1/subagents"
+mk() { printf '%s\n' "$2" > "$TX/s1/subagents/agent-$1.jsonl"; }
+TXT='{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"working"}]}}'
+mk run1xxxxx "$TXT"; mk run2xxxxx "$TXT"                       # running (fresh)
+mk idlexxxxx "$TXT"; touch -d '2 minutes ago' "$TX/s1/subagents/agent-idlexxxxx.jsonl" 2>/dev/null   # quiet but not stale
+mk askxxxxxx '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"ExitPlanMode","input":{"plan":"p"}}]}}'   # waiting (blocking tool call)
+mk stalexxxx "$TXT"; touch -d '30 minutes ago' "$TX/s1/subagents/agent-stalexxxx.jsonl" 2>/dev/null  # stale
+mk stale2xxx "$TXT"; touch -d '40 minutes ago' "$TX/s1/subagents/agent-stale2xxx.jsonl" 2>/dev/null
+mk failxxxxx '{"type":"assistant","isApiErrorMessage":true,"message":{"role":"assistant","content":[{"type":"text","text":"API Error"}]}}'
+{
+  for id in run1xxxxx run2xxxxx idlexxxxx askxxxxxx stalexxxx stale2xxx failxxxxx nofilexxx; do ev "$(isoat -3000)" SubagentStart "$id" worker-sonnet "$TX/s1.jsonl"; done
+  ev "$(isoat -2900)" SubagentStop failxxxxx worker-sonnet "$TX/s1.jsonl" 'API Error: request failed'
+  ev "$(isoat -2800)" SubagentStart donexxxxx worker-sonnet "$TX/s1.jsonl"; ev "$(isoat -2790)" SubagentStop donexxxxx worker-sonnet "$TX/s1.jsonl" 'ok'
+  nt "$(isoat 20)" askxxxxxx s1 permission_prompt
+} > "$PX/.subdeck/events.jsonl"
+cmp_counts "$PX" "mixed fixture (running/idle-ish/waiting/stale/failed-stop/done/missing transcript)"
+OUT="$(bash "$STATUS" --counts "$PX")"
+has "$OUT" ' stale=[1-9]' "counts: stale agents present in the mixed fixture"
+has "$OUT" ' waiting=[1-9]' "counts: waiting agents present in the mixed fixture"
+cmp_counts "$P" "main fixture"
+cmp_counts "$PW" "waiting fixture"
+cmp_counts "$PA" "agent-keyed fixture"
+rm -rf "$PX" "$TX"
+
 rm -rf "$PW" "$PR" "$PI" "$PA"
 
 rm -rf "$P" "$P2" "$P3" "$P4" "$T"
