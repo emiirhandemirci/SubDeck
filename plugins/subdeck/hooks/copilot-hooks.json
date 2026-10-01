@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "bash": "cat \"__ROOT__/hooks/copilot-session-start.json\"",
+        "powershell": "Get-Content -Raw \"__ROOT__/hooks/copilot-session-start.json\"",
+        "timeoutSec": 5
+      }
+    ],
+    "SubagentStart": [
+      {
+        "type": "command",
+        "bash": "bash \"__ROOT__/scripts/run-hook.cmd\" log-event SubagentStart",
+        "powershell": "& \"__ROOT__/scripts/run-hook.cmd\" log-event SubagentStart",
+        "env": { "SUBDECK_TOOL": "copilot" },
+        "timeoutSec": 10
+      }
+    ],
+    "SubagentStop": [
+      {
+        "type": "command",
+        "bash": "bash \"__ROOT__/scripts/run-hook.cmd\" log-event SubagentStop",
+        "powershell": "& \"__ROOT__/scripts/run-hook.cmd\" log-event SubagentStop",
+        "env": { "SUBDECK_TOOL": "copilot" },
+        "timeoutSec": 10
+      },
+      {
+        "type": "command",
+        "bash": "bash \"__ROOT__/scripts/run-hook.cmd\" notify hook agent",
+        "powershell": "& \"__ROOT__/scripts/run-hook.cmd\" notify hook agent",
+        "env": { "SUBDECK_TOOL": "copilot" },
+        "timeoutSec": 10
+      }
+    ],
+    "permissionRequest": [
+      {
+        "type": "command",
+        "bash": "bash \"__ROOT__/scripts/run-hook.cmd\" notify hook waiting",
+        "powershell": "& \"__ROOT__/scripts/run-hook.cmd\" notify hook waiting",
+        "env": { "SUBDECK_TOOL": "copilot" },
+        "timeoutSec": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "bash": "bash \"__ROOT__/scripts/run-hook.cmd\" notify hook done",
+        "powershell": "& \"__ROOT__/scripts/run-hook.cmd\" notify hook done",
+        "env": { "SUBDECK_TOOL": "copilot" },
+        "timeoutSec": 10
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit",
+        "type": "command",
+        "bash": "bash \"__ROOT__/scripts/run-hook.cmd\" guard",
+        "powershell": "& \"__ROOT__/scripts/run-hook.cmd\" guard",
+        "env": { "SUBDECK_TOOL": "copilot" },
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

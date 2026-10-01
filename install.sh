@@ -1,10 +1,122 @@
 #!/usr/bin/env bash
-# SubDeck installer / updater. Usage: ./install.sh [--uninstall]
-# Only talks to the claude CLI; never edits settings files, no sudo.
+# SubDeck installer / updater.
+# Usage: ./install.sh [--tool claude|codex|copilot] [--uninstall] [--no-hooks]
+#   claude (default): talks to the claude CLI only (marketplace add/update + plugin install/update).
+#   codex:   copies the SubDeck agents as Codex custom-agent TOML to ${CODEX_HOME:-~/.codex}/agents
+#            (plugins cannot bundle agents). Install the plugin itself with the two codex commands it prints.
+#   copilot: copies the agents as <name>.agent.md to ${COPILOT_HOME:-~/.copilot}/agents and writes
+#            ${COPILOT_HOME:-~/.copilot}/hooks/subdeck.json pointing at this clone's scripts
+#            (--no-hooks skips the hooks file). Install the plugin itself with the commands it prints.
+# Files written for codex/copilot carry a "managed by SubDeck" marker; --uninstall removes only those,
+# and an existing foreign file of the same name is never overwritten. Never edits settings files, no sudo.
 set -u
 REPO="emiirhandemirci/SubDeck"
 MKT="subdeck"
 PLUGIN="subdeck@subdeck"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+TOOL=claude; UNINSTALL=0; NOHOOKS=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --uninstall) UNINSTALL=1 ;;
+    --no-hooks) NOHOOKS=1 ;;
+    --tool) shift; TOOL="${1:-}" ;;
+    --tool=*) TOOL="${1#--tool=}" ;;
+    *) echo "Unknown argument: $1" >&2; echo "Usage: ./install.sh [--tool claude|codex|copilot] [--uninstall] [--no-hooks]" >&2; exit 2 ;;
+  esac
+  shift
+done
+case "$TOOL" in claude|codex|copilot) ;; *) echo "Unknown tool: $TOOL (use claude, codex or copilot)" >&2; exit 2 ;; esac
+
+MARK="managed by SubDeck install script"
+AGENT_DIR="$HERE/plugins/subdeck/agents"
+
+# fm FILE KEY: value of a frontmatter key (first block only)
+fm() { awk -v k="$2" '/^---\r?$/{c++; next} c==1 { sub(/\r$/,""); i=index($0,":"); if (i>0 && substr($0,1,i-1)==k) { v=substr($0,i+1); sub(/^[ \t]+/,"",v); print v; exit } }' "$1"; }
+body() { awk 'c>=2{sub(/\r$/,""); print} /^---\r?$/{c++}' "$1"; }
+qesc() { local s="${1//\/\\}"; printf '%s' "${s//\"/\\\"}"; }
+# owned FILE: true when absent or carrying the marker
+owned() { [ ! -e "$1" ] || grep -q "$MARK" "$1" 2>/dev/null; }
+
+agent_names() { local f; for f in "$AGENT_DIR"/*.md; do basename "$f" .md; done; }
+
+write_codex_agent() { # name -> TOML
+  local n="$1" src="$AGENT_DIR/$1.md" out="$2/$1.toml" desc model effort tools
+  desc="$(fm "$src" description)"; model="$(fm "$src" model)"; effort="$(fm "$src" effort)"; tools="$(fm "$src" tools)"
+  # Claude model aliases (sonnet/opus/inherit) mean nothing to Codex: leave "model" out so Codex uses its own default.
+  [ "$model" = opus ] && effort=high
+  case "$effort" in low|medium|high) ;; *) effort="" ;; esac
+  owned "$out" || { echo "skip $out (not managed by SubDeck)"; return 0; }
+  {
+    echo "# $MARK; do not edit (re-run install.sh --tool codex to refresh)"
+    echo "name = \"$n\""
+    echo "description = \"$(qesc "$desc")\""
+    [ -n "$effort" ] && echo "model_reasoning_effort = \"$effort\""
+    # a read-only Claude agent (tools: Read, Grep, Glob only) maps to a read-only sandbox
+    if [ -n "$tools" ] && ! printf '%s' "$tools" | grep -qE 'Bash|Write|Edit'; then echo 'sandbox_mode = "read-only"'; fi
+    echo "developer_instructions = '''"
+    body "$src"
+    echo "'''"
+  } > "$out"
+  echo "wrote $out"
+}
+
+write_copilot_agent() {
+  local n="$1" src="$AGENT_DIR/$1.md" out="$2/$1.agent.md" desc tools
+  desc="$(fm "$src" description)"; tools="$(fm "$src" tools)"
+  owned "$out" || { echo "skip $out (not managed by SubDeck)"; return 0; }
+  {
+    echo "---"
+    echo "name: $n"
+    echo "description: \"$(qesc "$desc")\""
+    if [ -n "$tools" ] && ! printf '%s' "$tools" | grep -qE 'Bash|Write|Edit'; then echo 'tools: ["read", "search"]'; fi
+    echo "---"
+    echo "<!-- $MARK -->"
+    body "$src"
+  } > "$out"
+  echo "wrote $out"
+}
+
+if [ "$TOOL" = codex ] || [ "$TOOL" = copilot ]; then
+  if [ "$TOOL" = codex ]; then BASE="${CODEX_HOME:-$HOME/.codex}"; EXT=toml; else BASE="${COPILOT_HOME:-$HOME/.copilot}"; EXT=agent.md; fi
+  ADIR="$BASE/agents"
+  if [ "$UNINSTALL" = 1 ]; then
+    n=0
+    for a in $(agent_names); do
+      f="$ADIR/$a.$EXT"
+      if [ -e "$f" ] && grep -q "$MARK" "$f" 2>/dev/null; then rm -f "$f"; echo "removed $f"; n=$((n+1)); fi
+    done
+    if [ "$TOOL" = copilot ] && [ -e "$BASE/hooks/subdeck.json" ] && grep -q SUBDECK_TOOL "$BASE/hooks/subdeck.json" 2>/dev/null; then
+      rm -f "$BASE/hooks/subdeck.json"; echo "removed $BASE/hooks/subdeck.json"; n=$((n+1))
+    fi
+    echo "SubDeck $TOOL files removed: $n. Remove the plugin itself with: $TOOL plugin $([ "$TOOL" = codex ] && echo remove || echo uninstall) $PLUGIN"
+    exit 0
+  fi
+  [ -d "$AGENT_DIR" ] || { echo "Agent sources not found at $AGENT_DIR (run from a SubDeck clone)." >&2; exit 1; }
+  mkdir -p "$ADIR" || exit 1
+  for a in $(agent_names); do
+    if [ "$TOOL" = codex ]; then write_codex_agent "$a" "$ADIR"; else write_copilot_agent "$a" "$ADIR"; fi
+  done
+  if [ "$TOOL" = copilot ] && [ "$NOHOOKS" = 0 ]; then
+    ROOT="$HERE/plugins/subdeck"
+    command -v cygpath >/dev/null 2>&1 && ROOT="$(cygpath -m "$ROOT")"
+    mkdir -p "$BASE/hooks" || exit 1
+    HF="$BASE/hooks/subdeck.json"
+    if [ -e "$HF" ] && ! grep -q SUBDECK_TOOL "$HF" 2>/dev/null; then
+      echo "skip $HF (not managed by SubDeck)"
+    else
+      sed "s#__ROOT__#$ROOT#g" "$HERE/plugins/subdeck/hooks/copilot-hooks.json" > "$HF" && echo "wrote $HF"
+    fi
+  fi
+  echo
+  if [ "$TOOL" = codex ]; then
+    echo "Now install the plugin (skills + hooks): codex plugin marketplace add $REPO && codex plugin add $PLUGIN"
+    echo "Codex asks you to review and trust the hooks on first use. Restart Codex afterwards."
+  else
+    echo "Now install the plugin (skills): copilot plugin marketplace add $REPO && copilot plugin install $PLUGIN"
+    echo "The hooks file above runs the scripts of this clone; keep the clone in place. Restart Copilot afterwards."
+  fi
+  exit 0
+fi
 
 CLAUDE="$(command -v claude 2>/dev/null || true)"
 if [ -z "$CLAUDE" ]; then
@@ -18,7 +130,7 @@ if [ -z "$CLAUDE" ]; then
   exit 1
 fi
 
-if [ "${1:-}" = "--uninstall" ]; then
+if [ "$UNINSTALL" = 1 ]; then
   "$CLAUDE" plugin uninstall "$PLUGIN" || exit 1
   "$CLAUDE" plugin marketplace remove "$MKT" || exit 1
   echo "SubDeck uninstalled. Restart Claude Code."

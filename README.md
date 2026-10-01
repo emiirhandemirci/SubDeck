@@ -21,15 +21,18 @@ SubDeck is a Claude Code plugin marketplace for running a **manager session with
 
 ## Install
 
-```bash
-claude plugin marketplace add emiirhandemirci/SubDeck && claude plugin install subdeck@subdeck
-```
+| Tool | Install |
+|---|---|
+| Claude Code | `claude plugin marketplace add emiirhandemirci/SubDeck && claude plugin install subdeck@subdeck` |
+| GitHub Copilot CLI | `copilot plugin marketplace add emiirhandemirci/SubDeck && copilot plugin install subdeck@subdeck` |
+| Codex | `codex plugin marketplace add emiirhandemirci/SubDeck && codex plugin add subdeck@subdeck` |
 
-- Or run `./install.sh` (macOS, Linux, Git Bash) / `.\install.ps1` (Windows) from a clone. Both also update; add `--uninstall` / `-Uninstall` to remove.
-- Inside Claude Code: `/plugin marketplace add emiirhandemirci/SubDeck`, then `/plugin install subdeck@subdeck`.
-- Update: `claude plugin marketplace update subdeck && claude plugin update subdeck@subdeck`.
+More tools are coming. Copilot and Codex cannot load the sub-agent definitions from a plugin, so from a clone also run `./install.sh --tool copilot` or `./install.sh --tool codex` (`.\install.ps1 -Tool codex` on Windows PowerShell); it writes the agents (and for Copilot the hooks) to your user directory and `--uninstall` removes only those files. Copilot and Codex support is built from the official docs and still needs a live check; see [what works per tool](docs/USER_GUIDE.md#3-install).
 
-Restart Claude Code, then try `/subdeck:status` or `/subdeck:desk`.
+- Claude Code alternatives: run `./install.sh` (macOS, Linux, Git Bash) / `.\install.ps1` (Windows) from a clone; both also update, and `--uninstall` / `-Uninstall` removes. Inside Claude Code: `/plugin marketplace add emiirhandemirci/SubDeck`, then `/plugin install subdeck@subdeck`.
+- Update (Claude Code): `claude plugin marketplace update subdeck && claude plugin update subdeck@subdeck`.
+
+Restart the tool, then try `/subdeck:status` or `/subdeck:desk` (Claude Code).
 
 ## What you get
 

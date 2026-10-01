@@ -31,7 +31,9 @@ field() { # first occurrence of a string field; raw JSON string content
   printf '%s' "$COMPACT" | grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -n 1 | sed 's/^[^:]*:[[:space:]]*"\(.*\)"$/\1/'
 }
 TS_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-LINE="$(printf '{"ts":"%s","event":"%s","agent_id":"%s","agent_type":"%s","transcript_path":"%s","session_id":"%s","payload":%s}' "$TS_NOW" "$EVENT" "$(field agent_id)" "$(field agent_type)" "$(field transcript_path)" "$(field session_id)" "$COMPACT")"
+AGENT_TYPE="$(field agent_type)"
+[ -n "$AGENT_TYPE" ] || AGENT_TYPE="$(field agent_name)"   # Copilot names the sub-agent agent_name
+LINE="$(printf '{"ts":"%s","event":"%s","agent_id":"%s","agent_type":"%s","transcript_path":"%s","session_id":"%s","payload":%s}' "$TS_NOW" "$EVENT" "$(field agent_id)" "$AGENT_TYPE" "$(field transcript_path)" "$(field session_id)" "$COMPACT")"
 HAVE_LOCK=0
 release() { [ "$HAVE_LOCK" = 1 ] && rm -rf "$LOCK" 2>/dev/null; HAVE_LOCK=0; }
 trap 'release' EXIT

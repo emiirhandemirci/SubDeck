@@ -1,0 +1,19 @@
+{
+  "name": "subdeck",
+  "version": "0.5.0",
+  "description": "Manager plus sub-agents toolkit: orchestrator rulebook, live agent status, SubDeck Desk dashboard, settings, and guard hooks.",
+  "author": { "name": "Emirhan Demirci" },
+  "homepage": "https://github.com/emiirhandemirci/SubDeck",
+  "repository": "https://github.com/emiirhandemirci/SubDeck",
+  "license": "MIT",
+  "keywords": ["sub-agents", "orchestration", "dashboard", "guard"],
+  "skills": "./plugins/subdeck/skills/",
+  "hooks": "./plugins/subdeck/hooks/codex-hooks.json",
+  "interface": {
+    "displayName": "SubDeck",
+    "shortDescription": "Manager plus sub-agents toolkit with a live dashboard",
+    "longDescription": "A manager session delegates to worker, researcher and verifier agents. Skills: desk, status, settings, orchestrator. Hooks log sub-agent events, send optional notifications and guard risky commands.",
+    "developerName": "Emirhan Demirci",
+    "category": "Productivity"
+  }
+}

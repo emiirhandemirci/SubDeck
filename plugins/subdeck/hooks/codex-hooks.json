@@ -1,0 +1,90 @@
+{
+  "description": "SubDeck hooks for Codex: session-start rulebook pointer, sub-agent event log, optional notifications, PreToolUse guard. Scripts are shared with the Claude Code plugin; PLUGIN_ROOT is the repository root.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat \"${PLUGIN_ROOT}/plugins/subdeck/hooks/codex-session-start.json\"",
+            "commandWindows": "Get-Content -Raw \"$env:PLUGIN_ROOT/plugins/subdeck/hooks/codex-session-start.json\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SUBDECK_TOOL=codex bash \"${PLUGIN_ROOT}/plugins/subdeck/scripts/run-hook.cmd\" log-event SubagentStart",
+            "commandWindows": "$env:SUBDECK_TOOL=\"codex\"; & \"$env:PLUGIN_ROOT/plugins/subdeck/scripts/run-hook.cmd\" log-event SubagentStart",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SUBDECK_TOOL=codex bash \"${PLUGIN_ROOT}/plugins/subdeck/scripts/run-hook.cmd\" log-event SubagentStop",
+            "commandWindows": "$env:SUBDECK_TOOL=\"codex\"; & \"$env:PLUGIN_ROOT/plugins/subdeck/scripts/run-hook.cmd\" log-event SubagentStop",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "SUBDECK_TOOL=codex bash \"${PLUGIN_ROOT}/plugins/subdeck/scripts/run-hook.cmd\" notify hook agent",
+            "commandWindows": "$env:SUBDECK_TOOL=\"codex\"; & \"$env:PLUGIN_ROOT/plugins/subdeck/scripts/run-hook.cmd\" notify hook agent",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SUBDECK_TOOL=codex bash \"${PLUGIN_ROOT}/plugins/subdeck/scripts/run-hook.cmd\" log-event Notification",
+            "commandWindows": "$env:SUBDECK_TOOL=\"codex\"; & \"$env:PLUGIN_ROOT/plugins/subdeck/scripts/run-hook.cmd\" log-event Notification",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "SUBDECK_TOOL=codex bash \"${PLUGIN_ROOT}/plugins/subdeck/scripts/run-hook.cmd\" notify hook waiting",
+            "commandWindows": "$env:SUBDECK_TOOL=\"codex\"; & \"$env:PLUGIN_ROOT/plugins/subdeck/scripts/run-hook.cmd\" notify hook waiting",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SUBDECK_TOOL=codex bash \"${PLUGIN_ROOT}/plugins/subdeck/scripts/run-hook.cmd\" notify hook done",
+            "commandWindows": "$env:SUBDECK_TOOL=\"codex\"; & \"$env:PLUGIN_ROOT/plugins/subdeck/scripts/run-hook.cmd\" notify hook done",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SUBDECK_TOOL=codex bash \"${PLUGIN_ROOT}/plugins/subdeck/scripts/run-hook.cmd\" guard",
+            "commandWindows": "$env:SUBDECK_TOOL=\"codex\"; & \"$env:PLUGIN_ROOT/plugins/subdeck/scripts/run-hook.cmd\" guard",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

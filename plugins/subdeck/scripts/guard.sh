@@ -438,13 +438,17 @@ function reason(id) {
 function jesc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/\n/, "\\n", s); gsub(/\t/, " ", s); return s }
 
 # ---------- modes ----------
-function do_hook(  t, tool, cmd, fp, cwd, low, dec, id) {
+function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
   t = ""
   while ((getline line) > 0) t = t line "\n"
-  HOOKPARSE = 1; WANT = "^/(tool_name|cwd|tool_input/command|tool_input/file_path)$"
+  HOOKPARSE = 1; WANT = "^/(tool_name|cwd|tool_input/command|tool_input/file_path|tool_input/path)$"
   if (!jparse(t)) return
   tool = V["/tool_name"]; cmd = V["/tool_input/command"]; fp = V["/tool_input/file_path"]; cwd = V["/cwd"]
   if (tool == "") return
+  # other tools: Copilot reports lowercase runtime names and tool_input.path; Codex edits arrive as apply_patch
+  if (tool == "bash") tool = "Bash"; else if (tool == "powershell") tool = "PowerShell"
+  else if (tool == "edit") tool = "Edit"; else if (tool == "create") tool = "Write"
+  if (fp == "") fp = V["/tool_input/path"]
   PROJ = ENVIRON["CLAUDE_PROJECT_DIR"]; if (PROJ == "") PROJ = cwd
   if (uf == "") uf = ENVIRON["HOME"] "/.subdeck/config.json"
   if (pf == "" && PROJ != "") pf = PROJ "/.subdeck/config.json"
@@ -459,9 +463,26 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id) {
     if (COMMIT) { low = tolower(cmd); if (index(low, "co-authored-by") || index(low, "generated with")) hit("attribution") }
   } else if (tool == "Write" || tool == "Edit" || tool == "MultiEdit") {
     if (fp != "" && secret_path(fp)) hit("secret-files")
+  } else if (tool == "apply_patch") {
+    # Codex patch text: file paths are on "*** Add|Update|Delete File: <path>" and "*** Move to: <path>" lines
+    np = split(cmd, pl, "\n")
+    for (pi = 1; pi <= np; pi++) {
+      pp = pl[pi]; sub(/\r$/, "", pp)
+      if (match(pp, /^\*\*\* (Add File|Update File|Delete File|Move to): /)) {
+        pp = substr(pp, RLENGTH + 1)
+        if (secret_path(pp)) { hit("secret-files"); break }
+      }
+    }
   }
   if (DENYID != "") { dec = "deny"; id = DENYID } else if (ASKID != "") { dec = "ask"; id = ASKID } else return
-  printf "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"%s\",\"permissionDecisionReason\":\"%s\"}}\n", dec, jesc(reason(id) " (/subdeck:settings: set " id "=off to change)")
+  rs = reason(id) " (/subdeck:settings: set " id "=off to change)"
+  # Codex documents only deny for PreToolUse: an "ask" becomes a deny that tells the model to ask the user first
+  if (dec == "ask" && ENVIRON["SUBDECK_TOOL"] == "codex") { dec = "deny"; rs = "Ask the user for approval first; retry only if they approve. " rs }
+  if (ENVIRON["SUBDECK_TOOL"] == "copilot")
+    # Copilot reads the decision at the top level; keep the Claude-shaped member too
+    printf "{\"permissionDecision\":\"%s\",\"permissionDecisionReason\":\"%s\",\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"%s\",\"permissionDecisionReason\":\"%s\"}}\n", dec, jesc(rs), dec, jesc(rs)
+  else
+    printf "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"%s\",\"permissionDecisionReason\":\"%s\"}}\n", dec, jesc(rs)
 }
 function do_show(  i, id, e) {
   initrules(); cfgfile(uf, "user"); cfgfile(pf, "project")

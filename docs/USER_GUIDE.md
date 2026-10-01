@@ -40,6 +40,32 @@ or `claude plugin marketplace add <path-to-SubDeck>` followed by `claude plugin 
 
 Add `.subdeck/` to your project's `.gitignore`; the hooks write agent events there.
 
+**Other tools (GitHub Copilot CLI, Codex).** One command each installs the plugin from the same repository:
+
+```
+copilot plugin marketplace add emiirhandemirci/SubDeck && copilot plugin install subdeck@subdeck
+codex plugin marketplace add emiirhandemirci/SubDeck && codex plugin add subdeck@subdeck
+```
+
+Neither tool loads sub-agent definitions from a plugin, so run the fallback installer from a clone as well: `./install.sh --tool copilot` / `./install.sh --tool codex` (Windows PowerShell: `.\install.ps1 -Tool copilot` / `-Tool codex`). It writes the seven agents to `~/.copilot/agents/*.agent.md` or `~/.codex/agents/*.toml` (respecting `COPILOT_HOME` / `CODEX_HOME`), and for Copilot also `~/.copilot/hooks/subdeck.json`, which points at the scripts of your clone, so keep the clone in place (`--no-hooks` skips that file). Files it wrote carry a "managed by SubDeck" marker; re-running updates them, a file of the same name that is not ours is never overwritten, and `--uninstall` / `-Uninstall` removes only ours. Codex asks you to review and trust the plugin hooks the first time. Remove the plugin itself with `copilot plugin uninstall subdeck@subdeck` or `codex plugin remove subdeck@subdeck`.
+
+What works and what degrades there (built from the official documentation of both tools; a live check on real installs is still pending):
+
+| Part | Claude Code | Copilot CLI | Codex |
+|---|---|---|---|
+| Skills (desk, status, settings, orchestrator) | slash commands `/subdeck:...` | plugin skills (see limitation) | plugin skills (see limitation) |
+| Rulebook auto-loaded | SessionStart hook | SessionStart hook | SessionStart hook |
+| Agents | bundled in the plugin | `install.sh --tool copilot` | `install.sh --tool codex` |
+| Agent model | `sonnet` / `opus` / current | tool default (no model pinned) | tool default; `worker-opus` asks for high reasoning effort |
+| Guard (blocks `git add -A`, force push, secret files, ...) | yes | yes, via the hooks file | yes; an "ask" rule becomes a deny that tells the model to ask you |
+| Agent event log (feeds `status` and Desk) | yes | yes | yes |
+| Notifications (off by default) | waiting, done, agent | waiting, done, agent | waiting, done, agent |
+| Status line | optional | no | no |
+
+Limitation: the skill texts still use Claude Code's command-injection syntax and `CLAUDE_PLUGIN_ROOT`, so in Copilot and Codex the desk, status and settings skills may not run their script by themselves yet; run the scripts directly (`bash <clone>/plugins/subdeck/scripts/status.sh`, `settings.sh`, `desk.sh`) or ask the model to.
+
+Desk is tool-neutral: `node desk/server.mjs` from a clone shows the sessions of every supported tool. More tools are coming.
+
 ## 4. Commands
 
 | Command | What it does | Example |
