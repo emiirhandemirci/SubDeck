@@ -199,6 +199,32 @@ out="$(run set push=off)"; has "$out" 'left untouched' "broken file not rewritte
 rm -f "$UC"
 out="$(run frobnicate)"; has "$out" "warning: ignored argument 'frobnicate'" "unknown arg warned"
 
+
+# ---- unknown rule ids survive rewrites ----
+cfg "$UC" '{"notify":{"sound":false},"guard":{"enabled":true,"rules":{"future-rule":"deny","push":"off","odd":{"a":[1,2],"b":"x,y"}}},"modelPolicy":{"worker":"opus"}}'
+out="$(run)"; has "$out" '^unknown \(ignored\): future-rule \(user\), odd \(user\)' "show lists unknown ids"
+out="$(run set attribution=deny)"
+grep -q '"future-rule":"deny"' "$UC" && grep -q '"odd":{"a":\[1,2\],"b":"x,y"}' "$UC" && ok "set keeps unknown ids verbatim" || bad "unknown ids lost on set: $(cat "$UC")"
+grep -q '"push":"off"' "$UC" && grep -q '"attribution":"deny"' "$UC" && ok "set keeps known rules too" || bad "known rules wrong: $(cat "$UC")"
+grep -q '"notify":{"sound":false}' "$UC" && grep -q '"modelPolicy":{"worker":"opus"}' "$UC" && ok "notify and modelPolicy survive set" || bad "other keys lost: $(cat "$UC")"
+out="$(run off)"; grep -q '"future-rule":"deny"' "$UC" && grep -q '"enabled":false' "$UC" && ok "off keeps unknown ids" || bad "off lost unknown: $(cat "$UC")"
+out="$(run on)"; grep -q '"future-rule":"deny"' "$UC" && grep -q '"enabled":true' "$UC" && ok "on keeps unknown ids" || bad "on lost unknown: $(cat "$UC")"
+out="$(run set future-rule=ask)"; has "$out" "error: unknown rule 'future-rule'" "set of unknown id still rejected"
+grep -q '"future-rule":"deny"' "$UC" && ok "rejected set leaves file intact" || bad "file changed by rejected set"
+out="$(run reset)"; grep -q 'future-rule' "$UC" && bad "reset kept guard" || ok "reset drops the guard member"
+grep -q '"notify":{"sound":false}' "$UC" && ok "notify survives reset" || bad "notify lost on reset"
+# CRLF config with unknown id and other keys
+printf '{\r\n  "modelPolicy": {"worker":"opus"},\r\n  "notify": {"sound":true},\r\n  "guard": {\r\n    "rules": {\r\n      "future-rule": "ask",\r\n      "push": "off"\r\n    }\r\n  }\r\n}\r\n' > "$UC"
+for c in "set attribution=deny" "off" "on"; do
+  out="$(run $c)"
+  grep -q '"future-rule":"ask"' "$UC" && grep -q '"modelPolicy": *{"worker":"opus"}' "$UC" && grep -q '"notify": *{"sound":true}' "$UC" && grep -q '"push":"off"' "$UC" \
+    && ok "CRLF config survives: $c" || bad "CRLF config damaged by $c: $(cat "$UC")"
+done
+if command -v node >/dev/null 2>&1; then
+  node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(j.guard.rules["future-rule"]!=="ask")process.exit(1)' "$UC" \
+    && ok "rewritten CRLF config is valid JSON" || bad "invalid JSON after CRLF rewrite"
+fi
+rm -f "$UC"
 # ---- timing ----
 PAY="$(bash_json 'git add src/a.js && git commit -m "feat: x" -- src/a.js && git push origin main')"
 s=$(date +%s%N); for i in 1 2 3 4 5 6 7 8 9 10; do printf '%s' "$PAY" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G" > /dev/null; done; e=$(date +%s%N)

@@ -57,7 +57,7 @@ function jdec(s,  out, i, c) {
   }
   return out s
 }
-function jval(path,  c, k, i, s) {
+function jval(path,  c, k, i, s, rk, vs, rv) {
   if (JERR || STOP) return
   jws(); if (P > N) { JERR = 1; return }
   c = substr(T, P, 1)
@@ -65,9 +65,13 @@ function jval(path,  c, k, i, s) {
     P++; jws(); if (substr(T, P, 1) == "}") { P++; return }
     while (1) {
       jws(); if (substr(T, P, 1) != "\"") { JERR = 1; return }
-      k = jdec(jstr()); if (JERR) return
+      rk = jstr(); if (JERR) return; k = jdec(rk)
       jws(); if (substr(T, P, 1) != ":") { JERR = 1; return }
-      P++; jval(path "/" k); if (JERR || STOP) return
+      P++; jws(); vs = P; jval(path "/" k); if (JERR || STOP) return
+      if (path == "/guard/rules") {
+        rv = substr(T, vs, P - vs); gsub(/[\n\r\t]/, " ", rv); sub(/ +$/, "", rv)
+        NRK++; RKR[NRK] = "\"" rk "\""; RKD[NRK] = k; RKV[NRK] = rv
+      }
       jws(); c = substr(T, P, 1); P++
       if (c == "}") return
       if (c != ",") { JERR = 1; return }
@@ -94,7 +98,7 @@ function want_done() {
   return ("/tool_name" in V) && ("/cwd" in V) && (("/tool_input/command" in V) || ("/tool_input/file_path" in V))
 }
 function jparse(text) {
-  T = text; N = length(T); P = 1; JERR = 0; STOP = 0; split("", V)
+  T = text; N = length(T); P = 1; JERR = 0; STOP = 0; split("", V); NRK = 0
   jws(); if (substr(T, P, 1) != "{") return 0
   jval("")
   if (STOP) return 1
@@ -118,12 +122,14 @@ function initrules(  i, n, a) {
   for (i = 1; i <= n; i++) { MODE[RID[i]] = DEF[RID[i]]; SRC[RID[i]] = "default" }
   ENABLED = 1; ENSRC = "default"
 }
+function isknown(id,  i) { for (i = 1; i <= NRULE; i++) if (RID[i] == id) return 1; return 0 }
 function cfgfile(f, src,  t, i, v, id) {
   CFGSTATE[src] = "absent"
   t = slurp(f); if (t == "") return
   HOOKPARSE = 0; WANT = "^/guard/"
   if (!jparse(t)) { CFGSTATE[src] = "invalid JSON, ignored"; return }
   CFGSTATE[src] = "ok"
+  for (i = 1; i <= NRK; i++) if (!isknown(RKD[i])) UNK = UNK (UNK == "" ? "" : ", ") RKD[i] " (" src ")"
   if ("/guard/enabled" in V) {
     v = tolower(V["/guard/enabled"])
     if (v == "false" || v == "0" || v == "off" || v == "no") { ENABLED = 0; ENSRC = src }
@@ -465,6 +471,7 @@ function do_show(  i, id, e) {
   if (e == "0" || e == "off" || e == "false" || e == "no") print "note: SUBDECK_GUARD=" e " in this environment disables the guard entirely"
   printf "%-16s %-5s %s\n", "RULE", "MODE", "SOURCE"
   for (i = 1; i <= NRULE; i++) { id = RID[i]; printf "%-16s %-5s %s\n", id, MODE[id], SRC[id] }
+  if (UNK != "") print "unknown (ignored): " UNK
   print ""
   printf "user file:    %s (%s)\n", uf, CFGSTATE["user"]
   printf "project file: %s (%s)\n", pf, CFGSTATE["project"]
@@ -474,6 +481,7 @@ function do_dump(  t, i, id, v) {
   HOOKPARSE = 0; WANT = "^/guard/"
   if (!jparse(t)) { print "ERR"; return }
   initrules()
+  for (i = 1; i <= NRK; i++) if (!isknown(RKD[i])) print "unknown\t" RKR[i] "\t" RKV[i]
   if ("/guard/enabled" in V) {
     v = tolower(V["/guard/enabled"])
     if (v == "false" || v == "0" || v == "off" || v == "no") print "enabled false"
@@ -572,7 +580,7 @@ valid_rule() { case " $RULES " in *" $1 "*) return 0 ;; esac; return 1; }
 
 # update ENABLED(true|false|keep) [rule=mode ...]: merge into TARGET's guard member.
 update() {
-  local en="$1" cur others dump line en_cur="" rules="" id m kv g="" rj=""
+  local TAB=$'\t' unk="" en="$1" cur others dump line en_cur="" rules="" id m kv g="" rj=""
   shift
   if ! others="$(members "$TARGET")"; then
     echo "error: $TARGET is not a valid JSON object; left untouched (fix or delete it by hand)."; return 1
@@ -581,8 +589,11 @@ update() {
   [ -f "$TARGET" ] && dump="$(awk -v mode=dump -v f="$TARGET" "$GUARD_AWK" < /dev/null)"
   case "$dump" in ERR*) echo "error: $TARGET is not a valid JSON object; left untouched (fix or delete it by hand)."; return 1 ;; esac
   # rules kept as " id=mode" words (bash 3.2 has no associative arrays); later entries win
-  while IFS=' ' read -r a b c; do
-    case "$a" in enabled) en_cur="$b" ;; rule) rules="$rules $b=$c" ;; esac
+  while IFS= read -r line; do
+    case "$line" in
+      unknown$TAB*) line="${line#unknown$TAB}"; unk="$unk,${line%%$TAB*}:${line#*$TAB}" ;;
+      *) IFS=' ' read -r a b c <<< "$line"; case "$a" in enabled) en_cur="$b" ;; rule) rules="$rules $b=$c" ;; esac ;;
+    esac
   done <<< "$dump"
   [ "$en" = keep ] || en_cur="$en"
   for kv in "$@"; do rules="$rules $kv"; done
@@ -592,6 +603,7 @@ update() {
     [ -n "$m" ] && rj="$rj,\"$id\":\"$m\""
   done
   [ -n "$en_cur" ] && g="\"enabled\":$en_cur"
+  rj="$rj$unk"
   [ -n "$rj" ] && g="$g${g:+,}\"rules\":{${rj#,}}"
   write_file "$TARGET" "$others" "{$g}" && echo "wrote $TARGET"
 }
