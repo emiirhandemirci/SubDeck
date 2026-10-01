@@ -2,7 +2,7 @@
 
 ## 1. What SubDeck is
 
-SubDeck is a manager + sub-agents toolkit for Claude Code: rules, agents and skills that let one session delegate work to worker, researcher and verifier agents. `/subdeck:status` shows the live agent table in the terminal. SubDeck Desk is a local web dashboard that shows the agents of Claude Code, Cursor and several other tools, like the Claude Code "Agent map" but outside the IDE.
+SubDeck is a manager + sub-agents toolkit for Claude Code: rules, agents and skills that let one session delegate work to worker, researcher and verifier agents. `/subdeck:status` shows the live agent table in the terminal, `/subdeck:settings` changes the settings. SubDeck Desk is a local web dashboard that shows the agents of Claude Code, Cursor and several other tools, like the Claude Code "Agent map" but outside the IDE.
 
 ## 2. Requirements
 
@@ -44,16 +44,23 @@ Add `.subdeck/` to your project's `.gitignore`; the hooks write agent events the
 
 | Command | What it does | Example |
 |---|---|---|
-| `/subdeck:orchestrator` | Loads the manager rulebook: delegate, do not do the work yourself. | `/subdeck:orchestrator` |
-| `/subdeck:task` | Launches an agent (`worker-sonnet`, `worker-opus`, `researcher`, `verifier`, or the `*-current` variants) with a task text or task file. | `/subdeck:task researcher find where login errors are handled` |
-| `/subdeck:status` | Prints the live table of running and recently finished sub-agents, including the real model id (MODEL column; on narrow terminals ACTIVITY is dropped first, then MODEL). `--all` shows more. | `/subdeck:status --all` |
-| `/subdeck:pr` | Pre-push checklist and approval gate. It never pushes by itself. | `/subdeck:pr release notes` |
-| `/subdeck:models` | Shows the model policy (which model each sub-agent role runs on, and where each value comes from), or changes it with `set` / `reset`. `--project` writes to this project only. | `/subdeck:models set worker=haiku verifier=opus` |
-| `/subdeck:notify` | Shows or changes desktop notifications (`on`, `off`, `test`, `sound on|off`, `events ...`). | `/subdeck:notify test` |
-| `/subdeck:guard` | Shows or changes the guard rules (`set`, `on`, `off`, `reset`). | `/subdeck:guard set push=off` |
-| `/subdeck:statusline` | Optional status line with live agent counts in the Claude Code status bar. `remove` explains how to undo it. | `/subdeck:statusline` |
 | `/subdeck:desk` | Starts Desk (or prints its URL if it is already running). | `/subdeck:desk` |
 | `/subdeck:desk stop` | Stops Desk. `status` prints the URL or says it is not running. | `/subdeck:desk stop` |
+| `/subdeck:status` | Prints the live table of running and recently finished sub-agents, including the real model id (MODEL column; on narrow terminals ACTIVITY is dropped first, then MODEL). `--all` shows more. | `/subdeck:status --all` |
+| `/subdeck:settings` | One table of every setting (model policy, notifications, guard rules, status line). `set key=value ...` changes them, `reset` restores defaults, `--project` writes to this project only. | `/subdeck:settings set notify=on worker=opus` |
+
+That is the whole user-facing surface: three commands. The manager rulebook (delegation, task template, git rules, the pre-push checklist and approval gate) loads automatically and can also be opened with `/subdeck:orchestrator`. You launch agents and ask for pushes by talking to the manager.
+
+**What replaced the old commands (migration from 0.4).**
+
+| Old command | Now |
+|---|---|
+| `/subdeck:task` | Ask the manager for the work; it launches the right agent with an explicit model. |
+| `/subdeck:pr` | Ask the manager to push or open a PR; it runs the pre-push checklist and waits for your explicit yes. |
+| `/subdeck:models set worker=opus` | `/subdeck:settings set worker=opus` |
+| `/subdeck:notify on`, `events ...` | `/subdeck:settings set notify=on notify.events=waiting,done` (or the toggle in Desk) |
+| `/subdeck:guard set push=off` | `/subdeck:settings set push=off` (`guard=on` or `guard=off` for the whole guard) |
+| `/subdeck:statusline` | `/subdeck:settings set statusline=on` (or `off`) |
 
 ## 5. SubDeck Desk
 
@@ -124,23 +131,23 @@ Example view (agent detail with Prompt, Tool calls and Final report expanded; sy
   </picture>
 </p>
 
-## 6. Choosing models
+## 6. Settings: models
 
 SubDeck picks the model of each sub-agent role from a small policy. Defaults: workers, researchers, verifiers and Explore on Sonnet, the escalation worker on Opus. SubDeck never picks Haiku by itself; you can still set it per role. Your own (manager) model is separate: switch it with `/model`.
 
-Show the effective policy, with the source of each value (default, user or project) and what each alias resolves to:
+Show every setting, with the source of each value (default, user or project):
 
 ```
-/subdeck:models
+/subdeck:settings
 ```
 
 Change it:
 
 ```
-/subdeck:models set worker=haiku verifier=opus
-/subdeck:models set worker=claude-sonnet-5-5 --project
-/subdeck:models set mode=current
-/subdeck:models reset [--project]
+/subdeck:settings set worker=haiku verifier=opus
+/subdeck:settings set worker=claude-sonnet-5-5 --project
+/subdeck:settings set mode=current
+/subdeck:settings reset [--project]
 ```
 
 - Roles: `worker`, `escalation`, `researcher`, `verifier`, `explore`. `mode` is `auto` (default), `named` or `current`.
@@ -148,7 +155,7 @@ Change it:
 - Files: `~/.subdeck/config.json` (all projects) and `<project>/.subdeck/config.json` (this project, wins). Both are local; do not commit them.
 - Aliases follow the latest model, so `sonnet` upgrades automatically. A full id pins a version. To remap an alias, set `ANTHROPIC_DEFAULT_SONNET_MODEL` (and `_OPUS_`, `_HAIKU_`) in your Claude Code settings `env`.
 - The real model id used by an agent shows in Desk and `/subdeck:status`.
-- Invalid keys or values are rejected and nothing is written. If `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is set (or an organization `availableModels` list applies), Claude Code overrides the policy and `/subdeck:models` prints a warning.
+- Invalid keys or values are rejected and nothing is written. If `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is set (or an organization `availableModels` list applies), Claude Code overrides the policy and `/subdeck:settings` prints a warning.
 
 ## 7. Using a non-Claude model (e.g. GLM)
 
@@ -158,26 +165,25 @@ Normally the plugin agents pin `model: sonnet` or `model: opus`. If you run Clau
 - `current`: the inherit agents `worker-current`, `researcher-current`, `verifier-current`. They have `model: inherit`, so they run on whatever model the session uses. There is no cheap/expensive split and no opus escalation in this mode.
 - `auto` (default): the manager picks `current` when its own model id is not a Claude model, when `ANTHROPIC_BASE_URL` points to a non-Anthropic host, or when a named agent fails to start because its model is unavailable; otherwise `named`. It states the chosen mode once per session.
 
-To force a mode, put `Model mode: auto|named|current` in your project's `CLAUDE.local.md` (the template has the line). You can also launch an inherit agent directly: `/subdeck:task worker-current <task>`.
+To force a mode, put `Model mode: auto|named|current` in your project's `CLAUDE.local.md` (the template has the line). In `current` mode the manager launches the inherit agents for you.
 
 Optional: instead of using the `*-current` agents, you can remap the aliases so `sonnet` and `opus` resolve to your backend's models, with `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` (each takes a full model name), or set `CLAUDE_CODE_SUBAGENT_MODEL` for sub-agents without a model of their own. Sources: [model configuration](https://code.claude.com/docs/en/model-config) (environment variables) and [sub-agents](https://code.claude.com/docs/en/sub-agents) (`model` accepts an alias, a full model ID, or `inherit`, "use the same model as the main conversation"; resolution order).
 
 Note: the agent prompts were tuned on Claude. Behaviour on other models is untested.
 
-## 8. Notifications
+## 8. Settings: notifications
 
-SubDeck shows a local desktop notification (plus a system sound) when Claude needs your input (permission prompts, questions, idle) and when the manager finishes its turn. Sub-agent completion is available but off by default. Nothing leaves your machine; the notification shows only the project folder name and a short reason, never prompt content.
+Notifications are off by default and silent (no sound). When you switch them on, SubDeck shows a local desktop notification when Claude needs your input (permission prompts, questions, idle), when the manager finishes its turn, and when a sub-agent finishes. Nothing leaves your machine; the notification shows only the project folder name and a short reason, never prompt content.
 
 ```
-/subdeck:notify                       # show settings
-/subdeck:notify on | off | test
-/subdeck:notify sound on|off
-/subdeck:notify events waiting,done,agent
+/subdeck:settings                          # show settings
+/subdeck:settings set notify=on             # or notify=off; also a toggle in Desk
+/subdeck:settings set notify.events=waiting,done,agent
 ```
 
-Add `--project` to write the project config instead of the user config (project wins). Set the environment variable `SUBDECK_NOTIFY=0` to silence everything. Config: `{"notify":{"enabled":true,"sound":true,"events":["waiting","done"]}}` in `~/.subdeck/config.json` or `<project>/.subdeck/config.json`. Windows uses a toast (balloon fallback), macOS `osascript`, Linux `notify-send` if installed. On Windows, Focus Assist / Do Not Disturb can hide toasts; if `test` shows nothing, check those settings.
+Add `--project` to write the project config instead of the user config (project wins). Set the environment variable `SUBDECK_NOTIFY=0` to silence everything. Config: `{"notify":{"enabled":true,"events":["waiting","done"]}}` in `~/.subdeck/config.json` or `<project>/.subdeck/config.json`. Windows uses a toast (balloon fallback), macOS `osascript`, Linux `notify-send` if installed. On Windows, Focus Assist / Do Not Disturb can hide toasts; if nothing shows, check those settings.
 
-## 9. Guard rules
+## 9. Settings: guard rules
 
 SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds about 0.1 s per tool call. It checks Bash, PowerShell, Write, Edit and MultiEdit calls against these rules:
 
@@ -191,21 +197,21 @@ SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds a
 | `secret-files` | ask | Write/Edit of `.env*` (not `.env.example`), `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `credentials*.json` |
 | `attribution` | off | `git commit` messages containing `Co-Authored-By` or "Generated with" |
 
-- `/subdeck:guard` shows the effective rules.
-- `/subdeck:guard set push=off attribution=deny [--project]`, `on`, `off` and `reset [--project]` change them. They write the `guard` key of `~/.subdeck/config.json` or `<project>/.subdeck/config.json`; the project file wins.
+- `/subdeck:settings` shows the effective rules.
+- `/subdeck:settings set push=off attribution=deny [--project]`, `guard=on` or `guard=off`, and `reset [--project]` change them. They write the `guard` key of `~/.subdeck/config.json` or `<project>/.subdeck/config.json`; the project file wins.
 - `SUBDECK_GUARD=0` disables the guard for a session.
 - In auto mode, "ask" acts as "deny": an auto-mode agent can never push with the default rules.
-- Rule ids that SubDeck does not recognise (for example from a newer version) are kept when `set`, `on` or `off` rewrite your config, and `show` lists them as "unknown (ignored)". They have no effect; `set <unknown-id>=...` is rejected. `reset` removes the whole `guard` key.
+- Rule ids that SubDeck does not recognise (for example from a newer version) are kept when `set` rewrites your config, and `show` lists them as "unknown (ignored)". They have no effect; `set <unknown-id>=...` is rejected. `reset` removes the whole `guard` key.
 - It is a guard rail, not a sandbox. Aliases, scripts and other interpreters can get around it.
 
-## 10. Status line
+## 10. Settings: status line
 
-`/subdeck:statusline` adds an optional line to the Claude Code status bar with the agent counts of the current project, for example `SubDeck ● 2 running  ◐ 1 waiting  ✕ 1 failed`. Groups with a zero count are hidden; an idle project shows just `SubDeck`. The counts use the same waiting and stale rules as `/subdeck:status`.
+`/subdeck:settings set statusline=on` adds an optional line to the Claude Code status bar with the agent counts of the current project, for example `SubDeck ● 2 running  ◐ 1 waiting  ✕ 1 failed`. Groups with a zero count are hidden; an idle project shows just `SubDeck`. The counts use the same waiting and stale rules as `/subdeck:status`.
 
 - **Install.** The command edits `statusLine` in `~/.claude/settings.json` only after you confirm, and keeps all other keys.
 - **Chaining.** If you already have a status line, it offers to chain: your old command keeps running and its first line is appended after ` | ` (`SUBDECK_STATUSLINE_CHAIN`).
 - **Environment.** `SUBDECK_ASCII=1` uses ASCII symbols, `NO_COLOR` turns colours off, `SUBDECK_STATUSLINE_TTL` sets how many seconds the counts are cached (default 3, `0` turns the cache off).
-- **Remove.** `/subdeck:statusline remove` explains how to undo it: delete the `statusLine` key, or restore the chained command.
+- **Remove.** `/subdeck:settings set statusline=off` explains how to undo it: delete the `statusLine` key, or restore the chained command.
 - **States.** The terminal table (`/subdeck:status`) and the status line show running, waiting, stale and done. Desk also distinguishes failed and idle, because it reads more tools.
 
 ## 11. Privacy

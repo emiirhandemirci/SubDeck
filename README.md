@@ -41,13 +41,13 @@ Restart Claude Code, then try `/subdeck:status` or `/subdeck:desk`.
   </tr>
   <tr>
     <td valign="top">🖥️<br><b>SubDeck Desk</b><br>Local web dashboard for Claude Code, Cursor, Codex, Copilot, Gemini, Cline/Roo and OpenCode sessions. Read-only, <code>127.0.0.1</code> only.</td>
-    <td valign="top">🚦<br><b>Push gate</b><br>Pre-push checklist that asks first. It never pushes by itself. <code>/subdeck:pr</code></td>
-    <td valign="top">🔔<br><b>Notifications</b><br>Local desktop notification and sound when Claude needs you or finishes. <code>/subdeck:notify</code></td>
+    <td valign="top">🚦<br><b>Push gate</b><br>The manager runs a pre-push checklist and asks first. It never pushes by itself.</td>
+    <td valign="top">🔔<br><b>Notifications</b><br>Optional, silent desktop notifications when Claude needs you or finishes. Off by default; toggle in Desk or <code>/subdeck:settings</code>.</td>
   </tr>
   <tr>
-    <td valign="top">🛡️<br><b>Guard rules</b><br>Deterministic hook: blocks <code>git add -A</code>, force push, dangerous <code>rm -rf</code>, secret files. <code>/subdeck:guard</code></td>
+    <td valign="top">🛡️<br><b>Guard rules</b><br>Deterministic hook: blocks <code>git add -A</code>, force push, dangerous <code>rm -rf</code>, secret files. <code>/subdeck:settings</code></td>
     <td valign="top">📊<br><b>Context usage</b><br>Desk shows how full each session's context is, and token totals per project.</td>
-    <td valign="top">📶<br><b>Status line</b><br>Optional agent counts in the Claude Code status bar. <code>/subdeck:statusline</code></td>
+    <td valign="top">📶<br><b>Status line</b><br>Optional agent counts in the Claude Code status bar. <code>/subdeck:settings set statusline=on</code></td>
   </tr>
   <tr>
     <td valign="top">🪶<br><b>Zero dependencies</b><br>Bash and awk for the plugin, plain Node for Desk. No jq, no npm install.</td>
@@ -110,19 +110,15 @@ flowchart LR
 
 1. Install the plugin (see below).
 2. In your project, copy `plugins/subdeck/templates/CLAUDE.local.md.template` to `CLAUDE.local.md` (private, git-ignored) and fill in the placeholders. Add `.subdeck/` to `.gitignore`.
-3. Start Claude Code and run `/subdeck:orchestrator`, then `/subdeck:desk` to open the dashboard.
+3. Start Claude Code and run `/subdeck:desk` to open the dashboard. The manager rulebook loads on its own when a session delegates.
 
 | Command | What it does |
 |---|---|
-| `/subdeck:orchestrator` | Loads the manager rulebook. |
-| `/subdeck:task` | Launches an agent directly, without the manager window. |
-| `/subdeck:status` | Live agent table with the real model id per agent (`--all` includes finished agents). |
 | `/subdeck:desk` | Starts (or prints the URL of) Desk; `stop` stops it. |
-| `/subdeck:pr` | Pre-push checklist and approval gate. |
-| `/subdeck:notify` | Desktop notifications: `on`, `off`, `test`, `sound`, `events`. |
-| `/subdeck:guard` | Shows or changes the guard rules (`set push=off`, `reset`). |
-| `/subdeck:models` | Shows or changes which model each sub-agent role uses (`/subdeck:models set worker=haiku`). |
-| `/subdeck:statusline` | Optional status line with live agent counts (asks before editing your settings). |
+| `/subdeck:status` | Live agent table with the real model id per agent (`--all` includes finished agents). |
+| `/subdeck:settings` | One table of all settings (model policy, notifications, guard rules, status line); `set key=value`, `reset`, `--project`. |
+
+These three are the whole command surface. Launching agents and pushing go through the manager, which follows the rulebook (`/subdeck:orchestrator` opens it by hand). Coming from 0.4? `task` and `pr` are now manager rules; `models`, `notify`, `guard` and `statusline` are keys of `/subdeck:settings`. See the [User Guide](docs/USER_GUIDE.md#4-commands).
 
 <details>
 <summary><b>Install</b></summary>

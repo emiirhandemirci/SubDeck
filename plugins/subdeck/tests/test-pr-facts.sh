@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Usage: bash plugins/subdeck/tests/test-pr-facts.sh
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT="$HERE/../skills/pr/pr-facts.sh"
+SCRIPT="$HERE/../skills/orchestrator/pr-facts.sh"
 PASS=0; FAIL=0
 ok()    { PASS=$((PASS+1)); echo "ok   $1"; }
 bad()   { FAIL=$((FAIL+1)); echo "FAIL $1"; }

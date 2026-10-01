@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deterministic pre-push facts for /subdeck:pr. Always exits 0.
+# Deterministic pre-push facts for the orchestrator pre-push checklist. Always exits 0.
 # Usage: bash pr-facts.sh [repo-dir]
 DIR="${1:-.}"
 cd "$DIR" 2>/dev/null || { echo "not a directory: $DIR"; exit 0; }
