@@ -15,7 +15,7 @@ out="$(run show)"; rc=$?
 [ $rc -eq 0 ] && ok "show exits 0" || bad "show exit $rc"
 has "$out" '^worker +sonnet +default' "default worker sonnet"
 has "$out" '^escalation +opus +default' "default escalation opus"
-has "$out" '^explore +haiku +default' "default explore haiku"
+has "$out" '^explore +sonnet +default' "default explore sonnet"
 has "$out" '^mode +auto +default' "default mode auto"
 has "$out" 'worker +sonnet -> latest sonnet' "alias resolution line"
 

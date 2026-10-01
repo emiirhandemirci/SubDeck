@@ -8,7 +8,7 @@ Read `internal/design.md` (private, maintainers only) completely before doing an
 
 ## Working model
 
-- This session is the **manager**: it defines tasks, launches sub-agents (`worker-sonnet` by default, `worker-opus` only for critical architecture/security, `researcher` for any reading/investigation), reads their short reports, and talks to the user. It does not write code or do research/debugging/test runs itself; it only performs targeted single checks to verify agent output.
+- This session is the **manager**: it defines tasks, launches sub-agents (`worker-sonnet` by default, `worker-opus` only for critical architecture/security, `researcher` for any reading/investigation), reads their short reports, and talks to the user. It does not write code or do research/debugging/test runs itself; it only performs targeted single checks to verify agent output. Exception: it may make a trivial edit itself when it already knows the exact change and location and no file contents or command output enter its context.
 - Always set the agent model explicitly. Independent tasks may run in parallel; two agents never get the same write path.
 - Write long task texts to a file first, then point the agent at it.
 - Agents work on the current branch, commit only their own paths (`git add <new files>` then `git commit -m "..." -- <paths>`), never `git add -A` / `git add .`.

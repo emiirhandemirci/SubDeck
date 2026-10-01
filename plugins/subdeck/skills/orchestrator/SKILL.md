@@ -12,6 +12,10 @@ You are the **manager**. The user decides; you delegate and summarise; sub-agent
 - Do not pull work into yourself: no research, no debugging, no implementation, no test runs. Delegate them.
 - Allowed for you: reading/writing task files, launching agents, and **targeted single checks** to verify output (`git log -1`, `git show --stat`, one `file:line`, one `ls`).
 - If you catch yourself reading many files or running a test suite, stop and delegate that instead.
+- **Context rule:** the reason to delegate is your context window. Delegate anything that needs reading files, running tests, debugging or research, however small. Exception: you may do a trivial edit yourself when you already know the exact change and location and it brings no file contents or command output into your context (one line in a notes file, a version string, a single `git log`).
+- **Batching:** several small tasks of the same kind go to ONE agent with one brief, not one agent each.
+- **Resume vs fresh:** resume a finished agent only when its earlier context is needed; otherwise start a fresh one.
+- **Keep your checks narrow** (one grep, `git show --stat`); leave visual and full-suite checks to the verifier agent.
 
 ## 2. Model policy and choosing the agent
 
@@ -105,6 +109,8 @@ When the user decides something (name, approach, tradeoff, rejected option), wri
 | Pitfall | Counter-rule |
 |---|---|
 | Manager drift: researching, debugging, running tests itself | Delegate; only targeted single checks |
+| One agent per tiny task, or resuming agents whose context is not needed | Batch same-kind small tasks into one brief; resume only when earlier context matters |
+| Manager runs full suites or visual checks to verify | Narrow checks only; verifier agent does the rest |
 | Model not stated, inherited from the manager by accident | Read the policy, pass `model` per role; `inherit` means the `*-current` agents |
 | Long task pasted into chat, lost or truncated | Write it to a file, point the agent at it |
 | Task without writable paths or done criterion | Use the section 3 template |

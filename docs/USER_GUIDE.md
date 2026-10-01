@@ -126,7 +126,7 @@ Example view (agent detail with Prompt, Tool calls and Final report expanded; sy
 
 ## 6. Choosing models
 
-SubDeck picks the model of each sub-agent role from a small policy. Defaults: workers, researchers and verifiers on Sonnet, the escalation worker on Opus, Explore on Haiku. Your own (manager) model is separate: switch it with `/model`.
+SubDeck picks the model of each sub-agent role from a small policy. Defaults: workers, researchers, verifiers and Explore on Sonnet, the escalation worker on Opus. SubDeck never picks Haiku by itself; you can still set it per role. Your own (manager) model is separate: switch it with `/model`.
 
 Show the effective policy, with the source of each value (default, user or project) and what each alias resolves to:
 

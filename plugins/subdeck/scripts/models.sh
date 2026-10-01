@@ -17,7 +17,7 @@ KEYS="mode worker escalation researcher verifier explore"
 default_of() {
   case "$1" in
     mode) echo auto ;; worker) echo sonnet ;; escalation) echo opus ;;
-    researcher) echo sonnet ;; verifier) echo sonnet ;; explore) echo haiku ;;
+    researcher) echo sonnet ;; verifier) echo sonnet ;; explore) echo sonnet ;;
   esac
 }
 
