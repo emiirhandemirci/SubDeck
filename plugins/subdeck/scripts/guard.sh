@@ -461,7 +461,7 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id) {
     if (fp != "" && secret_path(fp)) hit("secret-files")
   }
   if (DENYID != "") { dec = "deny"; id = DENYID } else if (ASKID != "") { dec = "ask"; id = ASKID } else return
-  printf "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"%s\",\"permissionDecisionReason\":\"%s\"}}\n", dec, jesc(reason(id) " (/subdeck:guard set " id "=off to change)")
+  printf "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"%s\",\"permissionDecisionReason\":\"%s\"}}\n", dec, jesc(reason(id) " (/subdeck:settings: set " id "=off to change)")
 }
 function do_show(  i, id, e) {
   initrules(); cfgfile(uf, "user"); cfgfile(pf, "project")
@@ -528,7 +528,7 @@ if [ "$SCOPE" = project ]; then TARGET="$PFILE"; else TARGET="$UFILE"; fi
 
 show() {
   awk -v mode=show -v uf="$UFILE" -v pf="$PFILE" "$GUARD_AWK" < /dev/null
-  echo "Usage: /subdeck:guard set push=off attribution=deny [--project] | on | off | reset [--project]"
+  echo "Usage: /subdeck:settings set guard=on|off <rule>=deny|ask|off [--project] (low-level: guard.sh set push=off attribution=deny [--project] | on | off | reset)"
   echo "Modes: deny | ask | off. Env SUBDECK_GUARD=0 disables the guard for a session."
 }
 

@@ -1,6 +1,18 @@
 {
-  "description": "SubDeck hooks: event logger (subagent start/stop, input-needed) to .subdeck/events.jsonl; local desktop notifications (toggle with /subdeck:notify); Bash/PowerShell/Write/Edit guard",
+  "description": "SubDeck hooks: event logger (subagent start/stop, input-needed) to .subdeck/events.jsonl; local desktop notifications (toggle with /subdeck:settings); Bash/PowerShell/Write/Edit guard",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"SubDeck is installed. When you delegate work or launch sub-agents, load the subdeck:orchestrator skill first and follow it (model policy, task template, git rules, pre-push checklist, push only after explicit user approval). User commands: /subdeck:desk, /subdeck:status, /subdeck:settings.\"}}'",
+            "shell": "bash",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "SubagentStart": [
       {
         "hooks": [

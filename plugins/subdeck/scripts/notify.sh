@@ -213,7 +213,7 @@ show() {
   echo "project file: $PFILE$([ -f "$PFILE" ] || echo ' (absent)')"
   if [ "$DISABLED_ENV" = 1 ]; then echo "NOTE: SUBDECK_NOTIFY=0 is set in the environment: all notifications are off regardless of config."; fi
   echo "Events: waiting (needs your input), done (manager finished), agent (a sub-agent finished)."
-  echo "Usage: /subdeck:notify on | off | test | events waiting,done,agent   [--project]"
+  echo "Usage: /subdeck:settings set notify=on|off notify.events=... (low-level: notify.sh on | off | test | events waiting,done,agent [--project])"
 }
 
 for b in "${BADARGS[@]}"; do echo "warning: ignored argument '$b'"; done
@@ -259,6 +259,6 @@ case "$CMD" in
     echo "test notification sent (see $PROJECT/.subdeck/notify.log for the method and exit code). Nothing appeared? Check OS notification / focus-assist settings."
     if [ "$DISABLED_ENV" = 1 ]; then echo "NOTE: SUBDECK_NOTIFY=0 disables real hook notifications."; fi
     ;;
-  *) echo "error: unknown command '$CMD'"; echo "Usage: /subdeck:notify on | off | test | events waiting,done,agent   [--project]" ;;
+  *) echo "error: unknown command '$CMD'"; echo "Usage: /subdeck:settings set notify=on|off notify.events=... (low-level: notify.sh on | off | test | events waiting,done,agent [--project])" ;;
 esac
 exit 0

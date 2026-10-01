@@ -126,7 +126,7 @@ warn_overrides() {
   v="$(setting_env CLAUDE_CODE_SUBAGENT_MODEL_FORCE)"
   case "$v" in
     ""|0|false) ;;
-    *) echo "WARNING: CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on: Claude Code ignores this policy and runs every subagent on one model (CLAUDE_CODE_SUBAGENT_MODEL, else the session model). Unset it to use /subdeck:models." ;;
+    *) echo "WARNING: CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on: Claude Code ignores this policy and runs every subagent on one model (CLAUDE_CODE_SUBAGENT_MODEL, else the session model). Unset it to use /subdeck:settings." ;;
   esac
   for f in "$PROJECT/.claude/settings.local.json" "$PROJECT/.claude/settings.json" "$HOME/.claude/settings.json"; do
     if [ -f "$f" ] && grep -q '"availableModels"' "$f"; then
@@ -156,7 +156,7 @@ show() {
   echo "project file: $PFILE$([ -f "$PFILE" ] || echo ' (absent)')"
   warn_overrides
   echo "Manager model: chosen in Claude Code with /model (not part of this policy)."
-  echo "Usage: /subdeck:models set worker=haiku verifier=opus [--project] | reset [--project]"
+  echo "Usage: /subdeck:settings set worker=sonnet verifier=opus (low-level: models.sh set worker=haiku verifier=opus [--project] | reset [--project])"
 }
 
 for b in "${BADARGS[@]}"; do echo "warning: ignored argument '$b'"; done
