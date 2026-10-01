@@ -10,7 +10,7 @@
 # (COLUMNS) drop ACTIVITY first, then MODEL.
 # --counts prints one machine line instead of the table:
 #   running=N waiting=N failed=N idle=N finished=N stale=N
-# (same state logic as the table; idle is always 0). `failed` = an unstopped agent with an explicit failure record
+# (same state logic as the table; idle is always 0). `failed` = an agent (stopped or not) with an explicit failure record
 # (API error in its own transcript, or a failed/error completion in the parent transcript), as in Desk.
 # Default view: running agents + the last 10 finished; --all shows every agent.
 # Reads <project>/.subdeck/events.jsonl and <project>/.subdeck/events.d/*.json.
@@ -106,13 +106,13 @@ fold() {
     from = (all == 1 || nd <= 10) ? 1 : nd - 9
     # selected rows, then grouped by session (first-seen order), running first in each group
     for (i = 1; i <= n; i++) { id = order[i]; if (!(id in stop)) { sel[++ns] = id; fa = failedat(id); if (fa) fail[id] = fa } }
-    for (j = from; j <= nd; j++) sel[++ns] = done[j]
+    for (j = from; j <= nd; j++) { sel[++ns] = done[j]; fa = failedat(done[j]); if (fa) fail[done[j]] = fa }
     for (i = 1; i <= ns; i++) { id = sel[i]; k = sess(id); if (!(k in gseen)) { gseen[k] = 1; gorder[++ng] = k } }
     for (g = 1; g <= ng; g++)
-      for (i = 1; i <= ns; i++) { id = sel[i]; if (sess(id) == gorder[g]) row(id, (id in stop) ? "done" : ((id in fail) ? "failed" : "running"), gorder[g]) }
+      for (i = 1; i <= ns; i++) { id = sel[i]; if (sess(id) == gorder[g]) row(id, (id in fail) ? "failed" : ((id in stop) ? "done" : "running"), gorder[g]) }
   }
   function norm(p) { gsub(/\\\\/, "/", p); gsub(/\\/, "/", p); return p }
-  # ---- failed (same explicit signals as the Desk claude-code adapter; only agents with no Stop hook) ----
+  # ---- failed (same explicit signals as the Desk claude-code adapter; a Stop hook does not override them) ----
   function tagv(s, name,   r) {
     if (match(s, "<" name ">[^<]*</" name ">")) { r = substr(s, RSTART, RLENGTH); sub("^<" name ">", "", r); sub("</" name ">$", "", r); gsub(/^[ \t]+|[ \t]+$/, "", r); return r }
     return ""
@@ -193,7 +193,7 @@ fold() {
     return p "/" k "/subagents/agent-" id ".jsonl"
   }
   function row(id, state, g,   d, sp) {
-    d = (state == "running") ? now - st[id] : (state == "failed" ? fail[id] - st[id] : stop[id] - st[id])
+    d = (state == "running") ? now - st[id] : ((id in stop) ? stop[id] - st[id] : fail[id] - st[id])
     if (!(g in gpath)) { gpath[g] = ""; for (sp in path) if (sess(sp) == g) { gpath[g] = parentof(sp); break } }
     w = ""
     if (state == "running") { w = ntf["a:" id] + 0; if (ntf["s:" sess(id)] + 0 > w) w = ntf["s:" sess(id)] + 0; if (w <= st[id]) w = "" }

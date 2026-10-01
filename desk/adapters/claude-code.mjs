@@ -307,6 +307,7 @@ export function waitingBasis(pending, notifIso, mtimeMs, mtimeIso) {
 }
 
 function subBasis(hook, mtimeIso, done, wait) {
+  if (done && done.state === 'failed') return { kind: 'fixed', state: 'failed', stateSource: 'field' };   // explicit failure of the latest run wins over a Stop hook
   if (hook && hook.stop) return { kind: 'fixed', state: 'finished', stateSource: 'hook' };
   if (done) return { kind: 'fixed', state: done.state, stateSource: 'field' };
   if (wait) return wait;

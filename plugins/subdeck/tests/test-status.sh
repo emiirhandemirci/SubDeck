@@ -312,7 +312,7 @@ ST="$TF/s1/subagents"
 USERR='{"type":"user","timestamp":"2026-01-03T10:00:00Z","message":{"role":"user","content":"go"}}'
 TOOLR='{"type":"assistant","timestamp":"2026-01-03T10:00:05Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/a"}}]}}'
 ERRR='{"type":"assistant","timestamp":"2026-01-03T10:02:00Z","isApiErrorMessage":true,"message":{"role":"assistant","stop_reason":"stop_sequence","content":[{"type":"text","text":"API Error"}]}}'
-for id in fa1xxxxx fa2xxxxx fa3xxxxx fa4xxxxx fa5xxxxx fa6xxxxx; do printf '%s\n%s\n' "$USERR" "$TOOLR" > "$ST/agent-$id.jsonl"; done
+for id in fa1xxxxx fa2xxxxx fa3xxxxx fa4xxxxx fa5xxxxx fa6xxxxx fa7xxxxx; do printf '%s\n%s\n' "$USERR" "$TOOLR" > "$ST/agent-$id.jsonl"; done
 printf '%s\n%s\n%s\n' "$USERR" "$TOOLR" "$ERRR" > "$ST/agent-fa1xxxxx.jsonl"    # own API error
 printf '%s\n%s\n%s\n' "$USERR" "$TOOLR" "$ERRR" > "$ST/agent-fa6xxxxx.jsonl"    # API error but stopped
 {
@@ -322,8 +322,9 @@ printf '%s\n%s\n%s\n' "$USERR" "$TOOLR" "$ERRR" > "$ST/agent-fa6xxxxx.jsonl"    
   printf '%s\n' '{"type":"user","timestamp":"2026-01-03T10:05:00Z","message":{"role":"user","content":"<task-notification>\n<task-id>fa4xxxxx</task-id>\n<status>completed</status>\n</task-notification>"}}'
 } > "$TF/s1.jsonl"
 {
-  for id in fa1xxxxx fa2xxxxx fa3xxxxx fa4xxxxx fa5xxxxx fa6xxxxx; do ev 2026-01-03T10:00:00Z SubagentStart $id worker-sonnet "$TF/s1.jsonl"; done
+  for id in fa1xxxxx fa2xxxxx fa3xxxxx fa4xxxxx fa5xxxxx fa6xxxxx fa7xxxxx; do ev 2026-01-03T10:00:00Z SubagentStart $id worker-sonnet "$TF/s1.jsonl"; done
   ev 2026-01-03T10:02:30Z SubagentStop fa6xxxxx worker-sonnet "$TF/s1.jsonl" 'ended'
+  ev 2026-01-03T10:02:31Z SubagentStop fa7xxxxx worker-sonnet "$TF/s1.jsonl" 'ok'
 } > "$PF/.subdeck/events.jsonl"
 OUT="$(bash "$STATUS" --all "$PF")"
 has "$OUT" '^fa1xxxxx .* failed ' "failed: own API error record"
@@ -331,10 +332,11 @@ has "$OUT" '^fa2xxxxx .* failed ' "failed: failed task-notification in the paren
 has "$OUT" '^fa3xxxxx .* failed ' "failed: error toolUseResult in the parent"
 has "$OUT" '^fa4xxxxx .* running ' "completed notification is not failed"
 has "$OUT" '^fa5xxxxx .* running ' "no record -> running"
-has "$OUT" '^fa6xxxxx .* done ' "stopped agent stays done (Desk: hook stop wins)"
+has "$OUT" '^fa6xxxxx .* failed ' "stopped agent with an API error is failed (failure wins over Stop)"
+has "$OUT" '^fa7xxxxx .* done ' "stopped agent without failure stays done"
 has "$OUT" '^fa1xxxxx +- +worker-sonnet +10:00:00 +2m00s ' "failed duration runs to the failure"
 cmp_counts "$PF" "failed fixture"
-has "$(bash "$STATUS" --counts "$PF")" '^running=2 waiting=0 failed=3 idle=0 finished=1 stale=0$' "counts: failed=3"
+has "$(bash "$STATUS" --counts "$PF")" '^running=2 waiting=0 failed=4 idle=0 finished=1 stale=0$' "counts: failed=4"
 rm -rf "$PF" "$TF"
 rm -rf "$PW" "$PR" "$PI" "$PA"
 

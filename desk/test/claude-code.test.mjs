@@ -309,16 +309,30 @@ test('completion: foreground Agent tool_result in the parent (status + agentId)'
   assert.deepEqual(st(by.hhhh, sc.NOW), { state: 'failed', stateSource: 'field' });
 });
 
-test('completion: hook Stop keeps the top priority (stateSource hook)', async () => {
+test('completion: hook Stop keeps priority over a finished completion (stateSource hook)', async () => {
   const sc = completionScenario(({ ago, sub, proj }) => {
     sub('iiii', [rec.user(ago(70000), proj), rec.endTurn(ago(50000))], 50000);
     fs.mkdirSync(path.join(proj, '.subdeck'), { recursive: true });
     const ev = (ts, event) => JSON.stringify({ ts, event, agent_id: 'iiii', agent_type: 'w', session_id: 'sess-g', transcript_path: '/x' });
     fs.writeFileSync(path.join(proj, '.subdeck', 'events.jsonl'), [ev(ago(70000), 'SubagentStart'), ev(ago(45000), 'SubagentStop')].join('\n') + '\n');
-    return [rec.notifyAttachment(ago(49000), 'iiii', 'failed')];
+    return [rec.notifyAttachment(ago(49000), 'iiii', 'completed')];
   });
   const { by } = await scanBy(sc);
   assert.deepEqual(by.iiii.stateBasis, { kind: 'fixed', state: 'finished', stateSource: 'hook' });
+});
+
+test('completion: explicit failure of the latest run wins over a hook Stop (stateSource field)', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('iiii', [rec.user(ago(70000), proj), rec.endTurn(ago(50000))], 50000);
+    sub('kkkk', [rec.user(ago(70000), proj), rec.apiError(ago(50000))], 50000);
+    fs.mkdirSync(path.join(proj, '.subdeck'), { recursive: true });
+    const ev = (ts, event, id) => JSON.stringify({ ts, event, agent_id: id, agent_type: 'w', session_id: 'sess-g', transcript_path: '/x' });
+    fs.writeFileSync(path.join(proj, '.subdeck', 'events.jsonl'), ['iiii', 'kkkk'].flatMap(id => [ev(ago(70000), 'SubagentStart', id), ev(ago(45000), 'SubagentStop', id)]).join('\n') + '\n');
+    return [rec.notifyAttachment(ago(49000), 'iiii', 'failed')];
+  });
+  const { by } = await scanBy(sc);
+  assert.deepEqual(by.iiii.stateBasis, { kind: 'fixed', state: 'failed', stateSource: 'field' });
+  assert.deepEqual(by.kkkk.stateBasis, { kind: 'fixed', state: 'failed', stateSource: 'field' });
 });
 
 test('completion: parent read is incremental and never leaks message content', async () => {
