@@ -9,4 +9,3 @@ Breaking: the command surface shrinks from nine commands to three.
 - **No Haiku by default:** workers, researchers, verifiers and Explore use Sonnet, the escalation worker uses Opus. Change any role with `/subdeck:settings`.
 - **Notifications are silent and off by default.** Toggle them with the bell in Desk or `/subdeck:settings set notify=on`.
 - **Desk:** phantom agents are dropped, temporary-directory projects are hidden by default, the home folder is shown as `~`, and the bell shows a per-project override.
-- **Failed state** is shown consistently in Desk and `/subdeck:status`.
