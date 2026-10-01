@@ -44,8 +44,16 @@ eq "$(NO_COLOR=1 bash "$SL" <<<"{\"cwd\":\"$P\"}")" "SubDeck ● 2 running  ◐ 
 eq "$(NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$E\",\"project_dir\":\"$P\"}}")" "SubDeck ● 2 running  ◐ 1 waiting" "project_dir with .subdeck wins over current_dir"
 eq "$(NO_COLOR=1 CLAUDE_PROJECT_DIR="$P" bash "$SL" <<<'{"workspace":{"current_dir":"Z:\nope\x"}}')" "SubDeck ● 2 running  ◐ 1 waiting" "unusable JSON path -> CLAUDE_PROJECT_DIR"
 
-# failed is always 0 for hook-recorded agents; counts line stays machine-parsable
+# counts line stays machine-parsable (no failed records here)
 eq "$(bash "$HERE/../scripts/status.sh" --counts "$P")" "running=2 waiting=1 failed=0 idle=0 finished=0 stale=0" "status.sh --counts line"
+
+# failed group: an unstopped agent whose transcript ends in an API error is counted and shown in red
+printf '%s\n' '{"type":"user","timestamp":"2026-01-03T10:00:00Z","message":{"role":"user","content":"go"}}' '{"type":"assistant","timestamp":"2026-01-03T10:02:00Z","isApiErrorMessage":true,"message":{"role":"assistant","stop_reason":"stop_sequence","content":[{"type":"text","text":"API Error"}]}}' > "$T/s1/subagents/agent-x1xxxxxx.jsonl"
+PF="$(mktemp -d)"; mkdir -p "$PF/.subdeck"; cp "$P/.subdeck/events.jsonl" "$PF/.subdeck/events.jsonl"
+ev "$(isoat -97)" SubagentStart x1xxxxxx "$T/s1.jsonl" >> "$PF/.subdeck/events.jsonl"
+eq "$(bash "$HERE/../scripts/status.sh" --counts "$PF")" "running=2 waiting=1 failed=1 idle=0 finished=0 stale=0" "status.sh --counts shows failed=1"
+eq "$(run "$PF" | sed "s/${ESC}\[[0-9;]*m//g")" "SubDeck ● 2 running  ◐ 1 waiting  ✕ 1 failed" "failed group shown when N > 0"
+case "$(run "$PF")" in *"${ESC}[31m"*"✕ 1 failed"*) ok "failed group is red" ;; *) bad "failed group is not red" ;; esac
 
 # chaining
 OUT="$(NO_COLOR=1 SUBDECK_STATUSLINE_CHAIN='cat >/dev/null; printf "prev-line\nsecond"' bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$P\"}}")"

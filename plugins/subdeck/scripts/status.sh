@@ -10,7 +10,8 @@
 # (COLUMNS) drop ACTIVITY first, then MODEL.
 # --counts prints one machine line instead of the table:
 #   running=N waiting=N failed=N idle=N finished=N stale=N
-# (same state logic as the table; its STATE column has no failed or idle, so those two are always 0).
+# (same state logic as the table; idle is always 0). `failed` = an unstopped agent with an explicit failure record
+# (API error in its own transcript, or a failed/error completion in the parent transcript), as in Desk.
 # Default view: running agents + the last 10 finished; --all shows every agent.
 # Reads <project>/.subdeck/events.jsonl and <project>/.subdeck/events.d/*.json.
 
@@ -104,13 +105,68 @@ fold() {
     for (i = 1; i <= n; i++) { id = order[i]; if (id in stop) done[++nd] = id }
     from = (all == 1 || nd <= 10) ? 1 : nd - 9
     # selected rows, then grouped by session (first-seen order), running first in each group
-    for (i = 1; i <= n; i++) { id = order[i]; if (!(id in stop)) sel[++ns] = id }
+    for (i = 1; i <= n; i++) { id = order[i]; if (!(id in stop)) { sel[++ns] = id; fa = failedat(id); if (fa) fail[id] = fa } }
     for (j = from; j <= nd; j++) sel[++ns] = done[j]
     for (i = 1; i <= ns; i++) { id = sel[i]; k = sess(id); if (!(k in gseen)) { gseen[k] = 1; gorder[++ng] = k } }
     for (g = 1; g <= ng; g++)
-      for (i = 1; i <= ns; i++) { id = sel[i]; if (sess(id) == gorder[g]) row(id, (id in stop) ? "done" : "running", gorder[g]) }
+      for (i = 1; i <= ns; i++) { id = sel[i]; if (sess(id) == gorder[g]) row(id, (id in stop) ? "done" : ((id in fail) ? "failed" : "running"), gorder[g]) }
   }
   function norm(p) { gsub(/\\\\/, "/", p); gsub(/\\/, "/", p); return p }
+  # ---- failed (same explicit signals as the Desk claude-code adapter; only agents with no Stop hook) ----
+  function tagv(s, name,   r) {
+    if (match(s, "<" name ">[^<]*</" name ">")) { r = substr(s, RSTART, RLENGTH); sub("^<" name ">", "", r); sub("</" name ">$", "", r); gsub(/^[ \t]+|[ \t]+$/, "", r); return r }
+    return ""
+  }
+  function donemap(s) { return (s == "failed" || s == "error") ? "failed" : (s ~ /^(completed|killed|stopped|cancelled|canceled)$/ ? "finished" : "") }
+  # one parent-transcript line: latest explicit completion per agent id (nstate/nat)
+  function notif_line(l,   ts, id, s, r) {
+    ts = field(l, "timestamp"); if (epoch(ts) == 0) return
+    id = ""; s = ""
+    if (index(l, "<task-notification>") > 0 &&
+        ((l ~ /"type":"attachment"/ && l ~ /"commandMode":"task-notification"/) || (l ~ /"type":"queue-operation"/ && l ~ /"operation":"enqueue"/) || (l ~ /"role":"user","content":"/))) {
+      id = tagv(l, "task-id"); s = donemap(tagv(l, "status"))
+    } else if (l ~ /"type":"user"/ && match(l, /"toolUseResult":\{/)) {
+      r = substr(l, RSTART + RLENGTH)
+      if (match(r, /"agentId":"[^"]*"/)) id = substr(r, RSTART + 11, RLENGTH - 12)
+      if (match(r, /"status":"[^"]*"/)) s = donemap(substr(r, RSTART + 10, RLENGTH - 11))
+    }
+    if (id == "" || s == "") return
+    if (!(id in nat) || epoch(ts) >= nat[id]) { nat[id] = epoch(ts); nstate[id] = s }
+  }
+  function loadparent(pp,   cmd, l, q) {
+    if (pp == "" || (pp in ploaded)) return
+    ploaded[pp] = 1
+    q = pp; gsub(/\047/, "\047\\\047\047", q)
+    cmd = "tail -c 8388608 \047" q "\047 2>/dev/null | grep -E \047task-notification|\"toolUseResult\"\047 2>/dev/null"
+    while ((cmd | getline l) > 0) notif_line(l)
+    close(cmd)
+  }
+  # the agent transcript like Desk summarizeRecords: end of the latest run (finished / failed) and its run start
+  function endstate(f,   l, ts, pe, rs, es, ea) {
+    pe = 1; rs = 0; es = ""; ea = 0
+    while ((getline l < f) > 0) {
+      if (l ~ /"role":"user"/ && l !~ /"type":"tool_result"/) {
+        if (pe) { rs = epoch(field(l, "timestamp")); es = ""; pe = 0 }
+      } else if (l ~ /"role":"assistant"/) {
+        ts = epoch(field(l, "timestamp"))
+        if (l ~ /"isApiErrorMessage":true/) { es = ts ? "failed" : ""; ea = ts; pe = 1 }
+        else if (l ~ /"stop_reason":"end_turn"/) { es = ts ? "finished" : ""; ea = ts; pe = 1 }
+        else { es = ""; pe = 0 }
+      }
+    }
+    close(f)
+    ER[1] = rs; ER[2] = es; ER[3] = ea
+  }
+  # epoch of the explicit failure of an unstopped agent, else 0
+  function failedat(id,   p, f, rs, es, ea, ns, na) {
+    f = agentpath(id)
+    rs = 0; es = ""; ea = 0
+    if (f != "") { endstate(f); rs = ER[1]; es = ER[2]; ea = ER[3] }
+    p = parentof(id)
+    if (p != "") loadparent(p)
+    if ((id in nat) && !(rs && nat[id] < rs)) return (nstate[id] == "failed") ? nat[id] : 0
+    return (es == "failed") ? ea : 0
+  }
   # Hook transcript_path is the MANAGER transcript <dir>/<session>.jsonl; the subagent
   # transcript is <dir>/<session>/subagents/agent-<id>.jsonl (agent_transcript_path wins).
   # A path already inside /subagents/ is taken as the subagent transcript.
@@ -137,7 +193,7 @@ fold() {
     return p "/" k "/subagents/agent-" id ".jsonl"
   }
   function row(id, state, g,   d, sp) {
-    d = (state == "running") ? now - st[id] : stop[id] - st[id]
+    d = (state == "running") ? now - st[id] : (state == "failed" ? fail[id] - st[id] : stop[id] - st[id])
     if (!(g in gpath)) { gpath[g] = ""; for (sp in path) if (sess(sp) == g) { gpath[g] = parentof(sp); break } }
     w = ""
     if (state == "running") { w = ntf["a:" id] + 0; if (ntf["s:" sess(id)] + 0 > w) w = ntf["s:" sess(id)] + 0; if (w <= st[id]) w = "" }
@@ -328,6 +384,7 @@ if [ "$COUNTS" = 1 ]; then
   BS=$'\134'
   if [ -n "$ROWS" ]; then
     while IFS=$'\001' read -r id type start dur state path sid spath secs wts msg; do
+      if [ "$state" = failed ]; then RL="${RL}X${NL}"; continue; fi
       if [ "$state" != running ]; then RL="${RL}F${NL}"; continue; fi
       np="${path//"$BS$BS"//}"; np="${np//"$BS"//}"   # backslashes (single or doubled) to /, no fork
       ex=0
@@ -348,6 +405,7 @@ if [ "$COUNTS" = 1 ]; then
     /^@@STAT$/ { mode = "stat"; next }
     /^@@TAIL$/ { mode = "tail"; next }
     mode == "" && /^F$/ { fin++; next }
+    mode == "" && /^X$/ { failn++; next }
     mode == "" && /^R\001/ { n++; ex[n] = $2; secs[n] = $3 + 0; wts[n] = $4; np[n] = $5; next }
     mode == "stat" { i = index($0, " "); if (i > 1) mt[substr($0, i + 1)] = substr($0, 1, i - 1) + 0; next }
     mode == "tail" {
@@ -368,7 +426,7 @@ if [ "$COUNTS" = 1 ]; then
         }
         c[st]++
       }
-      printf "running=%d waiting=%d failed=0 idle=0 finished=%d stale=%d\n", c["running"], c["waiting"], fin, c["stale"]
+      printf "running=%d waiting=%d failed=%d idle=0 finished=%d stale=%d\n", c["running"], c["waiting"], failn + 0, fin + 0, c["stale"]
     }'
   exit 0
 fi
@@ -429,7 +487,7 @@ while IFS=$'\001' read -r id type start dur state path sid spath secs wts msg; d
     fi
     if [ "$state" = running ] && [ -f "$np" ] && tail -n 1 "$np" 2>/dev/null | grep -Eq '"type":"tool_use","id":"[^"]*","name":"(AskUserQuestion|ExitPlanMode)"'; then state=waiting; fi
   fi
-  if [ "$state" = waiting ]; then
+  if [ "$state" = waiting ] || [ "$state" = failed ]; then
     act="$(tail_activity "$np")"
   elif [ "$state" = running ]; then
     # stale?: no Stop and the transcript untouched for STALE_MIN minutes (missing file: Start age)

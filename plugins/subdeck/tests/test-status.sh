@@ -274,10 +274,10 @@ OUT="$(bash "$STATUS" --counts "$(mktemp -d)")"
 # The table's STATE column only has running / waiting / stale? / done; failed and idle do not exist there (0).
 tcount() { printf '%s\n' "$1" | grep -Ec "^[^ ]{8} .* $2 "; }
 cmp_counts() { # dir label
-  local tab cnt r w s d exp
+  local tab cnt r w s d fl exp
   tab="$(bash "$STATUS" --all "$1")"
-  r="$(tcount "$tab" running)"; w="$(tcount "$tab" waiting)"; s="$(tcount "$tab" 'stale\?')"; d="$(tcount "$tab" done)"
-  exp="running=$r waiting=$w failed=0 idle=0 finished=$d stale=$s"
+  r="$(tcount "$tab" running)"; w="$(tcount "$tab" waiting)"; s="$(tcount "$tab" 'stale\?')"; d="$(tcount "$tab" done)"; fl="$(tcount "$tab" failed)"
+  exp="running=$r waiting=$w failed=$fl idle=0 finished=$d stale=$s"
   cnt="$(bash "$STATUS" --counts "$1")"
   [ "$cnt" = "$exp" ] && ok "counts == table states: $2 ($cnt)" || bad "counts differ for $2: counts='$cnt' table='$exp'"
 }
@@ -305,6 +305,37 @@ cmp_counts "$PW" "waiting fixture"
 cmp_counts "$PA" "agent-keyed fixture"
 rm -rf "$PX" "$TX"
 
+
+# failed: explicit failure records of agents without a Stop (same rules as the Desk adapter)
+PF="$(mktemp -d)"; TF="$(mktemp -d)"; mkdir -p "$PF/.subdeck" "$TF/s1/subagents"
+ST="$TF/s1/subagents"
+USERR='{"type":"user","timestamp":"2026-01-03T10:00:00Z","message":{"role":"user","content":"go"}}'
+TOOLR='{"type":"assistant","timestamp":"2026-01-03T10:00:05Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/a"}}]}}'
+ERRR='{"type":"assistant","timestamp":"2026-01-03T10:02:00Z","isApiErrorMessage":true,"message":{"role":"assistant","stop_reason":"stop_sequence","content":[{"type":"text","text":"API Error"}]}}'
+for id in fa1xxxxx fa2xxxxx fa3xxxxx fa4xxxxx fa5xxxxx fa6xxxxx; do printf '%s\n%s\n' "$USERR" "$TOOLR" > "$ST/agent-$id.jsonl"; done
+printf '%s\n%s\n%s\n' "$USERR" "$TOOLR" "$ERRR" > "$ST/agent-fa1xxxxx.jsonl"    # own API error
+printf '%s\n%s\n%s\n' "$USERR" "$TOOLR" "$ERRR" > "$ST/agent-fa6xxxxx.jsonl"    # API error but stopped
+{
+  printf '%s\n' '{"type":"user","timestamp":"2026-01-03T09:00:00Z","message":{"role":"user","content":"manager"}}'
+  printf '%s\n' '{"type":"attachment","timestamp":"2026-01-03T10:03:00Z","attachment":{"type":"queued_command","commandMode":"task-notification","prompt":"<task-notification>\n<task-id>fa2xxxxx</task-id>\n<status>failed</status>\n</task-notification>"}}'
+  printf '%s\n' '{"type":"user","timestamp":"2026-01-03T10:04:00Z","toolUseResult":{"status":"error","agentId":"fa3xxxxx","totalDurationMs":5000},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"x"}]}}'
+  printf '%s\n' '{"type":"user","timestamp":"2026-01-03T10:05:00Z","message":{"role":"user","content":"<task-notification>\n<task-id>fa4xxxxx</task-id>\n<status>completed</status>\n</task-notification>"}}'
+} > "$TF/s1.jsonl"
+{
+  for id in fa1xxxxx fa2xxxxx fa3xxxxx fa4xxxxx fa5xxxxx fa6xxxxx; do ev 2026-01-03T10:00:00Z SubagentStart $id worker-sonnet "$TF/s1.jsonl"; done
+  ev 2026-01-03T10:02:30Z SubagentStop fa6xxxxx worker-sonnet "$TF/s1.jsonl" 'ended'
+} > "$PF/.subdeck/events.jsonl"
+OUT="$(bash "$STATUS" --all "$PF")"
+has "$OUT" '^fa1xxxxx .* failed ' "failed: own API error record"
+has "$OUT" '^fa2xxxxx .* failed ' "failed: failed task-notification in the parent"
+has "$OUT" '^fa3xxxxx .* failed ' "failed: error toolUseResult in the parent"
+has "$OUT" '^fa4xxxxx .* running ' "completed notification is not failed"
+has "$OUT" '^fa5xxxxx .* running ' "no record -> running"
+has "$OUT" '^fa6xxxxx .* done ' "stopped agent stays done (Desk: hook stop wins)"
+has "$OUT" '^fa1xxxxx +- +worker-sonnet +10:00:00 +2m00s ' "failed duration runs to the failure"
+cmp_counts "$PF" "failed fixture"
+has "$(bash "$STATUS" --counts "$PF")" '^running=2 waiting=0 failed=3 idle=0 finished=1 stale=0$' "counts: failed=3"
+rm -rf "$PF" "$TF"
 rm -rf "$PW" "$PR" "$PI" "$PA"
 
 rm -rf "$P" "$P2" "$P3" "$P4" "$T"
