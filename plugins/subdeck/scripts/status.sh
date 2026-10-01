@@ -8,14 +8,19 @@
 # question dialog) newer than its transcript's last write, or a trailing AskUserQuestion/ExitPlanMode call.
 # MODEL is the real model id from the agent's last assistant record (else the meta alias); narrow terminals
 # (COLUMNS) drop ACTIVITY first, then MODEL.
+# --counts prints one machine line instead of the table:
+#   running=N waiting=N failed=N idle=N finished=N stale=N
+# (same state logic as the table; failed and idle are always 0 for hook-recorded subagents).
 # Default view: running agents + the last 10 finished; --all shows every agent.
 # Reads <project>/.subdeck/events.jsonl and <project>/.subdeck/events.d/*.json.
 
 ALL=0
+COUNTS=0
 PROJECT=""
 for a in "$@"; do
   case "$a" in
     --all) ALL=1 ;;
+    --counts) COUNTS=1; ALL=1 ;;
     "") ;;
     -*) ;;   # unknown flags are ignored (always exit 0)
     *) PROJECT="$a" ;;
@@ -24,8 +29,7 @@ done
 [ -n "$PROJECT" ] || PROJECT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 DIR="$PROJECT/.subdeck"
 
-NOW="$(date +%s)"
-ZONE="$(date +%z)"   # e.g. +0300
+read -r NOW ZONE <<< "$(date +"%s %z")"   # ZONE e.g. +0300 (one fork)
 SIGN=1; [ "${ZONE#-}" != "$ZONE" ] && SIGN=-1
 ZH="${ZONE:1:2}"; ZM="${ZONE:3:2}"
 OFF=$(( SIGN * (10#$ZH * 3600 + 10#$ZM * 60) ))
@@ -311,6 +315,64 @@ session_title() {
 }
 
 ROWS="$(fold)"
+
+if [ "$COUNTS" = 1 ]; then
+  # Fast path: no per-agent forks. One stat call (mtimes) and one tail call (last line of each running
+  # agent transcript) cover all agents; the state rules match the table (waiting before stale).
+  STALE_MIN="${SUBDECK_STALE_MIN:-5}"
+  case "$STALE_MIN" in ""|*[!0-9]*) STALE_MIN=5 ;; esac
+  FILES=()
+  RL=""
+  NL=$'\n'
+  FS1=$'\001'
+  BS=$'\134'
+  if [ -n "$ROWS" ]; then
+    while IFS=$'\001' read -r id type start dur state path sid spath secs wts msg; do
+      if [ "$state" != running ]; then RL="${RL}F${NL}"; continue; fi
+      np="${path//"$BS$BS"//}"; np="${np//"$BS"//}"   # backslashes (single or doubled) to /, no fork
+      ex=0
+      if [ -n "$np" ] && [ -f "$np" ]; then ex=1; FILES+=("$np"); fi
+      RL="${RL}R${FS1}${ex}${FS1}${secs:-0}${FS1}${wts}${FS1}${np}${NL}"
+    done <<< "$ROWS"
+  fi
+  {
+    printf '%s' "$RL"
+    if [ "${#FILES[@]}" -gt 0 ]; then
+      echo "@@STAT"
+      stat -c '%Y %n' "${FILES[@]}" 2>/dev/null || stat -f '%m %N' "${FILES[@]}" 2>/dev/null
+      echo "@@TAIL"
+      [ "${#FILES[@]}" -eq 1 ] && FILES+=(/dev/null)
+      tail -n 1 "${FILES[@]}" 2>/dev/null
+    fi
+  } | awk -F $'\001' -v now="$NOW" -v stale="$((STALE_MIN * 60))" '
+    /^@@STAT$/ { mode = "stat"; next }
+    /^@@TAIL$/ { mode = "tail"; next }
+    mode == "" && /^F$/ { fin++; next }
+    mode == "" && /^R\001/ { n++; ex[n] = $2; secs[n] = $3 + 0; wts[n] = $4; np[n] = $5; next }
+    mode == "stat" { i = index($0, " "); if (i > 1) mt[substr($0, i + 1)] = substr($0, 1, i - 1) + 0; next }
+    mode == "tail" {
+      sub(/\r$/, "")
+      if (match($0, /^==> .* <==$/)) { cur = substr($0, 5, length($0) - 8); next }
+      if (cur != "" && $0 ~ /"type":"tool_use","id":"[^"]*","name":"(AskUserQuestion|ExitPlanMode)"/) blocked[cur] = 1
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        st = "running"; p = np[i]
+        if (wts[i] != "") {
+          if (ex[i]) { if ((p in mt) && mt[p] < wts[i] + 2) st = "waiting" } else st = "waiting"
+        }
+        if (st == "running" && ex[i] && (p in blocked)) st = "waiting"
+        if (st == "running") {
+          if (ex[i]) { if ((p in mt) && now - mt[p] > stale) st = "stale" }
+          else if (secs[i] > stale) st = "stale"
+        }
+        c[st]++
+      }
+      printf "running=%d waiting=%d failed=0 idle=0 finished=%d stale=%d\n", c["running"], c["waiting"], fin, c["stale"]
+    }'
+  exit 0
+fi
+
 if [ -z "$ROWS" ]; then
   echo "no agents recorded yet"
   exit 0
