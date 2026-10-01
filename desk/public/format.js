@@ -78,6 +78,17 @@ export function tildify(p, home) {
   return p;
 }
 
+// Display-only: replace every home-directory occurrence inside free text (titles, summaries, tool targets).
+// The match must not start inside a longer path/word and must end at a separator or a non-name character.
+export function tildifyText(text, home) {
+  if (typeof text !== 'string' || !text || typeof home !== 'string' || !home) return text;
+  const h = home.replace(/[\\/]+$/, '');
+  if (!h) return text;
+  const body = h.split(/[\\/]+/).map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\\\/]+');
+  const re = new RegExp('(^|[^A-Za-z0-9_.~-])' + body + '(?=$|[\\\\/]|[^A-Za-z0-9_.-])', 'gi');
+  return text.replace(re, (m, pre) => pre + '~');
+}
+
 export function middleEllipsis(s, max) {
   if (!s) return '';
   const a = Array.from(s);
@@ -123,15 +134,31 @@ export function formatToolTime(iso) {
 }
 
 // ---------- context usage ----------
-// Claude Code marks 1M-context models with a "[1m]" suffix in the model setting (e.g. "sonnet[1m]"), but transcripts
-// usually record the plain API model id. So 1M is assumed only when the id says so, or when the observed context
-// already exceeds 200k (which proves a larger window). Everything else Claude is 200k. Non-Claude models: unknown.
+// Sources (checked 2026-10-01):
+//  - https://code.claude.com/docs/en/model-config : "[1m]" is a suffix on the model setting (opus[1m], claude-opus-4-8[1m]);
+//    "Claude Code strips the suffix before sending the model ID to your provider", so transcripts hold the plain id.
+//    Fable 5.x, Sonnet 5+ and Opus 4.7+ always run 1M on the Anthropic API; Opus 4.6 / Sonnet 4.6 reach 1M only via [1m].
+//  - https://platform.claude.com/docs/en/build-with-claude/context-windows : per-model window sizes; others are 200k.
+//  - https://code.claude.com/docs/en/statusline : live context_window.context_window_size (not present in transcripts).
+// Result: 1M when the id says [1m], the family/version is natively 1M, or the observed context exceeds 200k (proof).
+// 200k only for a known 200k model. A model whose window depends on a stripped suffix (4.6, bare aliases, unknown
+// versions) has an unknown window: tokens without a percentage.
 export function contextWindow(model, ctx) {
   const id = typeof model === 'string' ? model.toLowerCase() : '';
-  if (!/^claude[-.]|^(opus|sonnet|haiku)\b|anthropic\/claude|\.claude-/.test(id)) return null;
+  if (!/^claude[-.]|^(opus|sonnet|haiku|fable|mythos)\b|anthropic\/claude|\.claude-/.test(id)) return null;
   if (/\[1m\]|[-_]1m\b/.test(id)) return 1000000;
   if (Number.isFinite(ctx) && ctx > 200000) return 1000000;
-  return 200000;
+  if (/fable|mythos/.test(id)) return 1000000;
+  const m = /(opus|sonnet|haiku)-(\d{1,2})(?!\d)(?:-(\d{1,2})(?!\d))?/.exec(id);
+  if (m) {
+    const ver = Number(m[2]) + (m[3] ? Number(m[3]) / 100 : 0);
+    if (m[1] === 'haiku') return 200000;
+    if (ver >= 4.06 && ver < 4.07) return null;
+    if (m[1] === 'sonnet') return ver >= 5 ? 1000000 : 200000;
+    return ver >= 4.07 ? 1000000 : 200000;
+  }
+  if (/claude-\d+(-\d+)?-(opus|sonnet|haiku)/.test(id)) return 200000;
+  return null;
 }
 
 export function usageLevel(pct) { return pct > 85 ? 'high' : pct >= 60 ? 'mid' : 'low'; }

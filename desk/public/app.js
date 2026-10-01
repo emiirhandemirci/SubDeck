@@ -1,6 +1,6 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
-import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, markdownLite, formatToolTime, contextUsage } from './format.js';
+import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage } from './format.js';
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -15,6 +15,7 @@ const S = {
   content: null, contentFor: null, contentKey: null, open: { prompt: false, tools: false, report: true },
 };
 
+const T = x => tildifyText(x, S.home); // display-only home-directory replacement for free text
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined && text !== null) e.textContent = String(text); return e; }
 async function getJSON(url) { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); }
 function dot(state) { const d = el('span', `dot ${state}`); d.setAttribute('aria-hidden', 'true'); return d; }
@@ -141,7 +142,7 @@ function sessionLine(s, cls) {
   line.dataset.id = s.id;
   line.tabIndex = s.id === S.selectedSession ? 0 : -1;
   line.setAttribute('aria-selected', String(s.id === S.selectedSession));
-  line.append(dot(s.state), el('span', 'title', s.title), stateWord(s.state));
+  line.append(dot(s.state), el('span', 'title', T(s.title)), stateWord(s.state));
   if (s.agentType && cls === 'agent') line.append(el('span', 'tag mono', s.agentType));
   const u = contextUsage(s);
   line.append(el('span', 'meta-line muted', u ? `${formatDuration(s.durationMs)} · ${u.pct === null ? u.text : `${formatTokens(u.tokens)} · ${u.pct}%`}` : formatDuration(s.durationMs)));
@@ -245,7 +246,7 @@ function renderContent() {
   if (c.error) { box.append(el('p', 'muted', c.error)); return; }
   box.append(section('prompt', 'Prompt', null, () => {
     const w = el('div');
-    w.append(el('pre', 'prompt', c.prompt || '(none)'));
+    w.append(el('pre', 'prompt', T(c.prompt) || '(none)'));
     if (c.promptTruncated) w.append(el('p', 'muted', 'Prompt truncated.'));
     return w;
   }));
@@ -256,7 +257,7 @@ function renderContent() {
     for (const t of c.toolCalls) {
       const li = el('li', t.ok === false ? 'err' : null);
       li.append(el('span', 'muted', formatToolTime(t.at)), document.createTextNode(' '), el('strong', `toolname tn-${String(t.tool).replace(/[^A-Za-z0-9]/g, '')}`, t.tool));
-      if (t.target) li.append(document.createTextNode(' '), el('code', null, t.target));
+      if (t.target) li.append(document.createTextNode(' '), el('code', null, T(t.target)));
       if (t.ok === false) li.append(document.createTextNode(' '), el('span', 'tag', 'error'));
       ol.append(li);
     }
@@ -267,7 +268,7 @@ function renderContent() {
     const w = el('div', 'report');
     const blocks = markdownLite(c.finalReport);
     if (!blocks.length) w.append(el('p', 'muted', '(none)'));
-    const fill = (node, inl) => { for (const i of inl) node.append(i.code ? el('code', null, i.s) : document.createTextNode(i.s)); };
+    const fill = (node, inl) => { for (const i of inl) node.append(i.code ? el('code', null, T(i.s)) : document.createTextNode(T(i.s))); };
     for (const b of blocks) {
       if (b.type === 'p') { const p = el('p'); fill(p, b.inlines); w.append(p); }
       else { const l = el(b.type); for (const it of b.items) { const li = el('li'); fill(li, it); l.append(li); } w.append(l); }
@@ -284,12 +285,12 @@ function renderDetail() {
   box.replaceChildren();
   const s = S.detail;
   if (!s) { box.append(el('p', 'empty', 'Select a session or agent')); return; }
-  box.append(el('h3', null, s.title));
+  box.append(el('h3', null, T(s.title)));
   const sub = el('p', 'muted subline');
   sub.append(el('span', `chip ${s.state}`, STATE_LABEL[s.state]));
   if (s.agentType) sub.append(el('span', 'mono', s.agentType));
   if (s.model) sub.append(el('span', 'mono', s.model));
-  if (s.parent) sub.append(el('span', null, `Spawned by ${s.parent.title}`));
+  if (s.parent) sub.append(el('span', null, `Spawned by ${T(s.parent.title)}`));
   const subDur = el('span', null, formatDuration(s.durationMs)); subDur.id = 'headDuration';
   sub.append(subDur);
   const su = contextUsage(s); if (su) sub.append(el('span', null, su.text));
@@ -312,9 +313,9 @@ function renderDetail() {
   if (du) { const w = el('span'); w.append(document.createTextNode(`${du.text} context`)); if (du.pct !== null) { const b = usageBar(du); b.classList.add('block'); w.append(b); } row('Tokens', w); }
   else row('Tokens', '-');
   const la = s.lastActivity;
-  row('Last activity', la ? [la.kind, la.toolName, la.summary].filter(Boolean).join(' · ') + ` (${relativeTime(la.at, now)})` : '-');
-  if (s.parent) row('Parent', s.parent.title);
-  if (s.children && s.children.length) row('Agents', s.children.map(c => `${c.title} (${STATE_LABEL[c.state]})`).join(', '));
+  row('Last activity', la ? T([la.kind, la.toolName, la.summary].filter(Boolean).join(' · ')) + ` (${relativeTime(la.at, now)})` : '-');
+  if (s.parent) row('Parent', T(s.parent.title));
+  if (s.children && s.children.length) row('Agents', s.children.map(c => `${T(c.title)} (${STATE_LABEL[c.state]})`).join(', '));
   const refPath = s.refs.file || s.refs.db;
   if (refPath) {
     const wrap = el('span', 'refs');

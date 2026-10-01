@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
-import { tildify } from '../public/format.js';
+import { tildify, tildifyText } from '../public/format.js';
 import { createApi } from '../lib/api.mjs';
 
 test('tildify replaces home prefix, both separators, case-insensitive', () => {
@@ -27,4 +27,16 @@ test('/api/sources exposes home dir as an additive top-level field', async () =>
   const j = JSON.parse(body);
   assert.equal(j.home, os.homedir());
   assert.equal(j.server.days, 14);
+});
+
+test('tildifyText rewrites home paths inside free text, boundary-safe', () => {
+  const home = 'C:\\Users\\Someone';
+  assert.equal(tildifyText('Read C:\\Users\\Someone\\proj\\a.txt now', home), 'Read ~\\proj\\a.txt now');
+  assert.equal(tildifyText('"c:/users/someone/x" and C:\\Users\\Someone', home), '"~/x" and ~');
+  assert.equal(tildifyText('C:\\Users\\SomeoneElse\\x', home), 'C:\\Users\\SomeoneElse\\x');
+  assert.equal(tildifyText('see /home/al/a and /home/al/b', '/home/al'), 'see ~/a and ~/b');
+  assert.equal(tildifyText('/home/alice/a', '/home/al'), '/home/alice/a');
+  assert.equal(tildifyText('/mnt/home/al/a', '/home/al'), '/mnt/home/al/a');
+  assert.equal(tildifyText('no path', ''), 'no path');
+  assert.equal(tildifyText(null, '/home/al'), null);
 });

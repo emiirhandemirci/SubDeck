@@ -81,11 +81,23 @@ test('formatToolTime', () => {
   assert.match(f.formatToolTime('2026-09-29T10:00:05.000Z'), /^\d\d:\d\d:\d\d$/);
 });
 
-test('contextWindow: Claude 200k default, 1M only on marker or proof, unknown otherwise', () => {
+test('contextWindow: native 1M by family/version, 200k only for known 200k models, unknown otherwise', () => {
   assert.equal(f.contextWindow('claude-sonnet-4-5', 50000), 200000);
   assert.equal(f.contextWindow('claude-opus-4-1[1m]', 50000), 1000000);
   assert.equal(f.contextWindow('sonnet[1m]', 10), 1000000);
   assert.equal(f.contextWindow('claude-sonnet-4-5', 350000), 1000000);
+  assert.equal(f.contextWindow('claude-haiku-4-5', 50000), 200000);
+  assert.equal(f.contextWindow('claude-3-5-sonnet-20241022', 50000), 200000);
+  assert.equal(f.contextWindow('claude-sonnet-4-5-20250929', 50000), 200000);
+  assert.equal(f.contextWindow('claude-opus-4-8', 50000), 1000000);
+  assert.equal(f.contextWindow('claude-opus-4-7', 50000), 1000000);
+  assert.equal(f.contextWindow('claude-sonnet-5-5', 50000), 1000000);
+  assert.equal(f.contextWindow('claude-fable-5', 50000), 1000000);
+  assert.equal(f.contextWindow('claude-opus-4-6', 50000), null);
+  assert.equal(f.contextWindow('claude-sonnet-4-6', 50000), null);
+  assert.equal(f.contextWindow('claude-sonnet-4-6', 250000), 1000000);
+  assert.equal(f.contextWindow('claude-sonnet-4-6[1m]', 1000), 1000000);
+  assert.equal(f.contextWindow('opus', 1000), null);
   assert.equal(f.contextWindow('gpt-5', 100), null);
   assert.equal(f.contextWindow('gemini-2.5-pro', 100), null);
   assert.equal(f.contextWindow(null, 100), null);
@@ -95,7 +107,7 @@ test('contextUsage: thresholds, unknown model, no data', () => {
   const s = (model, context) => ({ model, tokens: { context, total: null } });
   assert.equal(f.contextUsage(s('claude-x', null)), null);
   assert.equal(f.contextUsage({ model: 'claude-x' }), null);
-  assert.equal(f.contextUsage(s('claude-x', 0)).pct, 0);
+  assert.equal(f.contextUsage(s('claude-sonnet-4-5', 0)).pct, 0);
   const a = f.contextUsage(s('claude-sonnet-4-5', 100000));
   assert.deepEqual([a.pct, a.level, a.text], [50, 'low', '100.0k of 200.0k tokens (50%)']);
   assert.equal(f.contextUsage(s('claude-sonnet-4-5', 120000)).level, 'mid');
