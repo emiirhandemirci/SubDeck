@@ -7,7 +7,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-emiirhandemirci-181717?logo=github&logoColor=white)](https://github.com/emiirhandemirci)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Emirhan_Demirci-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/emirhan-demirci-/)
 
-![version](https://img.shields.io/badge/version-0.4.0-6366f1)
+![version](https://img.shields.io/badge/version-0.4.1-6366f1)
 ![node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white)
 ![plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757)
 ![deps](https://img.shields.io/badge/dependencies-zero-22c55e)
@@ -47,6 +47,9 @@ Restart Claude Code, then try `/subdeck:status` or `/subdeck:desk`.
   <tr>
     <td valign="top">🛡️<br><b>Guard rules</b><br>Deterministic hook: blocks <code>git add -A</code>, force push, dangerous <code>rm -rf</code>, secret files. <code>/subdeck:guard</code></td>
     <td valign="top">📊<br><b>Context usage</b><br>Desk shows how full each session's context is, and token totals per project.</td>
+    <td valign="top">📶<br><b>Status line</b><br>Optional agent counts in the Claude Code status bar. <code>/subdeck:statusline</code></td>
+  </tr>
+  <tr>
     <td valign="top">🪶<br><b>Zero dependencies</b><br>Bash and awk for the plugin, plain Node for Desk. No jq, no npm install.</td>
   </tr>
 </table>
@@ -119,6 +122,7 @@ flowchart LR
 | `/subdeck:notify` | Desktop notifications: `on`, `off`, `test`, `sound`, `events`. |
 | `/subdeck:guard` | Shows or changes the guard rules (`set push=off`, `reset`). |
 | `/subdeck:models` | Shows or changes which model each sub-agent role uses (`/subdeck:models set worker=haiku`). |
+| `/subdeck:statusline` | Optional status line with live agent counts (asks before editing your settings). |
 
 <details>
 <summary><b>Install</b></summary>
