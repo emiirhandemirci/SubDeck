@@ -18,7 +18,7 @@ import gemini from './adapters/gemini.mjs';
 import cline from './adapters/cline.mjs';
 import opencode from './adapters/opencode.mjs';
 
-export const VERSION = '0.4.2';
+export const VERSION = '0.5.0';
 export const ADAPTERS = [claudeCode, cursor, codex, copilot, gemini, cline, opencode];
 const DEFAULT_PORT = 4917;
 const PORT_TRIES = 20;
