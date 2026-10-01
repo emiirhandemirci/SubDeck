@@ -42,7 +42,7 @@ test('starts, writes desk.json, answers, second start exits 0, cleans up', async
   const rt = JSON.parse(fs.readFileSync(path.join(home, '.subdeck', 'desk.json'), 'utf8'));
   assert.equal(rt.port, port);
   assert.equal(rt.pid, a.child.pid);
-  assert.equal(rt.version, '0.4.1');
+  assert.equal(rt.version, '0.4.2');
   const res = await fetch(`http://127.0.0.1:${port}/api/sources`);
   assert.equal(res.status, 200);
   const srcs = (await res.json()).sources;

@@ -32,7 +32,7 @@ function updateWaiting() {
 function toolBadge(tool) {
   const b = el('span', `badge tool tool-${tool}`, TOOL_BADGE[tool] || tool);
   const src = S.sources.find(x => x.id === tool);
-  if (src && src.experimental) b.title = `${src.label}: experimental support (parts of this tool's data format are unverified)`;
+  if (src && src.experimental) { const t = `${src.label}: data format not yet verified on every platform`; b.title = t; b.setAttribute('aria-label', `${TOOL_BADGE[tool] || tool}. ${t}`); }
   return b;
 }
 
@@ -70,9 +70,9 @@ function renderSources() {
   for (const s of S.sources.filter(x => x.detected)) {
     const b = el('span', `badge src ${s.health} tool-${s.id}`);
     b.append(document.createTextNode(`${s.label}: ${s.health}`));
-    if (s.experimental) b.append(el('span', 'tag exp', 'experimental'));
-    const extra = [s.experimental ? "Experimental adapter: some of this tool's data format is unverified" : '', s.lastError || ''].filter(Boolean);
+    const extra = [s.experimental ? `${s.label}: data format not yet verified on every platform` : '', s.lastError || ''].filter(Boolean);
     b.title = [`${s.counts.projects} projects, ${s.counts.sessions} sessions, ${s.counts.running} running${s.counts.waiting ? `, ${s.counts.waiting} waiting` : ''}`, ...extra].join('\n');
+    b.setAttribute('aria-label', b.title.split('\n').join('. '));
     box.append(b);
   }
   const absent = S.sources.filter(x => !x.detected);

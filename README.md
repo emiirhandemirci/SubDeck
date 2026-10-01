@@ -7,7 +7,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-emiirhandemirci-181717?logo=github&logoColor=white)](https://github.com/emiirhandemirci)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Emirhan_Demirci-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/emirhan-demirci-/)
 
-![version](https://img.shields.io/badge/version-0.4.1-6366f1)
+![version](https://img.shields.io/badge/version-0.4.2-6366f1)
 ![node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white)
 ![plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757)
 ![deps](https://img.shields.io/badge/dependencies-zero-22c55e)
@@ -63,7 +63,7 @@ Restart Claude Code, then try `/subdeck:status` or `/subdeck:desk`.
   </picture>
 </p>
 
-Projects on the left, the agent tree in the middle, details on the right. Start it with `/subdeck:desk` or `node desk/server.mjs`. Claude Code and Cursor are supported; Codex, Copilot (CLI and VS Code Chat), Gemini CLI, Cline/Roo and OpenCode are **experimental** (marked in the header). Sessions that are blocked on you (permission prompt, question, plan approval) show as **waiting** and sort first. Each session shows a context-usage bar and each project its token total (tokens, not cost); paths use `~`. Details in [desk/README.md](desk/README.md).
+Projects on the left, the agent tree in the middle, details on the right. Start it with `/subdeck:desk` or `node desk/server.mjs`. Claude Code and Cursor are supported; Codex, Copilot (CLI and VS Code Chat), Gemini CLI, Cline/Roo and OpenCode support is newer and some data formats are not yet verified on every platform (hover a header badge for details). Sessions that are blocked on you (permission prompt, question, plan approval) show as **waiting** and sort first. Each session shows a context-usage bar and each project its token total (tokens, not cost); paths use `~`. Details in [desk/README.md](desk/README.md).
 
 <details>
 <summary><b>Agent detail</b>: prompt, tool calls, final report</summary>

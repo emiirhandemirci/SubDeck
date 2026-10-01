@@ -67,7 +67,7 @@ Desk serves on `http://127.0.0.1:4917` by default (it falls back to 4918-4936 if
 
 **Open it in VS Code.** Command Palette, then "Simple Browser: Show", then paste `http://127.0.0.1:4917` (or the URL that `/subdeck:desk` printed).
 
-**Supported tools.** Claude Code and Cursor are supported. Codex, Copilot (CLI and VS Code Chat), Gemini CLI, Cline/Roo and OpenCode are **experimental**: they are marked "experimental" in the header, and some of their data formats are not verified on every platform. Tools that are not installed are hidden behind a collapsed "not detected" hint. Each tool has its own badge colour.
+**Supported tools.** Claude Code and Cursor are supported. Codex, Copilot (CLI and VS Code Chat), Gemini CLI, Cline/Roo and OpenCode support is newer; some of their data formats are not yet verified on every platform. Hover a tool badge in the header for details. Tools that are not installed are hidden behind a collapsed "not detected" hint. Each tool has its own badge colour.
 
 | Tool | "Running" means |
 |---|---|

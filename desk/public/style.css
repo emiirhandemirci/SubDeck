@@ -46,7 +46,6 @@ h1, h2, h3 { font-weight: 650; }
 .badge.ok::before { background: var(--running); box-shadow: 0 0 6px color-mix(in srgb, var(--running) 60%, transparent); }
 .badge.degraded::before { background: var(--idle); }
 .badge.error::before { background: var(--failed); }
-.tag.exp { font-size: 11px; line-height: 16px; padding: 0 6px; font-style: italic; }
 .absent-sources { font-size: 13px; color: var(--muted); }
 .absent-sources summary { cursor: pointer; padding: 2px 6px; }
 .absent-sources[open] { display: flex; gap: var(--s2); align-items: center; }

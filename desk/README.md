@@ -20,13 +20,13 @@ node desk/server.mjs [--port N] [--days N] [--open] [--no-content]
 |---|---|---|
 | Claude Code | `~/.claude/projects/` transcripts, plus `.subdeck/` hook events | Sub-agents are read from `subagents/`. The model column shows the real id from the last assistant record. |
 | Cursor | `state.vscdb` under the Cursor user directory | Opened read-only; retried when Cursor holds a lock. |
-| Codex (experimental) | `$CODEX_HOME` (default `~/.codex`): `state_N.sqlite` index and `sessions/` rollout files | Needs Node 22.13+. Rollout event names and sub-agent status values are unverified. |
-| Copilot (experimental) | CLI: `$COPILOT_HOME/session-state` (default `~/.copilot`); VS Code Chat: `chatSessions` under the VS Code user directory | A live `inuse` lock file marks running CLI sessions (state source `lock`). VS Code Chat gives title, times and request count only. |
-| Gemini CLI (experimental) | `$GEMINI_CLI_HOME/.gemini/tmp/<project>/chats/` (default `~/.gemini`) | Sub-agent parent links are inferred. |
-| Cline/Roo (experimental) | `globalStorage` of the Cline and Roo extensions in VS Code family editors | Title is the first task text. Roo child tasks link to their parent. |
-| OpenCode (experimental) | `$XDG_DATA_HOME/opencode` (default `~/.local/share/opencode`): `opencode.db`, older `storage/` | Needs Node 22.13+ for the database. |
+| Codex | `$CODEX_HOME` (default `~/.codex`): `state_N.sqlite` index and `sessions/` rollout files | Needs Node 22.13+. Rollout event names and sub-agent status values are unverified. |
+| Copilot | CLI: `$COPILOT_HOME/session-state` (default `~/.copilot`); VS Code Chat: `chatSessions` under the VS Code user directory | A live `inuse` lock file marks running CLI sessions (state source `lock`). VS Code Chat gives title, times and request count only. |
+| Gemini CLI | `$GEMINI_CLI_HOME/.gemini/tmp/<project>/chats/` (default `~/.gemini`) | Sub-agent parent links are inferred. |
+| Cline/Roo | `globalStorage` of the Cline and Roo extensions in VS Code family editors | Title is the first task text. Roo child tasks link to their parent. |
+| OpenCode | `$XDG_DATA_HOME/opencode` (default `~/.local/share/opencode`): `opencode.db`, older `storage/` | Needs Node 22.13+ for the database. |
 
-Tools that are not installed are hidden in the UI header (listed under a collapsed "not detected" hint). Experimental adapters carry an `experimental` flag in `/api/sources` and an "experimental" tag in the UI.
+Tools that are not installed are hidden in the UI header (listed under a collapsed "not detected" hint). Newer adapters (Codex, Copilot, Gemini CLI, Cline/Roo, OpenCode) carry an `experimental` flag in `/api/sources`; the UI shows no label for it, only a tooltip on the header badge ("data format not yet verified on every platform").
 
 Tool colours: Claude orange, Cursor blue, Codex teal, Copilot violet, Gemini pink, Cline/Roo yellow, OpenCode green.
 
