@@ -34,10 +34,10 @@ const good = { 'content-type': 'application/json', 'x-subdeck-token': TOKEN };
 
 test('GET: absent config means off; reflects the file', async () => {
   const { api, cfg } = mk();
-  assert.deepEqual(json(await call(api)), { enabled: false });
+  assert.deepEqual(json(await call(api)), { enabled: false, overriddenBy: [] });
   fs.mkdirSync(path.dirname(cfg), { recursive: true });
   fs.writeFileSync(cfg, '{"notify":{"enabled":true}}');
-  assert.deepEqual(json(await call(api)), { enabled: true });
+  assert.deepEqual(json(await call(api)), { enabled: true, overriddenBy: [] });
 });
 
 test('POST writes notify.enabled, preserves every other key, atomic (no tmp left)', async () => {
@@ -103,4 +103,22 @@ test('the page embeds the per-start token', async () => {
   const { api } = mk();
   const r = await call(api, { url: '/' });
   assert.match(r.chunks.join(''), new RegExp(`content="${TOKEN}"`));
+});
+
+test('GET: a project-level config that sets notify.enabled is reported as overriding the switch', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-ov-'));
+  const pub = path.join(dir, 'pub'); fs.mkdirSync(pub);
+  const cfg = path.join(dir, 'home', '.subdeck', 'config.json');
+  const mkProj = (name, content) => {
+    const pp = path.join(dir, 'work', name); fs.mkdirSync(path.join(pp, '.subdeck'), { recursive: true });
+    if (content !== null) fs.writeFileSync(path.join(pp, '.subdeck', 'config.json'), content);
+    return { name, path: pp };
+  };
+  const projects = [mkProj('Over', '{"notify":{"enabled":false}}'), mkProj('Plain', '{"modelPolicy":{}}'), mkProj('Bad', '{nope'), mkProj('None', null)];
+  const api = createApi({ core: { snapshot: () => ({ sources: [], projects, sessions: [] }) }, getPort: () => P, startedAt: 'x', days: 14, version: 't', publicDir: pub, configFile: cfg, token: TOKEN });
+  const j = json(await call(api));
+  assert.equal(j.overriddenBy.length, 1);
+  assert.equal(j.overriddenBy[0].project, 'Over');
+  assert.equal(j.overriddenBy[0].enabled, false);
+  assert.equal(j.overriddenBy[0].file, path.join(projects[0].path, '.subdeck', 'config.json'));
 });

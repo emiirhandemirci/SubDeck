@@ -10,8 +10,8 @@ const store = {
 const S = {
   sources: [], server: null, home: null, projects: [], project: null, sessions: [], detail: null,
   selectedProject: store.get('project', null), selectedSession: null,
-  filter: store.get('filter', ''), onlyActive: store.get('onlyActive', false),
-  notify: null, lastHeartbeat: 0, lastRunning: null, lastWaiting: null,
+  filter: store.get('filter', ''), onlyActive: store.get('onlyActive', false), showTemp: store.get('showTemp', false),
+  notify: null, notifyOverrides: [], lastHeartbeat: 0, lastRunning: null, lastWaiting: null,
   content: null, contentFor: null, contentKey: null, open: { prompt: false, tools: false, report: true },
 };
 
@@ -72,6 +72,15 @@ function renderBell() {
   b.setAttribute('aria-checked', String(on));
   b.classList.toggle('on', on);
   b.title = on ? 'Desktop notifications: on (click to turn off)' : 'Desktop notifications: off (click to turn on)';
+  const ov = S.notifyOverrides || [];
+  if (ov.length) {
+    const list = ov.map(o => `${o.project || 'project'}: ${tildify(o.file, S.home)} (${o.enabled ? 'on' : 'off'})`).join('
+');
+    b.title += `
+Overridden by a project config, which wins over this switch:
+${list}`;
+  }
+  b.classList.toggle('overridden', ov.length > 0);
   b.replaceChildren();
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '16'); svg.setAttribute('height', '16'); svg.setAttribute('aria-hidden', 'true');
@@ -79,8 +88,13 @@ function renderBell() {
   path.setAttribute('d', BELL_ON); path.setAttribute('fill', 'currentColor'); svg.appendChild(path);
   if (!on) { const l = document.createElementNS('http://www.w3.org/2000/svg', 'path'); l.setAttribute('d', 'M4 4l16 16'); l.setAttribute('stroke', 'currentColor'); l.setAttribute('stroke-width', '2'); l.setAttribute('stroke-linecap', 'round'); svg.appendChild(l); }
   b.append(svg, el('span', 'bell-label', on ? 'Notifications on' : 'Notifications off'));
+  if (ov.length) b.append(el('span', 'bell-note', ov.length === 1 ? `overridden by ${ov[0].project || 'project'}` : `overridden by ${ov.length} projects`));
 }
-async function loadNotify() { try { S.notify = (await getJSON('/api/settings/notify')).enabled === true; } catch { S.notify = null; } renderBell(); }
+async function loadNotify() {
+  try { const d = await getJSON('/api/settings/notify'); S.notify = d.enabled === true; S.notifyOverrides = Array.isArray(d.overriddenBy) ? d.overriddenBy : []; }
+  catch { S.notify = null; S.notifyOverrides = []; }
+  renderBell();
+}
 async function toggleNotify() {
   const meta = document.querySelector('meta[name="subdeck-token"]');
   const want = !(S.notify === true);
@@ -128,7 +142,7 @@ function renderProjectsInner() {
   const now = Date.now();
   if (!S.sources.some(s => s.detected)) { box.append(el('p', 'empty', 'No supported AI coding tool data found (looked for: ' + S.sources.map(s => s.label).join(', ') + ').')); return; }
   if (!S.projects.length) { box.append(el('p', 'empty', `No sessions in the last ${S.server ? S.server.days : 14} days.`)); return; }
-  const list = filterProjects(S.projects, { text: S.filter, onlyActive: S.onlyActive }, now);
+  const list = filterProjects(S.projects, { text: S.filter, onlyActive: S.onlyActive, showTemp: S.showTemp }, now);
   if (!list.length) { box.append(el('p', 'empty', 'No projects match.')); return; }
   for (const g of groupProjects(list, now)) {
     box.append(el('div', 'group-label', g.label));
@@ -401,6 +415,8 @@ listNav($('map'), '[role=treeitem]', id => selectSession(id, true));
 
 $('filter').value = S.filter;
 $('onlyActive').checked = S.onlyActive;
+$('showTemp').checked = S.showTemp;
+$('showTemp').addEventListener('change', e => { S.showTemp = e.target.checked; store.set('showTemp', S.showTemp); renderProjects(); });
 $('filter').addEventListener('input', e => { S.filter = e.target.value; store.set('filter', S.filter); renderProjects(); });
 $('onlyActive').addEventListener('change', e => { S.onlyActive = e.target.checked; store.set('onlyActive', S.onlyActive); renderProjects(); });
 
@@ -423,6 +439,7 @@ function connect() {
     let ev; try { ev = JSON.parse(e.data); } catch { return; }
     if (ev.sources) await loadSources().catch(() => {});
     await loadProjects().catch(() => {});
+    loadNotify();
     if (S.selectedProject && ev.projects.includes(S.selectedProject)) {
       await loadProject();
       if (S.detail && S.detail.projectId === S.selectedProject) await loadDetail();

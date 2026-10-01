@@ -340,6 +340,21 @@ has "$(bash "$STATUS" --counts "$PF")" '^running=2 waiting=0 failed=4 idle=0 fin
 rm -rf "$PF" "$TF"
 rm -rf "$PW" "$PR" "$PI" "$PA"
 
+# phantoms: Stop-only events with no type, no start and no transcript file are not agents; a real transcript keeps the row
+PH="$(mktemp -d)"; TH="$(mktemp -d)"; mkdir -p "$PH/.subdeck" "$TH/s1/subagents"
+printf '%s\n' '{"type":"user","message":{"role":"user","content":"go"}}' > "$TH/s1/subagents/agent-realxxxx.jsonl"
+{
+  for id in ph1xxxxx ph2xxxxx ph3xxxxx; do ev 2026-01-04T10:00:00Z SubagentStop $id "" "$TH/s1.jsonl" ''; done
+  ev 2026-01-04T10:00:01Z SubagentStop realxxxx "" "$TH/s1.jsonl" 'kept'
+  ev 2026-01-04T10:00:02Z SubagentStop typedxxx worker-sonnet "$TH/s1.jsonl" 'typed'
+} > "$PH/.subdeck/events.jsonl"
+OUT="$(bash "$STATUS" --all "$PH")"
+hasnt "$OUT" '^ph[123]xxxxx' "phantom: Stop-only, no type, no transcript is hidden"
+has "$OUT" '^realxxxx ' "phantom: transcript on disk keeps the row without Start"
+has "$OUT" '^typedxxx .* worker-sonnet' "phantom: typed Stop-only row is kept"
+has "$(bash "$STATUS" --counts "$PH")" '^running=0 waiting=0 failed=0 idle=0 finished=2 stale=0$' "phantom: counts exclude phantoms"
+rm -rf "$PH" "$TH"
+
 rm -rf "$P" "$P2" "$P3" "$P4" "$T"
 echo "SUMMARY: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

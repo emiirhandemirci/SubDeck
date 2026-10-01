@@ -88,7 +88,7 @@ fold() {
     p = field(line, "transcript_path"); if (p != "") path[id] = norm(p)
     p = field(line, "agent_transcript_path"); if (p != "") apath[id] = norm(p)
     p = field(line, "session_id"); if (p != "") ses[id] = p
-    if (ev == "SubagentStart") { if (!(id in st) || e < st[id]) st[id] = e }
+    if (ev == "SubagentStart") { hadstart[id] = 1; if (!(id in st) || e < st[id]) st[id] = e }
     else {
       stop[id] = e
       # last_assistant_message lives inside the payload
@@ -99,6 +99,11 @@ fold() {
     }
   }
   END {
+    if (n == 0) exit
+    # phantom rows: Stop-only events with no start, no agent type and no transcript file are not agents
+    m0 = 0
+    for (i = 1; i <= n; i++) { id = order[i]; if (!(id in hadstart) && !(id in type) && !tfile(agentpath(id))) continue; order[++m0] = id }
+    n = m0
     if (n == 0) exit
     for (i = 1; i <= n; i++) { id = order[i]; if (!(id in st)) st[id] = (id in stop) ? stop[id] : 0 }
     nd = 0
@@ -113,6 +118,7 @@ fold() {
     for (g = 1; g <= ng; g++)
       for (i = 1; i <= ns; i++) { id = sel[i]; if (sess(id) == gorder[g]) row(id, (id in fail) ? "failed" : ((id in stop) ? "done" : "running"), gorder[g]) }
   }
+  function tfile(f,   r, l) { if (f == "") return 0; r = (getline l < f); if (r >= 0) { close(f); return 1 } return 0 }
   function norm(p) { gsub(/\\\\/, "/", p); gsub(/\\/, "/", p); return p }
   # ---- failed (same explicit signals as the Desk claude-code adapter; a Stop hook does not override them) ----
   function tagv(s, name,   r) {

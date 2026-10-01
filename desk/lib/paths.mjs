@@ -37,8 +37,12 @@ export function resolveEnv(vars, platform, home, opts = {}) {
   else if (platform === 'win32') cursorUserDir = vars.APPDATA ? join(vars.APPDATA, 'Cursor', 'User') : null;
   else if (platform === 'darwin') cursorUserDir = join(home, 'Library', 'Application Support', 'Cursor', 'User');
   else cursorUserDir = join(home, '.config', 'Cursor', 'User');
+  const tmp = [vars.TMPDIR, vars.TEMP, vars.TMP];
+  if (platform === 'win32') { if (home) tmp.push(join(home, 'AppData', 'Local', 'Temp')); }
+  else tmp.push('/tmp', '/var/tmp', ...(platform === 'darwin' ? ['/private/tmp', '/private/var/folders'] : []));
   return {
     home,
+    tmpDirs: [...new Set(tmp.filter(x => typeof x === 'string' && x))],
     vars,
     appData: vars.APPDATA || null,
     platform,
@@ -48,4 +52,15 @@ export function resolveEnv(vars, platform, home, opts = {}) {
     cursorUserDir,
     disabled: (vars.SUBDECK_DISABLE || '').split(',').map(s => s.trim()).filter(Boolean),
   };
+}
+
+/** True when the path equals or lies inside one of the temp directories (compared with projectKey rules). */
+export function isInside(p, dirs, platform) {
+  const k = projectKey(p, platform);
+  if (k === null) return false;
+  for (const d of dirs || []) {
+    const t = projectKey(d, platform);
+    if (t && t !== '/' && (k === t || k.startsWith(t + '/'))) return true;
+  }
+  return false;
 }

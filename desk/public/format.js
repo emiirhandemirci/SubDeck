@@ -54,9 +54,10 @@ export function groupProjects(projects, nowMs) {
   return GROUP_ORDER.map(label => ({ label, items: m.get(label) })).filter(g => g.items.length);
 }
 
-export function filterProjects(projects, { text = '', onlyActive = false }, nowMs) {
+export function filterProjects(projects, { text = '', onlyActive = false, showTemp = true }, nowMs) {
   const q = text.trim().toLowerCase();
   return projects.filter(p => {
+    if (!showTemp && p.temporary) return false;
     if (q && !p.name.toLowerCase().includes(q) && !(p.path || '').toLowerCase().includes(q)) return false;
     if (onlyActive) {
       const t = p.lastActivityAt ? Date.parse(p.lastActivityAt) : NaN;

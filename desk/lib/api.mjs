@@ -81,11 +81,27 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     });
   }
 
+  // Projects whose own .subdeck/config.json sets notify.enabled; the project value wins over the user config, so the bell cannot change it.
+  async function projectOverrides() {
+    const out = [];
+    const mine = path.resolve(configFile);
+    for (const p of core.snapshot().projects || []) {
+      if (!p.path || out.length >= 20) continue;
+      const file = path.join(p.path, '.subdeck', 'config.json');
+      if (path.resolve(file) === mine) continue;
+      try {
+        const o = JSON.parse(await fs.readFile(file, 'utf8'));
+        if (o && typeof o === 'object' && o.notify && typeof o.notify === 'object' && typeof o.notify.enabled === 'boolean') out.push({ project: p.name, file, enabled: o.notify.enabled });
+      } catch { /* absent or unreadable: no override */ }
+    }
+    return out;
+  }
+
   async function notifySettings(req, res) {
     if (!configFile) return json(res, 404, { error: 'not found' });
     if (req.method === 'GET') {
       const r = readNotifyEnabled(configFile);
-      return r.ok ? json(res, 200, { enabled: r.enabled }) : json(res, 500, { error: r.error });
+      return r.ok ? json(res, 200, { enabled: r.enabled, overriddenBy: await projectOverrides() }) : json(res, 500, { error: r.error });
     }
     if (!originOk(req.headers.origin)) return json(res, 403, { error: 'forbidden origin' });
     if (!tokenOk(req.headers[TOKEN_HEADER])) return json(res, 403, { error: 'missing or wrong token' });

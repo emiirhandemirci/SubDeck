@@ -74,14 +74,14 @@ test('bell switch end to end: token from the page, writes ~/.subdeck/config.json
   const m = /:(\d+)\/$/.exec(await a.firstLine);
   const base = `http://127.0.0.1:${m[1]}`;
   try {
-    assert.deepEqual(await (await fetch(`${base}/api/settings/notify`)).json(), { enabled: false });
+    assert.deepEqual(await (await fetch(`${base}/api/settings/notify`)).json(), { enabled: false, overriddenBy: [] });
     const html = await (await fetch(`${base}/`)).text();
     const token = /name="subdeck-token" content="([0-9a-f]{48})"/.exec(html)[1];
     const headers = { 'Content-Type': 'application/json' };
     assert.equal((await fetch(`${base}/api/settings/notify`, { method: 'POST', headers, body: '{"enabled":true}' })).status, 403);
     const r = await fetch(`${base}/api/settings/notify`, { method: 'POST', headers: { ...headers, 'X-SubDeck-Token': token }, body: '{"enabled":true}' });
     assert.equal(r.status, 200);
-    assert.deepEqual(await (await fetch(`${base}/api/settings/notify`)).json(), { enabled: true });
+    assert.deepEqual(await (await fetch(`${base}/api/settings/notify`)).json(), { enabled: true, overriddenBy: [] });
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, '.subdeck', 'config.json'), 'utf8')), { modelPolicy: { worker: 'sonnet' }, notify: { enabled: true } });
   } finally { a.child.kill('SIGTERM'); await a.exited; }
 });

@@ -456,6 +456,8 @@ async function scan(env, { cache }) {
     }
     for (const [agentId, hook] of hooks) {
       if (seen.has(agentId) || hook.sessionId !== g.uuid) continue;
+      // Stop-only hook events with no start, no agent type and no transcript file (seen is built from the files on disk) are not agents
+      if (!hook.start && !hook.agentType) continue;
       const derived = hook.transcriptPath ? path.join(path.dirname(hook.transcriptPath), g.uuid, 'subagents', `agent-${agentId}.jsonl`) : null;
       sessions.push({ ...base, nativeId: agentId, parentNativeId: g.uuid, depth: 1,
         title: clip(hook.agentType, 120) || `agent ${agentId.slice(0, 8)}`, titleSource: 'fallback',

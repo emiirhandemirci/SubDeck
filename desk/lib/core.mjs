@@ -1,6 +1,6 @@
 // desk/lib/core.mjs
 // Runs adapters, merges projects by normalized path, derives states, diffs snapshots (spec section 6).
-import { projectKey, baseName } from './paths.mjs';
+import { projectKey, baseName, isInside } from './paths.mjs';
 import { deriveState, validateAdapterSession, makeSource, sessionIdOf, projectIdOf } from './model.mjs';
 
 const TIMEOUT_MSG = 'scan timed out after 5 s';
@@ -69,7 +69,8 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
         const key = s.projectPath ? projectKey(s.projectPath, env.platform) : `label:${a.tool}:${s.projectLabel}`;
         let p = projects.get(key);
         if (!p) {
-          p = { id: projectIdOf(key), key, path: s.projectPath || null, name: s.projectPath ? baseName(s.projectPath) : s.projectLabel,
+          p = { id: projectIdOf(key), key, path: s.projectPath || null, name: s.projectPath ? (env.home && projectKey(env.home, env.platform) === key ? '~' : baseName(s.projectPath)) : s.projectLabel,
+            temporary: !!(s.projectPath && isInside(s.projectPath, env.tmpDirs, env.platform)),
             tools: new Set(), sessionCount: 0, agentCount: 0, runningCount: 0, waitingCount: 0, lastActivityAt: null };
           projects.set(key, p);
         }
