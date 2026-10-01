@@ -15,6 +15,15 @@ allparse(){ # file -> count of lines that parse, via node
     let n=0; for(const x of l){ try{const o=JSON.parse(x); if(o.ts&&o.event&&o.payload!==undefined) n++;}catch(e){} }
     console.log(n+"/"+l.length);' "$1"
 }
+count_all(){ # project -> total events across events.jsonl + events.d, all valid
+  node -e '
+    const fs=require("fs"),p=process.argv[1]+"/.subdeck";let n=0,bad=0;
+    const chk=x=>{try{const o=JSON.parse(x);if(o.ts&&o.event&&o.payload!==undefined)n++;else bad++;}catch(e){bad++;}};
+    try{fs.readFileSync(p+"/events.jsonl","utf8").split("\n").filter(Boolean).forEach(chk);}catch(e){}
+    try{for(const f of fs.readdirSync(p+"/events.d")){ if(!f.endsWith(".json"))continue; const t=fs.readFileSync(p+"/events.d/"+f,"utf8"); if(t.trim().split("\n").length!==1)bad++; chk(t.trim()); }}catch(e){}
+    console.log(n+"/"+bad);' "$1"
+}
+
 
 # 1. single start + stop (via launcher)
 P="$(newproj)"
@@ -35,9 +44,13 @@ for i in $(seq 1 30); do
   ( echo "{\"agent_id\":\"p$i\",\"n\":$i}" | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" SubagentStart ) &
 done
 wait
-check "$(allparse "$P/.subdeck/events.jsonl")" "30/30" "30 parallel writers: 30 lines, all parse"
+check "$(count_all "$P")" "30/0" "30 parallel writers: jsonl + events.d == 30, all parse"
+# Under heavy host load a writer can legitimately wait out the 5 s lock budget and take the
+# lossless fallback; that is allowed. What must never happen: a dropped/failed write, or a
+# fallback notice without a matching events.d file.
+if grep -qE 'dropped|append failed|fallback write failed' "$P/.subdeck/hook-errors.log" 2>/dev/null; then bad "no dropped events"; else ok "no dropped events"; fi
+check "$(cat "$P/.subdeck/hook-errors.log" 2>/dev/null | grep -c "wrote fallback")" "$(ls "$P/.subdeck/events.d" 2>/dev/null | grep -c '\.json$')" "fallback notices match events.d files"
 if [ -e "$P/.subdeck/events.lock" ]; then bad "no leftover lock"; else ok "no leftover lock"; fi
-[ -s "$P/.subdeck/hook-errors.log" ] && bad "no hook errors" || ok "no hook errors"
 rm -rf "$P"
 
 # 4. stale lock recovery
@@ -48,15 +61,6 @@ echo '{"agent_id":"s"}' | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" SubagentStart
 check "$(allparse "$P/.subdeck/events.jsonl")" "1/1" "stale lock recovered"
 [ -e "$P/.subdeck/events.lock" ] && bad "lock released after stale recovery" || ok "lock released after stale recovery"
 rm -rf "$P"
-
-count_all(){ # project -> total events across events.jsonl + events.d, all valid
-  node -e '
-    const fs=require("fs"),p=process.argv[1]+"/.subdeck";let n=0,bad=0;
-    const chk=x=>{try{const o=JSON.parse(x);if(o.ts&&o.event&&o.payload!==undefined)n++;else bad++;}catch(e){bad++;}};
-    try{fs.readFileSync(p+"/events.jsonl","utf8").split("\n").filter(Boolean).forEach(chk);}catch(e){}
-    try{for(const f of fs.readdirSync(p+"/events.d")){ if(!f.endsWith(".json"))continue; const t=fs.readFileSync(p+"/events.d/"+f,"utf8"); if(t.trim().split("\n").length!==1)bad++; chk(t.trim()); }}catch(e){}
-    console.log(n+"/"+bad);' "$1"
-}
 
 # 5. top-level field lift
 P="$(newproj)"
