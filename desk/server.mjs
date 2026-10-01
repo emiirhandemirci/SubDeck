@@ -84,7 +84,7 @@ export async function main(argv = process.argv.slice(2)) {
   const core = createCore({ env, adapters: ADAPTERS });
   const startedAt = new Date().toISOString();
   let port = null;
-  const api = createApi({ core, getPort: () => port, startedAt, days: args.days, version: VERSION, contentEnabled: !args.noContent, adapters: ADAPTERS, env,
+  const api = createApi({ core, getPort: () => port, startedAt, days: args.days, version: VERSION, contentEnabled: !args.noContent, adapters: ADAPTERS, env, configFile: path.join(rtDir, 'config.json'),
     publicDir: fileURLToPath(new URL('./public/', import.meta.url)) });
   const server = http.createServer((req, res) => { api.handle(req, res); });
 

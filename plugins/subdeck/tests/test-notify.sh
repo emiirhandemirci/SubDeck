@@ -17,9 +17,9 @@ hook() { # KIND [payload]; dry-run on the given OS (default windows)
 # defaults
 out="$(run show)"; rc=$?
 [ $rc -eq 0 ] && ok "show exits 0" || bad "show exit $rc"
-has "$out" '^enabled +true +default' "default enabled"
-has "$out" '^sound +true +default' "default sound"
-has "$out" '^events +waiting,done +default' "default events"
+has "$out" '^enabled +false +default' "default disabled"
+hasnt "$out" 'sound' "no sound row in show"
+has "$out" '^events +waiting,done,agent +default' "default events include agent"
 
 # subcommands preserve other keys; user file
 mkdir -p "$H/.subdeck"
@@ -29,7 +29,7 @@ has "$out" '^enabled +false +user' "off writes user"
 grep -q '"modelPolicy":{"worker":"haiku"}' "$H/.subdeck/config.json" && ok "modelPolicy preserved" || bad "modelPolicy lost"
 grep -q '"other":\[1,2,{"a":"b,c"}\]' "$H/.subdeck/config.json" && ok "other member preserved" || bad "other member lost"
 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$H/.subdeck/config.json" 2>/dev/null && ok "user JSON valid" || bad "user JSON invalid"
-out="$(run sound off)"; has "$out" '^sound +false +user' "sound off"
+out="$(run sound off)"; has "$out" 'no sound option' "sound subcommand reports removal"
 out="$(run events waiting,done,agent)"; has "$out" '^events +waiting,done,agent +user' "events set"
 has "$out" '^enabled +false +user' "enabled survives events write"
 out="$(run events bogus)"; has "$out" 'unknown event' "bad event rejected"
@@ -39,7 +39,7 @@ grep -q '"modelPolicy"' "$H/.subdeck/config.json" && ok "modelPolicy still there
 # project overrides user, per field
 out="$(run off --project)"
 has "$out" '^enabled +false +project' "project overrides enabled"
-has "$out" '^sound +false +user' "user value survives project override"
+has "$out" '^events +waiting,done,agent +user' "user value survives project override"
 [ -f "$P/.subdeck/config.json" ] && ok "project file written" || bad "project file missing"
 out="$(run events agent --project)"; has "$out" '^events +agent +project' "project events"
 out="$(run on --project)"; has "$out" '^enabled +true +project' "project on"
@@ -52,18 +52,18 @@ has "$out" 'not a valid JSON object' "invalid config refused"
 
 # hook behaviour (reset to a clean home)
 rm -rf "$P/.subdeck"; H="$(mktemp -d)"
+out="$(hook waiting)"; [ -z "$out" ] && ok "default off: nothing fires" || bad "fired while default off"
+HOME="$H" bash "$N" on "$P" >/dev/null
 out="$(hook waiting)"; has "$out" "^DRYRUN windows: powershell.exe .*my-proj: needs your input" "waiting fires (windows)"
-has "$out" "SystemSounds" "windows sound present"
+hasnt "$out" "SystemSounds|Media|Beep|Play" "windows: no sound code"
+has "$out" "Setting -ne 'Enabled'" "windows: toast checks notifier Setting"
+has "$out" "NotifyIcon" "windows: balloon fallback present"
 has "$out" "SubDeck" "title present"
 out="$(hook done)"; has "$out" "my-proj: finished" "done fires"
-out="$(hook agent '{"agent_type":"worker-sonnet"}')"; [ -z "$out" ] && ok "agent off by default" || bad "agent fired by default"
-HOME="$H" bash "$N" events waiting,done,agent "$P" >/dev/null
-out="$(hook agent '{"agent_type":"worker-sonnet"}')"; has "$out" "agent worker-sonnet finished" "agent fires when enabled"
+out="$(hook agent '{"agent_type":"worker-sonnet"}')"; has "$out" "agent worker-sonnet finished" "agent fires by default once enabled"
 HOME="$H" bash "$N" events done "$P" >/dev/null
 out="$(hook waiting)"; [ -z "$out" ] && ok "event filter blocks waiting" || bad "waiting not filtered"
 out="$(hook done)"; has "$out" "finished" "event filter allows done"
-HOME="$H" bash "$N" sound off "$P" >/dev/null
-out="$(hook done)"; hasnt "$out" "SystemSounds" "sound off drops sound"
 HOME="$H" bash "$N" off "$P" >/dev/null
 out="$(hook done)"; [ -z "$out" ] && ok "disabled fires nothing" || bad "disabled still fired"
 HOME="$H" bash "$N" on "$P" >/dev/null
@@ -72,11 +72,11 @@ out="$(printf '{}' | HOME="$H" SUBDECK_NOTIFY=0 SUBDECK_NOTIFY_DRYRUN=1 CLAUDE_P
 out="$(printf '{}' | HOME="$H" SUBDECK_NOTIFY=0 bash "$N" show "$P")"; has "$out" 'SUBDECK_NOTIFY=0' "show mentions env disable"
 
 # OS branches
-HOME="$H" bash "$N" sound on "$P" >/dev/null; HOME="$H" bash "$N" events waiting,done "$P" >/dev/null
+HOME="$H" bash "$N" events waiting,done "$P" >/dev/null
 out="$(TOS=macos hook done)"; has "$out" "^DRYRUN macos: osascript -e 'display notification \"my-proj: finished\" with title \"SubDeck\"'" "macos osascript"
-has "$out" "afplay" "macos sound"
+hasnt "$out" "afplay" "macos: no sound"
 out="$(TOS=linux hook waiting)"; has "$out" "^DRYRUN linux: notify-send 'SubDeck' 'my-proj: needs your input'" "linux notify-send"
-has "$out" "paplay" "linux sound"
+hasnt "$out" "paplay|canberra" "linux: no sound"
 
 # no content leak; unsafe characters stripped
 LEAK='{"message":"SECRETPROMPT rm -rf","transcript_path":"/x/SECRETTRANSCRIPT","cwd":"/x","last_assistant_message":"SECRETREPLY","agent_type":"a'"'"'b;$(x)"}'
@@ -86,6 +86,13 @@ for k in waiting done agent; do
   hasnt "$out" "SECRET" "no payload content in $k notification"
 done
 out="$(hook agent "$LEAK")"; has "$out" "agent abx finished" "agent type sanitised"
+
+# old sound key ignored and dropped on the next write
+S="$(mktemp -d)"; mkdir -p "$S/.subdeck"; echo '{"notify":{"enabled":true,"sound":true,"events":["done"]},"keep":1}' > "$S/.subdeck/config.json"
+out="$(HOME="$H" bash "$N" show "$S")"; hasnt "$out" 'sound' "old sound key not shown"
+HOME="$H" bash "$N" events done,agent "$S" --project >/dev/null
+grep -q sound "$S/.subdeck/config.json" && bad "sound key kept on write" || ok "sound key dropped on write"
+grep -q '"keep":1' "$S/.subdeck/config.json" && ok "other member kept" || bad "other member lost"
 
 # multi-line CRLF config is parsed
 C="$(mktemp -d)"; mkdir -p "$C/.subdeck"; printf '{
@@ -100,6 +107,29 @@ out="$(HOME="$H" bash "$N" show "$C")"; has "$out" '^events +agent +project' "CR
 # test subcommand
 out="$(HOME="$H" SUBDECK_NOTIFY_DRYRUN=1 SUBDECK_NOTIFY_OS=linux bash "$N" test "$P")"
 has "$out" "notify-send 'SubDeck' 'my-proj: test notification'" "test fires sample"
+
+# debug log: real (detached) run with a fake powershell.exe; method and exit code, no content
+LP="$(mktemp -d)/logproj"; mkdir -p "$LP"; LH="$(mktemp -d)"
+FP="$(mktemp -d)"; printf '#!/usr/bin/env bash
+echo toast
+exit 0
+' > "$FP/powershell.exe"; chmod +x "$FP/powershell.exe"
+HOME="$LH" bash "$N" on "$LP" >/dev/null
+printf '{"message":"SECRETPROMPT"}' | HOME="$LH" PATH="$FP:$PATH" SUBDECK_NOTIFY_OS=windows CLAUDE_PROJECT_DIR="$LP" bash "$N" hook done >/dev/null 2>&1
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do grep -q ' done toast 0$' "$LP/.subdeck/notify.log" 2>/dev/null && break; sleep 0.5; done
+lg="$(cat "$LP/.subdeck/notify.log" 2>/dev/null)"
+has "$lg" '^[0-9T:+-]+ done spawn -$' "log: spawn line"
+has "$lg" '^[0-9T:+-]+ done toast 0$' "log: result line with method and exit code"
+hasnt "$lg" 'SECRET|logproj' "log: no content or names"
+printf '#!/usr/bin/env bash
+exit 1
+' > "$FP/powershell.exe"
+HOME="$LH" PATH="$FP:$PATH" SUBDECK_NOTIFY_OS=windows bash "$N" test "$LP" >/dev/null 2>&1
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do grep -q ' test fail 1$' "$LP/.subdeck/notify.log" 2>/dev/null && break; sleep 0.5; done
+has "$(cat "$LP/.subdeck/notify.log")" ' test fail 1$' "log: failure recorded as fail with exit code"
+# dry-run writes no log
+rm -f "$LP/.subdeck/notify.log"; printf '{}' | HOME="$LH" SUBDECK_NOTIFY_DRYRUN=1 CLAUDE_PROJECT_DIR="$LP" bash "$N" hook done >/dev/null
+[ ! -f "$LP/.subdeck/notify.log" ] && ok "dry-run writes no log" || bad "dry-run wrote a log"
 
 # garbage stdin / no args
 for g in '' 'garbage' '{"unterminated' '{"cwd":'; do

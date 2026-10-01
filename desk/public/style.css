@@ -55,6 +55,11 @@ h1, h2, h3 { font-weight: 650; }
 .live.on::before { animation: pulse-live 2s infinite; }
 .live.waiting { color: var(--waiting); border-color: color-mix(in srgb, var(--waiting) 50%, var(--border)); background: color-mix(in srgb, var(--waiting) 14%, transparent); }
 .live[hidden] { display: none; }
+.bell { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 13px; font-weight: 600; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--raised); color: var(--idle); cursor: pointer; }
+.bell[hidden] { display: none; }
+.bell.on { color: var(--running); }
+.bell:hover { border-color: currentColor; }
+.bell:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .live.off { color: var(--idle); }
 .muted { color: var(--muted); }
 

@@ -3,6 +3,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
+import { readNotifyEnabled, writeNotifyEnabled } from './notify-settings.mjs';
 
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
@@ -14,7 +16,7 @@ const STATIC = {
 const CSP = "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:";
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
-export function createApi({ core, getPort, startedAt, days, version, publicDir, now = Date.now, maxStreams = 32, contentEnabled = true, adapters = [], env = null }) {
+export function createApi({ core, getPort, startedAt, days, version, publicDir, now = Date.now, maxStreams = 32, contentEnabled = true, adapters = [], env = null, configFile = null, token = crypto.randomBytes(24).toString('hex') }) {
   const streams = new Set();
   const iso = () => new Date(now()).toISOString();
 
@@ -60,10 +62,46 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     res.on('close', () => streams.delete(res));
   }
 
+  const TOKEN_HEADER = 'x-subdeck-token';
+  function tokenOk(h) {
+    if (typeof h !== 'string' || h.length !== token.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(h), Buffer.from(token));
+  }
+  function originOk(origin) {   // browsers send Origin on POST; if present it must be this server
+    if (origin === undefined) return true;
+    const p = getPort();
+    return origin === `http://127.0.0.1:${p}` || origin === `http://localhost:${p}`;
+  }
+  function readBody(req, limit = 1024) {
+    return new Promise((resolve, reject) => {
+      let n = 0; const chunks = [];
+      req.on('data', c => { n += c.length; if (n > limit) { reject(new Error('too large')); req.destroy(); } else chunks.push(c); });
+      req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      req.on('error', reject);
+    });
+  }
+
+  async function notifySettings(req, res) {
+    if (!configFile) return json(res, 404, { error: 'not found' });
+    if (req.method === 'GET') {
+      const r = readNotifyEnabled(configFile);
+      return r.ok ? json(res, 200, { enabled: r.enabled }) : json(res, 500, { error: r.error });
+    }
+    if (!originOk(req.headers.origin)) return json(res, 403, { error: 'forbidden origin' });
+    if (!tokenOk(req.headers[TOKEN_HEADER])) return json(res, 403, { error: 'missing or wrong token' });
+    if (!/^application\/json\s*(;|$)/i.test(String(req.headers['content-type'] || ''))) return json(res, 415, { error: 'content-type must be application/json' });
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid body' }); }
+    if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.enabled !== 'boolean' || Object.keys(body).length !== 1) return json(res, 400, { error: 'body must be {"enabled": true|false}' });
+    const w = writeNotifyEnabled(configFile, body.enabled);
+    return w.ok ? json(res, 200, { enabled: w.enabled }) : json(res, 500, { error: w.error });
+  }
+
   async function serveStatic(req, res, entry) {
     const [file, type] = entry;
     let data;
     try { data = await fs.readFile(path.join(publicDir, file)); } catch { return json(res, 404, { error: 'not found' }); }
+    if (file === 'index.html') data = Buffer.from(data.toString('utf8').replace('__SUBDECK_TOKEN__', token));
     res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store', 'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff' });
     res.end(req.method === 'HEAD' ? undefined : data);
   }
@@ -71,9 +109,10 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
   async function handle(req, res) {
     try {
       if (!hostOk(req.headers && req.headers.host)) return json(res, 403, { error: 'forbidden host' });
-      if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method not allowed' });
       const url = new URL(req.url, 'http://127.0.0.1');
       const p = url.pathname;
+      if (p === '/api/settings/notify' && (req.method === 'GET' || req.method === 'POST')) return await notifySettings(req, res);
+      if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method not allowed' });
       if (STATIC[p]) return await serveStatic(req, res, STATIC[p]);
       if (req.method === 'HEAD') return json(res, 405, { error: 'method not allowed' });
       const snap = core.snapshot();

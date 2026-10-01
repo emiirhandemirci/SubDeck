@@ -11,7 +11,7 @@ const S = {
   sources: [], server: null, home: null, projects: [], project: null, sessions: [], detail: null,
   selectedProject: store.get('project', null), selectedSession: null,
   filter: store.get('filter', ''), onlyActive: store.get('onlyActive', false),
-  lastHeartbeat: 0, lastRunning: null, lastWaiting: null,
+  notify: null, lastHeartbeat: 0, lastRunning: null, lastWaiting: null,
   content: null, contentFor: null, contentKey: null, open: { prompt: false, tools: false, report: true },
 };
 
@@ -62,6 +62,37 @@ function keepFocus(box, fn) {
   fn();
   if (id) { const n = box.querySelector(`[data-id="${CSS.escape(id)}"]`); if (n) { n.tabIndex = 0; n.focus({ preventScroll: true }); } }
 }
+
+// ---------- notifications switch (the only setting Desk can change) ----------
+const BELL_ON = 'M12 3a6 6 0 0 0-6 6v3.6L4.5 16h15L18 12.6V9a6 6 0 0 0-6-6zm0 18a2.5 2.5 0 0 0 2.4-2h-4.8A2.5 2.5 0 0 0 12 21z';
+function renderBell() {
+  const b = $('bell'); if (!b) return;
+  const on = S.notify === true;
+  b.hidden = S.notify === null;
+  b.setAttribute('aria-checked', String(on));
+  b.classList.toggle('on', on);
+  b.title = on ? 'Desktop notifications: on (click to turn off)' : 'Desktop notifications: off (click to turn on)';
+  b.replaceChildren();
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '16'); svg.setAttribute('height', '16'); svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', BELL_ON); path.setAttribute('fill', 'currentColor'); svg.appendChild(path);
+  if (!on) { const l = document.createElementNS('http://www.w3.org/2000/svg', 'path'); l.setAttribute('d', 'M4 4l16 16'); l.setAttribute('stroke', 'currentColor'); l.setAttribute('stroke-width', '2'); l.setAttribute('stroke-linecap', 'round'); svg.appendChild(l); }
+  b.append(svg, el('span', 'bell-label', on ? 'Notifications on' : 'Notifications off'));
+}
+async function loadNotify() { try { S.notify = (await getJSON('/api/settings/notify')).enabled === true; } catch { S.notify = null; } renderBell(); }
+async function toggleNotify() {
+  const meta = document.querySelector('meta[name="subdeck-token"]');
+  const want = !(S.notify === true);
+  try {
+    const r = await fetch('/api/settings/notify', { method: 'POST', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'X-SubDeck-Token': meta ? meta.content : '' }, body: JSON.stringify({ enabled: want }) });
+    if (!r.ok) throw new Error(String(r.status));
+    S.notify = (await r.json()).enabled === true;
+  } catch { /* keep the old state; re-read below */ }
+  await loadNotify();
+}
+if ($('bell')) $('bell').addEventListener('click', () => { toggleNotify(); });
 
 // ---------- header ----------
 function renderSources() {
@@ -401,4 +432,5 @@ function connect() {
 }
 
 renderMap();
+loadNotify();
 connect();

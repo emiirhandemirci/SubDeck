@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
+  <meta name="subdeck-token" content="__SUBDECK_TOKEN__">
   <title>SubDeck Desk</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
@@ -17,6 +18,7 @@
     </div>
     <div id="sources" class="sources" aria-label="Sources"></div>
     <div class="status">
+      <button id="bell" class="bell" type="button" role="switch" aria-checked="false" title="Desktop notifications: off" hidden></button>
       <span id="waitingCount" class="live waiting" hidden></span>
       <span id="live" class="live off" role="status">Connecting…</span>
       <span id="lastScan" class="muted"></span>

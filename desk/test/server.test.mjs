@@ -65,3 +65,23 @@ test("parseArgs: --no-content", () => {
   assert.equal(parseArgs(["--no-content"]).noContent, true);
   assert.equal(parseArgs(["--no-content"]).warnings.length, 0);
 });
+
+test('bell switch end to end: token from the page, writes ~/.subdeck/config.json, other keys kept', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-home-'));
+  fs.mkdirSync(path.join(home, '.subdeck'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.subdeck', 'config.json'), '{"modelPolicy":{"worker":"sonnet"}}');
+  const a = start(home);
+  const m = /:(\d+)\/$/.exec(await a.firstLine);
+  const base = `http://127.0.0.1:${m[1]}`;
+  try {
+    assert.deepEqual(await (await fetch(`${base}/api/settings/notify`)).json(), { enabled: false });
+    const html = await (await fetch(`${base}/`)).text();
+    const token = /name="subdeck-token" content="([0-9a-f]{48})"/.exec(html)[1];
+    const headers = { 'Content-Type': 'application/json' };
+    assert.equal((await fetch(`${base}/api/settings/notify`, { method: 'POST', headers, body: '{"enabled":true}' })).status, 403);
+    const r = await fetch(`${base}/api/settings/notify`, { method: 'POST', headers: { ...headers, 'X-SubDeck-Token': token }, body: '{"enabled":true}' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(await (await fetch(`${base}/api/settings/notify`)).json(), { enabled: true });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, '.subdeck', 'config.json'), 'utf8')), { modelPolicy: { worker: 'sonnet' }, notify: { enabled: true } });
+  } finally { a.child.kill('SIGTERM'); await a.exited; }
+});
