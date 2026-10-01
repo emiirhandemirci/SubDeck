@@ -8,7 +8,9 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL $1"; }
 eq() { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got: $(printf '%s' "$1" | cat -v))"; fi; }
 
 export TZ=UTC
-unset NO_COLOR SUBDECK_ASCII SUBDECK_STATUSLINE_CHAIN
+# independent of the caller: no inherited SUBDECK_* / project vars, and a fresh empty working directory
+for v in $(compgen -v | grep -E '^SUBDECK_') CLAUDE_PROJECT_DIR NO_COLOR COLUMNS; do unset "$v"; done
+SANDBOX="$(mktemp -d)"; cd "$SANDBOX" || exit 1
 export SUBDECK_STATUSLINE_TTL=0   # cache off unless a test enables it
 P="$(mktemp -d)"; T="$(mktemp -d)"
 mkdir -p "$P/.subdeck" "$T/s1/subagents"
@@ -101,6 +103,6 @@ perf() { # agents
 }
 case "$(ms_now)" in *N*|"") echo "info timing unavailable" ;; *) perf 20; perf 200 ;; esac
 
-rm -rf "$P" "$T" "$E" "$PF"
+cd / ; rm -rf "$P" "$T" "$E" "$PF" "$SANDBOX"
 echo "SUMMARY: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
