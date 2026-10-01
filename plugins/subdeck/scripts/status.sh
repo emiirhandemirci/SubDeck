@@ -105,8 +105,10 @@ fold() {
     for (i = 1; i <= n; i++) { id = order[i]; if (id in stop) done[++nd] = id }
     from = (all == 1 || nd <= 10) ? 1 : nd - 9
     # selected rows, then grouped by session (first-seen order), running first in each group
-    for (i = 1; i <= n; i++) { id = order[i]; if (!(id in stop)) { sel[++ns] = id; fa = failedat(id); if (fa) fail[id] = fa } }
-    for (j = from; j <= nd; j++) { sel[++ns] = done[j]; fa = failedat(done[j]); if (fa) fail[done[j]] = fa }
+    for (i = 1; i <= n; i++) { id = order[i]; if (!(id in stop)) sel[++ns] = id }
+    for (j = from; j <= nd; j++) sel[++ns] = done[j]
+    prefetch(sel, ns)
+    for (i = 1; i <= ns; i++) { id = sel[i]; fa = failedat(id); if (fa) fail[id] = fa }
     for (i = 1; i <= ns; i++) { id = sel[i]; k = sess(id); if (!(k in gseen)) { gseen[k] = 1; gorder[++ng] = k } }
     for (g = 1; g <= ng; g++)
       for (i = 1; i <= ns; i++) { id = sel[i]; if (sess(id) == gorder[g]) row(id, (id in fail) ? "failed" : ((id in stop) ? "done" : "running"), gorder[g]) }
@@ -141,27 +143,48 @@ fold() {
     while ((cmd | getline l) > 0) notif_line(l)
     close(cmd)
   }
-  # the agent transcript like Desk summarizeRecords: end of the latest run (finished / failed) and its run start
-  function endstate(f,   l, ts, pe, rs, es, ea) {
-    pe = 1; rs = 0; es = ""; ea = 0
-    while ((getline l < f) > 0) {
-      if (l ~ /"role":"user"/ && l !~ /"type":"tool_result"/) {
-        if (pe) { rs = epoch(field(l, "timestamp")); es = ""; pe = 0 }
-      } else if (l ~ /"role":"assistant"/) {
-        ts = epoch(field(l, "timestamp"))
-        if (l ~ /"isApiErrorMessage":true/) { es = ts ? "failed" : ""; ea = ts; pe = 1 }
-        else if (l ~ /"stop_reason":"end_turn"/) { es = ts ? "finished" : ""; ea = ts; pe = 1 }
-        else { es = ""; pe = 0 }
-      }
+  # the agent transcript like Desk summarizeRecords (end of the latest run + its run start), from the LAST 64 KB only:
+  # one tail call per batch of 100 files, so the cost does not grow with transcript size.
+  function eline(f, l,   ts) {
+    if (index(l, "\"role\":\"assistant\"")) {
+      if (index(l, "\"isApiErrorMessage\":true")) { ts = epoch(field(l, "timestamp")); EES[f] = ts ? "failed" : ""; EEA[f] = ts; EPE[f] = 1 }
+      else if (index(l, "\"stop_reason\":\"end_turn\"")) { ts = epoch(field(l, "timestamp")); EES[f] = ts ? "finished" : ""; EEA[f] = ts; EPE[f] = 1 }
+      else { EES[f] = ""; EPE[f] = 0 }
+    } else if (index(l, "\"role\":\"user\"") && !index(l, "\"type\":\"tool_result\"")) {
+      if (EPE[f]) { ERS[f] = epoch(field(l, "timestamp")); EES[f] = ""; EPE[f] = 0 }
     }
-    close(f)
-    ER[1] = rs; ER[2] = es; ER[3] = ea
+  }
+  function eflush(list, cnt,   cmd, i, l, cur, first, q) {
+    if (cnt == 0) return
+    cmd = "tail -c 65536"
+    for (i = 1; i <= cnt; i++) { q = list[i]; gsub(/\047/, "\047\\047\047", q); cmd = cmd " \047" q "\047"; EPE[list[i]] = 1; ERS[list[i]] = 0; EES[list[i]] = ""; EEA[list[i]] = 0 }
+    if (cnt == 1) cmd = cmd " /dev/null"
+    cmd = cmd " 2>/dev/null"
+    cur = ""
+    while ((cmd | getline l) > 0) {
+      if (substr(l, 1, 4) == "==> " && l ~ / <==\r?$/) { cur = substr(l, 5, length(l) - 8); sub(/\r$/, "", cur); first = 1; continue }
+      if (cur == "" || l == "") continue
+      if (first) { first = 0; if (substr(l, 1, 1) != "{") { EPE[cur] = 0; continue } }   # cut mid-record: not from the start
+      eline(cur, l)
+    }
+    close(cmd)
+  }
+  function prefetch(ids, cnt,   i, f, list, k) {
+    k = 0
+    for (i = 1; i <= cnt; i++) {
+      f = agentpath(ids[i])
+      if (f == "" || (f in EPE)) continue
+      EPE[f] = 1
+      list[++k] = f
+      if (k == 100) { eflush(list, k); k = 0; delete list }
+    }
+    eflush(list, k)
   }
   # epoch of the explicit failure of an unstopped agent, else 0
   function failedat(id,   p, f, rs, es, ea, ns, na) {
     f = agentpath(id)
     rs = 0; es = ""; ea = 0
-    if (f != "") { endstate(f); rs = ER[1]; es = ER[2]; ea = ER[3] }
+    if (f != "" && (f in ERS)) { rs = ERS[f]; es = EES[f]; ea = EEA[f] }
     p = parentof(id)
     if (p != "") loadparent(p)
     if ((id in nat) && !(rs && nat[id] < rs)) return (nstate[id] == "failed") ? nat[id] : 0
