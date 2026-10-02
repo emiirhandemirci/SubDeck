@@ -3,6 +3,7 @@
 import { projectKey, baseName, isInside } from './paths.mjs';
 import { deriveState, validateAdapterSession, makeSource, sessionIdOf, projectIdOf } from './model.mjs';
 
+const FAILURE_KINDS = ['test', 'permission', 'api', 'quota', 'timeout', 'tool', 'stuck', 'unknown'];
 const TIMEOUT_MSG = 'scan timed out after 5 s';
 
 function withTimeout(promise, ms) {
@@ -88,6 +89,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
           archived: !!s.archived, childCount: 0,
         };
         Object.defineProperty(out, '_parentNative', { value: s.parentNativeId ?? null, enumerable: false });
+        if (s.failure && FAILURE_KINDS.includes(s.failure.kind)) Object.defineProperty(out, '_failure', { value: { kind: s.failure.kind, detail: String(s.failure.detail || '').slice(0, 80) }, enumerable: false });
         newBases.set(id, s.stateBasis);
         nativeIndex.set(a.tool + '\u0000' + s.nativeId, out);
         sessions.push(out);
@@ -125,6 +127,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
     for (const s of sessions) {
       const { state, stateSource } = deriveState(bases.get(s.id), t);
       s.state = state; s.stateSource = stateSource;
+      if (state === 'failed' && s._failure) s.failure = { ...s._failure }; else delete s.failure;   // failure only on failed sessions
       if (state === 'waiting') { const b = bases.get(s.id); s.waitingSince = b.at || null; s.waitingKind = b.waitingKind || null; } else { delete s.waitingSince; delete s.waitingKind; }
       const c = Date.parse(s.runStartedAt || s.createdAt);   // latest run when known, else first start
       if (!Number.isFinite(c)) { s.durationMs = null; continue; }

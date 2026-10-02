@@ -5,6 +5,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { clip } from '../lib/model.mjs';
 import { projectKey, stateDirs } from '../lib/paths.mjs';
+import { classifyFailure } from './claude-failure.mjs';
 
 export const HEAD_BYTES = 65536;
 export const TAIL_BYTES = 65536;
@@ -101,6 +102,7 @@ export function summarizeRecords(records, { fromStart = true } = {}) {
       if (a) out.lastActivity = a;
     }
   }
+  out.failure = classifyFailure(records);   // only served when the session state is failed (core drops it otherwise)
   return out;
 }
 
@@ -551,7 +553,7 @@ async function scan(env, { cache }) {
         createdAt: earlier(s.tr.createdAt, hook && hook.start) || smt, updatedAt: smt, endedAt: (hook && hook.stop) || (done && done.at) || null,
         ...(runStartedAt ? { runStartedAt } : {}),
         tokens: { context: s.tr.tokens, total: null }, lastActivity: s.tr.lastActivity,
-        refs: { file: s.file, db: null, key: null }, stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt, notifTypes.get('a:' + s.agentId))) });
+        refs: { file: s.file, db: null, key: null }, failure: s.tr.failure, stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt, notifTypes.get('a:' + s.agentId))) });
     }
     for (const [agentId, hook] of hooks) {
       if (seen.has(agentId) || hook.sessionId !== g.uuid) continue;
