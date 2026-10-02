@@ -248,13 +248,12 @@ function renderProjectsInner() {
   box.scrollTop = scroll;
 }
 
-function stacked() { return typeof matchMedia === 'function' && matchMedia('(max-width: 900px)').matches; }
 async function selectProject(id, focus) {
   if (id !== S.selectedProject) { S.selectedSession = null; S.detail = null; renderDetail(); }
   S.selectedProject = id; store.set('project', id);
   renderProjects();
   if (focus) { const r = $('projects').querySelector(`[data-id="${CSS.escape(id)}"]`); if (r) r.focus(); }
-  if (stacked()) { const r = $('projects').querySelector(`[data-id="${CSS.escape(id)}"]`); if (r) r.scrollIntoView({ block: 'nearest' }); }
+  { const r = $('projects').querySelector(`[data-id="${CSS.escape(id)}"]`); if (r) r.scrollIntoView({ block: 'nearest' }); }
   await loadProject();
 }
 
@@ -327,7 +326,7 @@ async function loadProject() {
 async function selectSession(id, focus) {
   S.selectedSession = id;
   renderMap();
-  if (stacked()) { const r = $('map').querySelector(`[data-id="${CSS.escape(id)}"]`); if (r) r.scrollIntoView({ block: 'nearest' }); }
+  { const r = $('map').querySelector(`[data-id="${CSS.escape(id)}"]`); if (r) r.scrollIntoView({ block: 'nearest' }); }
   if (focus) { const r = $('map').querySelector(`[data-id="${CSS.escape(id)}"]`); if (r) r.focus(); }
   await loadDetail();
 }
@@ -545,8 +544,15 @@ function renderContent() {
   box.append(r);
 }
 
+let detailShown = null;
 function renderDetail() {
   const box = $('detail');
+  const keepTop = detailShown && S.detail && detailShown === S.detail.id ? box.scrollTop : 0;
+  detailShown = S.detail ? S.detail.id : null;
+  renderDetailInner(box);
+  if (keepTop) box.scrollTop = keepTop;
+}
+function renderDetailInner(box) {
   box.replaceChildren();
   const s = S.detail;
   if (!s) { box.append(emptyState('Select a session or agent', 'Details, tools and changed files show up here.')); return; }

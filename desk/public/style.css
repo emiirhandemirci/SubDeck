@@ -45,7 +45,7 @@
 :root[data-theme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column; min-height: 100vh; }
+body { margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
 h1, h2, h3 { font-weight: 650; }
 
 /* ---------- header ---------- */
@@ -92,8 +92,8 @@ button.live { font-family: inherit; cursor: pointer; }
 .muted { color: var(--muted); }
 
 /* ---------- layout ---------- */
-.panes { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(320px, 400px); gap: var(--s3); padding: var(--s3); flex: 1; min-height: 0; height: calc(100vh - 57px); }
-.pane { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: auto; padding: var(--s3) var(--s3) var(--s4); min-width: 0; box-shadow: var(--shadow); scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.panes { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(320px, 400px); gap: var(--s3); padding: var(--s3); flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+.pane { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding: var(--s3) 0 0; min-width: 0; box-shadow: var(--shadow); scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
 .pane h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 2px 4px var(--s3); }
 
 /* ---------- projects ---------- */
@@ -218,8 +218,11 @@ ol.calls code { border: 0; background: transparent; padding: 0; color: var(--tex
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 @media (max-width: 900px) {
-  .panes { grid-template-columns: 1fr; height: auto; }
-  .pane { max-height: none; }
+  body { height: auto; min-height: 100vh; overflow: visible; }
+  .panes { grid-template-columns: 1fr; grid-template-rows: none; flex: none; }
+  .pane { max-height: none; overflow: visible; padding-bottom: var(--s4); }
+  .pane > .pbody { overflow: visible; padding-bottom: 0; }
+  .settings { overflow: visible; flex: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -320,3 +323,14 @@ ul.commits code { color: var(--muted); }
 button.danger { background: var(--danger-bg); color: var(--danger-fg); border-color: transparent; font-weight: 600; }
 button.danger:hover { background: var(--danger-bg); filter: brightness(1.1); }
 @media (max-width: 700px) { .srow { grid-template-columns: 1fr; } .srow .tag { justify-self: start; } }
+
+/* ---------- independent pane scrolling (desktop) ---------- */
+.pane > h2, .pane > .controls, .pane > #notices { flex: none; margin-left: var(--s3); margin-right: var(--s3); }
+.pane > .pbody { flex: 1; min-height: 0; overflow: auto; padding: 0 var(--s3) var(--s4); scrollbar-gutter: stable; overscroll-behavior: contain; }
+.pbody, .settings, .waiting-panel, pre.prompt, ol.calls, .diff { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.pbody::-webkit-scrollbar, .settings::-webkit-scrollbar, .waiting-panel::-webkit-scrollbar, pre.prompt::-webkit-scrollbar, ol.calls::-webkit-scrollbar, .diff::-webkit-scrollbar { width: 10px; height: 10px; }
+.pbody::-webkit-scrollbar-thumb, .settings::-webkit-scrollbar-thumb, .waiting-panel::-webkit-scrollbar-thumb, pre.prompt::-webkit-scrollbar-thumb, ol.calls::-webkit-scrollbar-thumb, .diff::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
+.pbody::-webkit-scrollbar-track, .settings::-webkit-scrollbar-track { background: transparent; }
+.pbody:focus-visible, .settings:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.settings { scrollbar-gutter: stable; overscroll-behavior: contain; }
+@media (max-width: 900px) { .pane > .pbody { scrollbar-gutter: auto; } }

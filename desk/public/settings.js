@@ -179,6 +179,11 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
   }
 
   function render() {
+    const keepTop = $('settingsView').scrollTop;
+    renderInner();
+    $('settingsView').scrollTop = keepTop;
+  }
+  function renderInner() {
     const box = $('settingsBody'); if (!box) return;
     box.replaceChildren();
     // scope switch
