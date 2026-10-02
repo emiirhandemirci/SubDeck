@@ -39,7 +39,7 @@ function Get-Body([string[]]$Lines) {
   }
   return $out
 }
-function Esc([string]$s) { return $s.Replace('\', '\').Replace('"', '\"') }
+function Esc([string]$s) { return $s.Replace('\', '\\').Replace('"', '\"') }
 function Test-Owned([string]$Path) {
   if (-not (Test-Path $Path)) { return $true }
   return [bool](Select-String -Path $Path -Pattern $Mark -SimpleMatch -Quiet)

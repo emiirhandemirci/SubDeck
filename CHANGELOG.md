@@ -10,7 +10,6 @@ Copilot and Codex support. Built from the official docs; both still need a live 
 - **Installers:** `install.sh` / `install.ps1` take `--tool copilot|codex` (`-Tool` in PowerShell) and `--hooks`; `--uninstall` removes only what the installer wrote.
 - **Still needs a live test:** Copilot picking up the plugin's agents and firing its hooks, and the Codex plugin install, on a real machine.
 
-
 ## 0.5.0
 
 Breaking: the command surface shrinks from nine commands to three.

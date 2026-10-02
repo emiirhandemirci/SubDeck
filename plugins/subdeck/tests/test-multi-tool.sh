@@ -108,9 +108,16 @@ COPILOT_HOME="$PH" bash "$IS" --tool copilot --uninstall > /dev/null 2>&1
 bash "$IS" --tool nope > "$T/out" 2>&1; [ $? = 2 ] && ok "unknown tool exits 2" || bad "unknown tool rc"
 bash "$IS" --bogus > "$T/out" 2>&1; [ $? = 2 ] && ok "unknown flag exits 2" || bad "unknown flag rc"
 
+# ---------- installer string escaping: backslash and quote ----------
+eval "$(grep '^qesc()' "$ROOT/install.sh")"
+[ "$(qesc 'a\b"c')" = 'a\\b\"c' ] && ok "install.sh qesc doubles backslashes and escapes quotes" || bad "install.sh qesc: $(qesc 'a\b"c')"
+
 # ---------- install.ps1 -Tool (only where PowerShell exists) ----------
 PSX=""; command -v powershell >/dev/null 2>&1 && PSX=powershell
 if [ -n "$PSX" ]; then
+  ESCDEF="$(grep '^function Esc' "$ROOT/install.ps1" | tr -d '\r')"
+  got="$($PSX -NoProfile -Command "$ESCDEF; Esc 'a\b\"c'" 2>/dev/null | tr -d '\r')"
+  [ "$got" = 'a\\b\"c' ] && ok "install.ps1 Esc doubles backslashes and escapes quotes" || bad "install.ps1 Esc: $got"
   PSD="$T/pscodex"; PP="$(cygpath -w "$ROOT/install.ps1" 2>/dev/null || echo "$ROOT/install.ps1")"
   PSW="$(cygpath -w "$PSD" 2>/dev/null || echo "$PSD")"
   CODEX_HOME="$PSW" $PSX -NoProfile -ExecutionPolicy Bypass -File "$PP" -Tool codex > "$T/out" 2>&1

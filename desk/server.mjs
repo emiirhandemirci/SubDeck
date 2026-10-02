@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { resolveEnv } from './lib/paths.mjs';
+import { resolveEnv, resolveHome, sandboxVars } from './lib/paths.mjs';
 import { createCore } from './lib/core.mjs';
 import { createWatcher } from './lib/watcher.mjs';
 import { createApi } from './lib/api.mjs';
@@ -73,14 +73,14 @@ export async function main(argv = process.argv.slice(2)) {
   if (major < 20) { console.error(`SubDeck Desk needs Node >= 20 (22.13+ for Cursor); found ${process.versions.node}`); process.exit(1); }
   const args = parseArgs(argv);
   for (const w of args.warnings) console.error(w);
-  const home = os.homedir();
+  const home = resolveHome(process.env, process.platform, os.homedir());
   const rtDir = path.join(home, '.subdeck');
   const rtFile = path.join(rtDir, 'desk.json');
 
   const running = await existingInstance(rtFile);
   if (running) { console.log(`SubDeck Desk already running: http://127.0.0.1:${running.port}/`); process.exit(0); }
 
-  const env = resolveEnv(process.env, process.platform, home, { days: args.days });
+  const env = resolveEnv(sandboxVars(process.env, process.platform, home), process.platform, home, { days: args.days });
   const core = createCore({ env, adapters: ADAPTERS });
   const startedAt = new Date().toISOString();
   let port = null;

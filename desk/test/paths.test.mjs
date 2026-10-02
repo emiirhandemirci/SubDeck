@@ -58,3 +58,31 @@ test('resolveEnv exposes the environment map as vars', () => {
   assert.equal(e.vars.XDG_DATA_HOME, '/x/d');
   assert.deepEqual(resolveEnv({}, 'linux', '/home/u').vars, {});
 });
+
+import { resolveHome, sandboxVars } from '../lib/paths.mjs';
+
+test('resolveHome honours SUBDECK_HOME, then USERPROFILE (win32) or HOME, then the OS home', () => {
+  assert.equal(resolveHome({ SUBDECK_HOME: '/s', HOME: '/h' }, 'linux', '/os'), '/s');
+  assert.equal(resolveHome({ HOME: '/h' }, 'linux', '/os'), '/h');
+  assert.equal(resolveHome({}, 'linux', '/os'), '/os');
+  assert.equal(resolveHome({ USERPROFILE: 'C:\\u', HOME: '/h' }, 'win32', 'C:\\os'), 'C:\\u');
+  assert.equal(resolveHome({ HOME: '/h' }, 'win32', 'C:\\os'), '/h');
+  assert.equal(resolveHome({ SUBDECK_HOME: 'C:\\s', USERPROFILE: 'C:\\u' }, 'win32', 'C:\\os'), 'C:\\s');
+});
+
+test('with SUBDECK_HOME every derived data root stays inside it, ambient real-profile vars ignored', () => {
+  for (const [platform, home] of [['win32', 'C:\\sandbox'], ['linux', '/sandbox'], ['darwin', '/sandbox']]) {
+    const ambient = { SUBDECK_HOME: home, APPDATA: 'C:\\Real\\AppData\\Roaming', LOCALAPPDATA: 'C:\\Real\\AppData\\Local', XDG_CONFIG_HOME: '/real/.config', XDG_DATA_HOME: '/real/.local/share', HOME: '/real', USERPROFILE: 'C:\\Real' };
+    const vars = sandboxVars(ambient, platform, home);
+    const e = resolveEnv(vars, platform, home);
+    const inside = p => toSlash(p).startsWith(toSlash(home) + '/');
+    assert.ok(inside(e.claudeProjectsDir), e.claudeProjectsDir);
+    assert.ok(e.cursorUserDir === null || inside(e.cursorUserDir), e.cursorUserDir);
+    assert.ok(!e.appData || inside(e.appData), e.appData);
+    assert.equal(vars.XDG_CONFIG_HOME, undefined);
+    assert.equal(vars.XDG_DATA_HOME, undefined);
+    assert.equal(vars.LOCALAPPDATA, undefined);
+  }
+  const plain = { HOME: '/h', XDG_DATA_HOME: '/x' };
+  assert.equal(sandboxVars(plain, 'linux', '/h'), plain); // no override: untouched
+});

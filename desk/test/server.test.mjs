@@ -85,3 +85,24 @@ test('bell switch end to end: token from the page, writes ~/.subdeck/config.json
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, '.subdeck', 'config.json'), 'utf8')), { modelPolicy: { worker: 'sonnet' }, notify: { enabled: true } });
   } finally { a.child.kill('SIGTERM'); await a.exited; }
 });
+
+test('SUBDECK_HOME wins over HOME/USERPROFILE and ambient profile variables', async () => {
+  const decoy = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-decoy-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-sandbox-'));
+  const env = { ...process.env, HOME: decoy, USERPROFILE: decoy, APPDATA: path.join(decoy, 'AppData'), XDG_CONFIG_HOME: path.join(decoy, 'cfg'), XDG_DATA_HOME: path.join(decoy, 'data'), SUBDECK_HOME: home, SUBDECK_DISABLE: 'cursor' };
+  delete env.SUBDECK_CLAUDE_PROJECTS_DIR;
+  const child = spawn(process.execPath, [SERVER, '--port', '0'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const exited = new Promise(r => child.on('exit', code => r(code)));
+  const line = await new Promise((resolve, reject) => {
+    let buf = '';
+    child.stdout.on('data', d => { buf += d; const i = buf.indexOf('\n'); if (i >= 0) resolve(buf.slice(0, i)); });
+    setTimeout(() => reject(new Error('no output within 10 s')), 10000);
+  });
+  const port = Number(/:(\d+)\//.exec(line)[1]);
+  const j = await (await fetch(`http://127.0.0.1:${port}/api/sources`)).json();
+  assert.equal(j.home, home);
+  assert.ok(fs.existsSync(path.join(home, '.subdeck', 'desk.json')));
+  assert.deepEqual(fs.readdirSync(decoy), []);   // nothing written under the ambient home
+  child.kill('SIGTERM');
+  await exited;
+});

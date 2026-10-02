@@ -132,7 +132,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       if (STATIC[p]) return await serveStatic(req, res, STATIC[p]);
       if (req.method === 'HEAD') return json(res, 405, { error: 'method not allowed' });
       const snap = core.snapshot();
-      if (p === '/api/sources') return json(res, 200, { generatedAt: iso(), server: { version, startedAt, days }, home: os.homedir(), sources: snap.sources });
+      if (p === '/api/sources') return json(res, 200, { generatedAt: iso(), server: { version, startedAt, days }, home: (env && env.home) || os.homedir(), sources: snap.sources });
       if (p === '/api/projects') return json(res, 200, { generatedAt: iso(), projects: snap.projects });
       if (p === '/api/stream') return openStream(res);
       let m = /^\/api\/projects\/([A-Za-z0-9._-]+)$/.exec(p);

@@ -33,7 +33,7 @@ AGENT_DIR="$HERE/plugins/subdeck/agents"
 # fm FILE KEY: value of a frontmatter key (first block only)
 fm() { awk -v k="$2" '/^---\r?$/{c++; next} c==1 { sub(/\r$/,""); i=index($0,":"); if (i>0 && substr($0,1,i-1)==k) { v=substr($0,i+1); sub(/^[ \t]+/,"",v); print v; exit } }' "$1"; }
 body() { awk 'c>=2{sub(/\r$/,""); print} /^---\r?$/{c++}' "$1"; }
-qesc() { local s="${1//\/\\}"; printf '%s' "${s//\"/\\\"}"; }
+qesc() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }
 # owned FILE: true when absent or carrying the marker
 owned() { [ ! -e "$1" ] || grep -q "$MARK" "$1" 2>/dev/null; }
 

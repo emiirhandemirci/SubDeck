@@ -30,6 +30,36 @@ export function fileUriToPath(uri, platform) {
   try { return fileURLToPath(uri, { windows: platform === 'win32' }); } catch { return null; }
 }
 
+/**
+ * One override point for the data root. Precedence: SUBDECK_HOME, then USERPROFILE (Windows) or HOME,
+ * then the OS answer. Node's os.homedir() on Windows ignores HOME, so it is only the last resort.
+ */
+export function resolveHome(vars, platform, osHome) {
+  const v = vars || {};
+  const pick = platform === 'win32' ? [v.SUBDECK_HOME, v.USERPROFILE, v.HOME] : [v.SUBDECK_HOME, v.HOME];
+  for (const x of pick) if (typeof x === 'string' && x) return x;
+  return osHome;
+}
+
+/**
+ * With SUBDECK_HOME set, ambient per-user variables that point at the real profile (APPDATA, LOCALAPPDATA,
+ * XDG_*) are replaced or dropped so every derived path stays inside the override. Explicit SUBDECK_* and
+ * per-tool variables (CODEX_HOME, ...) are kept as given. Without SUBDECK_HOME the map is returned unchanged.
+ */
+export function sandboxVars(vars, platform, home) {
+  if (!vars || !vars.SUBDECK_HOME) return vars;
+  const out = { ...vars };
+  for (const k of Object.keys(out)) if (k.startsWith('XDG_')) delete out[k];
+  delete out.LOCALAPPDATA;
+  delete out.APPDATA;
+  if (platform === 'win32') {
+    out.APPDATA = path.win32.join(home, 'AppData', 'Roaming');
+    out.USERPROFILE = home;
+  }
+  out.HOME = home;
+  return out;
+}
+
 export function resolveEnv(vars, platform, home, opts = {}) {
   const join = platform === 'win32' ? path.win32.join : path.posix.join;
   let cursorUserDir = null;

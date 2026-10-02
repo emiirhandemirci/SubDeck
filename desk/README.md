@@ -30,6 +30,8 @@ Tools that are not installed are hidden in the UI header (listed under a collaps
 
 Tool colours: Claude orange, Cursor blue, Codex teal, Copilot violet, Gemini pink, Cline/Roo yellow, OpenCode green.
 
+Home override: `SUBDECK_HOME` sets the single data root (default: `USERPROFILE` on Windows, `HOME` elsewhere, then the OS home). Desk reads `~/.claude`, `~/.subdeck` and every other per-user path below it, and with `SUBDECK_HOME` set it ignores the ambient `APPDATA`, `LOCALAPPDATA` and `XDG_*` variables so nothing outside it is touched. Use it for tests and sandboxes.
+
 Environment overrides: `SUBDECK_CLAUDE_PROJECTS_DIR`, `SUBDECK_CURSOR_USER_DIR`, `SUBDECK_GEMINI_DIR`, `SUBDECK_DISABLE` (comma-separated tool names, e.g. `codex,gemini`), plus the tools' own variables `CODEX_HOME`, `GEMINI_CLI_HOME`, `COPILOT_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `APPDATA`.
 
 ## Privacy
