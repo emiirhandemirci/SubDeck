@@ -287,7 +287,7 @@ ul.commits code { color: var(--muted); }
 .settings-head h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 auto 0 4px; }
 .sgroup { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--s2) var(--s3) var(--s3); margin-bottom: var(--s3); box-shadow: var(--shadow); }
 .sgroup h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: var(--s2) 0; }
-.srow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 280px) 96px; gap: var(--s3); align-items: center; padding: 8px 0; border-top: 1px solid var(--border); }
+.srow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 280px) max-content; gap: var(--s3); align-items: center; padding: 8px 0; border-top: 1px solid var(--border); }
 .sgroup h3 + .srow { border-top: 0; }
 .slabel { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .skey { font-family: var(--mono); font-size: 13px; font-weight: 600; }
@@ -296,7 +296,7 @@ ul.commits code { color: var(--muted); }
 .srow select, .srow input[type=number], .srow input[type=text] { width: 100%; padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: var(--r-sm); background: var(--bg); color: var(--text); font: inherit; }
 .srow select:hover, .srow input:hover { border-color: var(--muted); }
 .srow :disabled { opacity: .6; }
-.srow .tag { justify-self: end; white-space: nowrap; }
+.srow .tag { justify-self: end; white-space: nowrap; min-width: max-content; }
 .tag.src-user { color: var(--accent); }
 .tag.src-project { color: var(--idle); }
 .switch { display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px 3px 4px; border-radius: 999px; justify-self: start; }
