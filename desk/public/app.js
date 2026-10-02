@@ -173,6 +173,7 @@ async function loadNotify() {
   try { const d = await getJSON('/api/settings/notify'); S.notify = d.enabled === true; S.notifyOverrides = Array.isArray(d.overriddenBy) ? d.overriddenBy : []; }
   catch { S.notify = null; S.notifyOverrides = []; }
   renderBell();
+  if (settingsUi) settingsUi.setNotify(S.notify);
 }
 async function toggleNotify() {
   const meta = document.querySelector('meta[name="subdeck-token"]');
@@ -182,6 +183,7 @@ async function toggleNotify() {
       headers: { 'Content-Type': 'application/json', 'X-SubDeck-Token': meta ? meta.content : '' }, body: JSON.stringify({ enabled: want }) });
     if (!r.ok) throw new Error(String(r.status));
     S.notify = (await r.json()).enabled === true;
+    renderBell(); if (settingsUi) settingsUi.setNotify(S.notify);
   } catch { /* keep the old state; re-read below */ }
   await loadNotify();
 }
@@ -758,6 +760,7 @@ function connect() {
 
 settingsUi = initSettings({ $, el, store, getJSON,
   getProject: () => (S.project ? { id: S.project.id, name: S.project.name } : null),
+  onNotify: on => { S.notify = on; renderBell(); },
   onWindow: n => { S.ctxWindow = n; renderMap(); if (S.detail) renderDetail(); } });
 renderMap();
 loadNotify();

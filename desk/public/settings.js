@@ -52,7 +52,7 @@ function themeIcon(id) {
   return svg;
 }
 
-export function initSettings({ $, el, store, getJSON, token, getProject, onWindow }) {
+export function initSettings({ $, el, store, getJSON, token, getProject, onWindow, onNotify }) {
   const st = { theme: store.get('theme', 'system'), scope: 'user', data: null, error: null, busy: false, open: false, msg: null, gen: 0 };
   if (!THEMES.some(t => t[0] === st.theme)) st.theme = 'system';
 
@@ -106,6 +106,7 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
         st.msg = { bad: false, text: `Saved ${item.key}` };
         item.value = item.type === 'list' ? listValue(next) : item.type === 'int' ? Number(next) : next;   // optimistic; the silent reload below confirms it
         item.source = st.scope;
+        if (item.key === 'notify' && st.scope === 'user' && onNotify) onNotify(isOn(next));   // keep the header bell in step
       }
     } catch { st.msg = { bad: true, text: 'Save failed: Desk is unreachable' }; }
     st.busy = false;
@@ -147,7 +148,8 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
       const on = isOn(item.value);
       const b = el('button', 'switch'); b.type = 'button'; b.id = id; b.disabled = dis;
       b.setAttribute('role', 'switch'); b.setAttribute('aria-checked', String(on));
-      b.append(el('span', 'knob'), el('span', 'sw-label', on ? 'On' : 'Off'));
+      b.setAttribute('aria-label', item.key); b.title = `${item.key}: ${on ? 'on' : 'off'}`;
+      b.append(el('span', 'knob'));
       b.addEventListener('click', () => save(item, on ? 'off' : 'on'));
       return { node: b, id };
     }
@@ -158,21 +160,41 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
       i.addEventListener('keydown', e => { if (e.key === 'Enter') commit(); });
       return { node: i, id };
     }
-    if (item.type === 'list') {
-      const wrap = el('div', 'chips'); wrap.id = id;
+    if (item.type === 'list' && Array.isArray(item.options) && item.options.length) {
+      // known options: toggle chips, highlighted when selected; the contract needs at least one selected
+      const wrap = el('div', 'chips opts'); wrap.id = id; wrap.setAttribute('role', 'group'); wrap.setAttribute('aria-label', item.key);
       const cur = listValue(item.value);
-      for (const v of cur) {
-        const c = el('span', 'chip-item'); c.append(el('span', 'mono', v));
-        const x = el('button', 'chip-x', '×'); x.type = 'button'; x.disabled = dis;
-        x.setAttribute('aria-label', `Remove ${v}`);
-        x.addEventListener('click', () => save(item, cur.filter(y => y !== v).join(',')));
-        c.append(x); wrap.append(c);
+      for (const o of item.options) {
+        const on = cur.includes(o);
+        const c = el('button', 'opt' + (on ? ' on' : ''), o); c.type = 'button'; c.disabled = dis; c.setAttribute('aria-pressed', String(on));
+        c.addEventListener('click', () => {
+          const next = on ? cur.filter(y => y !== o) : item.options.filter(y => y === o || cur.includes(y));
+          if (!next.length) { st.msg = { bad: true, text: `${item.key} needs at least one option selected` }; render(); return; }
+          save(item, next.join(','));
+        });
+        wrap.append(c);
       }
+      return { node: wrap, id, wide: true };
+    }
+    if (item.type === 'list') {
+      const wrap = el('div', 'lwrap'); wrap.id = id;
+      const cur = listValue(item.value);
       const add = el('input', 'chip-add'); add.type = 'text'; add.placeholder = 'Add…'; add.disabled = dis; add.setAttribute('aria-label', `Add to ${item.key}`);
       const commit = () => { const v = add.value.trim().replace(/,/g, ''); if (v && !cur.includes(v)) save(item, [...cur, v].join(',')); };
       add.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commit(); } });
       wrap.append(add);
-      return { node: wrap, id };
+      if (cur.length) {
+        const chips = el('div', 'chips');
+        for (const v of cur) {
+          const c = el('span', 'chip-item'); c.append(el('span', 'mono', v));
+          const x = el('button', 'chip-x', '×'); x.type = 'button'; x.disabled = dis;
+          x.setAttribute('aria-label', `Remove ${v}`);
+          x.addEventListener('click', () => save(item, cur.filter(y => y !== v).join(',')));
+          c.append(x); chips.append(c);
+        }
+        wrap.append(chips);
+      }
+      return { node: wrap, id, wide: true };
     }
     const t = el('input'); t.type = 'text'; t.id = id; t.disabled = dis; t.value = String(item.value ?? '');
     t.addEventListener('change', () => save(item, t.value));
@@ -180,15 +202,16 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
   }
 
   function row(item) {
-    const r = el('div', 'srow');
-    const { node, id } = control(item);
+    const { node, id, wide } = control(item);
+    const r = el('div', wide ? 'srow wide' : 'srow');
     const lab = el('label', 'slabel'); lab.htmlFor = id;
     lab.append(el('span', 'skey', item.key));
     if (item.description) lab.append(el('span', 'sdesc muted', item.description));
     if (isReadOnly(item)) lab.append(el('span', 'sdesc muted', 'Read-only here. Change it from Claude Code with /subdeck:settings.'));
-    r.append(lab, node);
+    r.append(lab);
     if (item.source && item.source !== 'default') r.append(el('span', `tag src-${item.source}`, item.source));
     else r.append(el('span', 'tag', 'default'));
+    r.append(node);
     return r;
   }
 
@@ -250,5 +273,14 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
     if (!st.open) return;
     if (st.scope === 'project') load(); else render();
   }
-  return { show, projectChanged, state: st };
+  /** The header bell changed (or was re-read): mirror it into the notify row without a reload. */
+  function setNotify(enabled) {
+    if (enabled === null || enabled === undefined || !st.data) return;
+    if (st.scope !== 'user') { if (st.open && !st.busy) load(true); return; }
+    const it = st.data.settings.find(x => x.key === 'notify');
+    if (!it || isOn(it.value) === enabled) return;
+    it.value = enabled ? 'on' : 'off'; it.source = 'user';
+    if (st.open) render();
+  }
+  return { show, projectChanged, setNotify, state: st };
 }
