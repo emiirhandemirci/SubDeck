@@ -42,6 +42,16 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     return { generatedAt: iso(), project, sessions };
   }
 
+  // Everything blocked on the user, across projects and tools. Titles and metadata only, never prompt content.
+  function waitingList(snap) {
+    const items = snap.sessions.filter(s => s.state === 'waiting').map(s => {
+      const p = snap.projects.find(x => x.id === s.projectId);
+      return { id: s.id, projectId: s.projectId, projectName: p ? p.name : null, projectPath: p ? p.path : null, tool: s.tool, title: s.title,
+        agentType: s.agentType ?? null, isAgent: !!s.parentId, stateSource: s.stateSource, waitingKind: s.waitingKind ?? null, since: s.waitingSince ?? s.updatedAt ?? null };
+    }).sort((a, b) => String(a.since).localeCompare(String(b.since)));
+    return { generatedAt: iso(), items };
+  }
+
   function sessionDetail(snap, id) {
     const s = snap.sessions.find(x => x.id === id);
     if (!s) return null;
@@ -133,6 +143,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       if (req.method === 'HEAD') return json(res, 405, { error: 'method not allowed' });
       const snap = core.snapshot();
       if (p === '/api/sources') return json(res, 200, { generatedAt: iso(), server: { version, startedAt, days }, home: (env && env.home) || os.homedir(), sources: snap.sources });
+      if (p === '/api/waiting') return json(res, 200, waitingList(snap));
       if (p === '/api/projects') return json(res, 200, { generatedAt: iso(), projects: snap.projects });
       if (p === '/api/stream') return openStream(res);
       let m = /^\/api\/projects\/([A-Za-z0-9._-]+)$/.exec(p);

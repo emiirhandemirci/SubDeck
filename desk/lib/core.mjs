@@ -125,6 +125,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
     for (const s of sessions) {
       const { state, stateSource } = deriveState(bases.get(s.id), t);
       s.state = state; s.stateSource = stateSource;
+      if (state === 'waiting') { const b = bases.get(s.id); s.waitingSince = b.at || null; s.waitingKind = b.waitingKind || null; } else { delete s.waitingSince; delete s.waitingKind; }
       const c = Date.parse(s.runStartedAt || s.createdAt);   // latest run when known, else first start
       if (!Number.isFinite(c)) { s.durationMs = null; continue; }
       const endIso = (state === 'finished' || state === 'failed') ? (s.endedAt || s.updatedAt) : null;

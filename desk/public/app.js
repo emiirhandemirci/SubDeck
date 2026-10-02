@@ -27,8 +27,75 @@ function updateWaiting() {
   const b = $('waitingCount');
   b.hidden = total <= 0;
   b.textContent = total > 0 ? `${total} waiting` : '';
-  b.title = total > 0 ? 'Sessions or agents blocked on your input (permission, question or plan approval)' : '';
+  if (total <= 0) closeWaiting(false); else if (wp.open) loadWaitingList();
+  b.title = total > 0 ? 'Click to list sessions or agents blocked on your input (permission, question or plan approval)' : '';
+  b.setAttribute('aria-label', total > 0 ? `${total} waiting for you, open list` : 'Waiting');
 }
+// ---------- waiting list (the header chip opens a compact list of everything blocked on the user) ----------
+const WAIT_KIND = { permission: 'Permission prompt', question: 'Question', plan: 'Plan approval' };
+function waitKindLabel(it) {
+  if (WAIT_KIND[it.waitingKind]) return WAIT_KIND[it.waitingKind];
+  if (it.stateSource === 'hook') return 'Permission prompt';
+  if (it.stateSource === 'field') return 'Question or plan approval';
+  return 'Unknown';
+}
+const wp = { open: false, items: [] };
+function waitingButtons() { return [...$('waitingPanel').querySelectorAll('.wp-item')]; }
+function renderWaitingPanel() {
+  const box = $('waitingPanel');
+  const keep = document.activeElement && box.contains(document.activeElement) ? document.activeElement.dataset.id : null;
+  box.replaceChildren();
+  if (!wp.items.length) { box.append(el('p', 'wp-empty', 'Nothing is waiting for you.')); return; }
+  const now = Date.now();
+  for (const it of wp.items) {
+    const b = el('button', 'wp-item'); b.type = 'button'; b.dataset.id = it.id;
+    const t0 = it.since ? Date.parse(it.since) : NaN;
+    const wait = Number.isFinite(t0) ? formatDuration(Math.max(0, now - t0)) : '';
+    const proj = it.projectName || 'unknown project';
+    b.append(toolBadge(it.tool), el('span', 'wp-title', T(it.title)), el('span', 'wp-for', waitKindLabel(it)));
+    const sub = el('span', 'wp-sub', `${proj}${it.isAgent ? ' · agent' + (it.agentType ? ' ' + it.agentType : '') : ''}${wait ? ' · waiting ' + wait : ''}`);
+    if (it.projectPath) sub.title = tildify(it.projectPath, S.home);
+    b.append(sub);
+    b.setAttribute('aria-label', `${T(it.title)}, ${proj}, ${waitKindLabel(it)}${wait ? ', waiting ' + wait : ''}`);
+    b.addEventListener('click', () => { closeWaiting(false); openWaitingItem(it); });
+    box.append(b);
+  }
+  if (keep) { const n = box.querySelector(`[data-id="${CSS.escape(keep)}"]`); if (n) n.focus({ preventScroll: true }); }
+}
+async function loadWaitingList() {
+  try { wp.items = (await getJSON('/api/waiting')).items; } catch { wp.items = []; }
+  if (wp.open) renderWaitingPanel();
+}
+async function openWaitingItem(it) {
+  await selectProject(it.projectId, false);
+  await selectSession(it.id, true);
+}
+function closeWaiting(focusChip) {
+  if (!wp.open) return;
+  wp.open = false;
+  $('waitingPanel').hidden = true;
+  $('waitingCount').setAttribute('aria-expanded', 'false');
+  if (focusChip && !$('waitingCount').hidden) $('waitingCount').focus();
+}
+async function openWaiting() {
+  wp.open = true;
+  $('waitingPanel').hidden = false;
+  $('waitingCount').setAttribute('aria-expanded', 'true');
+  await loadWaitingList();
+  renderWaitingPanel();
+  const first = waitingButtons()[0]; if (first) first.focus();
+}
+$('waitingCount').addEventListener('click', () => { if (wp.open) closeWaiting(true); else openWaiting(); });
+$('waitingPanel').addEventListener('keydown', ev => {
+  if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+  const items = waitingButtons(); const i = items.indexOf(document.activeElement);
+  if (i < 0) return;
+  ev.preventDefault();
+  items[ev.key === 'ArrowDown' ? Math.min(items.length - 1, i + 1) : Math.max(0, i - 1)].focus();
+});
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && wp.open) { ev.preventDefault(); closeWaiting(true); } });
+document.addEventListener('click', ev => { if (wp.open && !ev.target.closest('#waitingPanel, #waitingCount')) closeWaiting(false); });
+
 function toolBadge(tool) {
   const b = el('span', `badge tool tool-${tool}`, TOOL_BADGE[tool] || tool);
   const src = S.sources.find(x => x.id === tool);
