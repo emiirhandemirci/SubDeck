@@ -48,6 +48,8 @@ Every task contains exactly these parts:
 Task: <what to do, one clear job>
 Writable paths: <the only paths the agent may write>
 Read-only: <everything else; name key areas>
+Produces: <interfaces this task defines or changes, or "none">
+Consumes: <interfaces it relies on and must NOT change, or "none">
 Done when: <verifiable criterion, e.g. command exits 0>
 Report: standard 8-line format (section 7)
 Rules: the agent's own rules apply (pathspec commit, no attribution line, no push)
@@ -65,6 +67,11 @@ Rules: the agent's own rules apply (pathspec commit, no attribution line, no pus
 - Before launching a batch, list each agent's writable paths and check they are disjoint.
 - Everyone works in the current branch, in the main working tree. Avoid worktree isolation; if it is used, verify the base commit first (it can branch from the wrong base).
 - Shared live resource (running app, port, device): name a lock file in the task; agents acquire before use and release after. One agent at a time.
+- **Contract first.** When parallel tasks share an interface (API, schema, shared types, config format, CLI flags), first have ONE agent define and freeze it (commit it). Every other brief names it under `Consumes` and must not change it. Disjoint write paths are not enough: tasks coupled through an interface drift apart even when no file is shared.
+- `Produces` / `Consumes` (section 3): an agent that finds it must change a consumed interface does not change it; it ends with `Stop: blocked` and reports what it needs, and you decide.
+- **Integration verification after every parallel wave:** run the full build, all tests and e2e (if present) on the combined result, via a verifier or worker. Per-task checks are not enough.
+- If the project has contract files (schemas, API definitions, shared types), suggest protecting them: `/subdeck:settings set protect=<glob>`.
+- Non-Claude backends: set `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the model's real window and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` for the compaction point (the latter applies to sub-agents too; Claude Code env-vars docs).
 
 ## 5. Git rules (tell every agent)
 
@@ -149,6 +156,8 @@ When the user decides something (name, approach, tradeoff, rejected option), wri
 | Agent asked to return full files/logs in chat | 8-line report, detail to a file |
 | Endless retries, empty agents | Stop after 3, report, ask |
 | Worktree on wrong base | Main tree, current branch |
+| A sub-agent acts as a second manager (loads this skill, launches agents) | Agents block the Agent tool (`disallowedTools: Agent`) and are told they are not the manager; never ask an agent to delegate |
+| Parallel agents coupled through a shared interface | Contract first; `Produces` / `Consumes`; integration verification after the wave (section 4) |
 
 ## 12. Related commands
 

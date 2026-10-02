@@ -29,7 +29,7 @@ for n in verifier verifier-current; do
   if grep -q '^`Fingerprint: HEAD=' "$A/$n.md"; then ok "$n reports a fingerprint"; else bad "$n lacks fingerprint"; fi
 done
 O="$HERE/../skills/orchestrator/SKILL.md"
-for pat in 'approval of X is not approval of Y' 'Report freshness' 'Stop reason' 'negative control'; do
+for pat in 'Contract first' 'Produces: ' 'Consumes: ' 'Integration verification' 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' 'approval of X is not approval of Y' 'Report freshness' 'Stop reason' 'negative control'; do
   if grep -q "$pat" "$O"; then ok "orchestrator mentions: $pat"; else bad "orchestrator lacks: $pat"; fi
 done
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" -eq 0 ]
