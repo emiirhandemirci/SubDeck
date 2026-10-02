@@ -12,8 +12,9 @@
 #   guard.sh [cli] reset [--project]                 remove the "guard" member of that config file
 #   guard.sh [cli] protect <glob>[,<glob>] [--project]   add to guard.protectedPaths (unprotect <glob>[,..] removes)
 #   A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
-# Config: key "guard" in ~/.subdeck/config.json (user) and <project>/.subdeck/config.json (project wins),
-#   e.g. {"guard":{"enabled":true,"rules":{"push":"off","attribution":"deny"}}}.
+# Config: key "guard" in ~/.subdeck/config.json (user) and the project config (project wins), which is
+#   ~/.subdeck/projects/<key>/config.json (lib-paths.sh); a legacy <project>/.subdeck/config.json is still read
+#   below it and never written. E.g. {"guard":{"enabled":true,"rules":{"push":"off","attribution":"deny"}}}.
 #   Other top-level members are re-emitted verbatim; a file that is not a JSON object is left untouched.
 # Rules (default mode): git-add-all (deny), force-push (deny), push (ask), history-rewrite (ask),
 #   rm-rf-danger (deny), secret-files (ask), attribution (off), protected-paths (ask; active only when
@@ -563,9 +564,10 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
   if (fp == "") fp = V["/tool_input/path"]
   PROJ = ENVIRON["CLAUDE_PROJECT_DIR"]; if (PROJ == "") PROJ = cwd
   if (uf == "") uf = ENVIRON["HOME"] "/.subdeck/config.json"
+  if (pf == "") pf = ENVIRON["SD_GUARD_PF"]; if (lf == "") lf = ENVIRON["SD_GUARD_LF"]
   if (pf == "" && PROJ != "") pf = PROJ "/.subdeck/config.json"
   WIN = (ENVIRON["OS"] == "Windows_NT" || cwd ~ /^[A-Za-z]:/ || PROJ ~ /^[A-Za-z]:/)
-  initrules(); cfgfile(uf, "user"); if (pf != "") cfgfile(pf, "project")
+  initrules(); cfgfile(uf, "user"); if (lf != "" && lf != pf) cfgfile(lf, "project"); if (pf != "") cfgfile(pf, "project")
   if (!ENABLED) return
   HOMEN = norm(ENVIRON["HOME"]); PROJN = norm(PROJ); CUR = norm(cwd); if (CUR == "") CUR = PROJN
   DENYID = ""; ASKID = ""; COMMIT = 0; NOPRES = 0; PPINFO = ""; pp_prepare()
@@ -599,7 +601,10 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
     printf "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"%s\",\"permissionDecisionReason\":\"%s\"}}\n", dec, jesc(rs)
 }
 function do_show(  i, id, e) {
-  initrules(); cfgfile(uf, "user"); cfgfile(pf, "project")
+  if (pf == "") pf = ENVIRON["SD_GUARD_PF"]; if (lf == "") lf = ENVIRON["SD_GUARD_LF"]
+  initrules(); cfgfile(uf, "user"); LST = "absent"
+  if (lf != "" && lf != pf) { cfgfile(lf, "project"); LST = CFGSTATE["project"] }
+  cfgfile(pf, "project")
   print "SubDeck guard (defaults < user < project)"
   e = ENVIRON["SUBDECK_GUARD"]
   printf "enabled: %s (%s)\n", ENABLED ? "yes" : "no", ENSRC
@@ -613,6 +618,7 @@ function do_show(  i, id, e) {
   print ""
   printf "user file:    %s (%s)\n", uf, CFGSTATE["user"]
   printf "project file: %s (%s)\n", pf, CFGSTATE["project"]
+  if (LST != "absent") printf "legacy file:  %s (%s; still read, the project file wins; remove it by hand when no longer needed)\n", lf, LST
 }
 function do_dump(  t, i, id, v) {
   t = slurp(f); if (t == "") return
@@ -641,7 +647,23 @@ BEGIN {
 
 # ---------- hook mode ----------
 if [ $# -eq 0 ] || [ "$1" = hook ]; then
-  awk -v mode=hook "$GUARD_AWK" 2>/dev/null
+  # project config paths (new state dir + legacy <project>/.subdeck) are computed here and passed via ENVIRON
+  # (awk -v would mangle backslashes). Without CLAUDE_PROJECT_DIR the payload's cwd is needed first, so stdin
+  # is read by the bash builtin and handed to awk as a here-string; otherwise awk reads stdin directly.
+  GP="${CLAUDE_PROJECT_DIR:-}"; GIN=""; GREAD=0
+  if [ -z "$GP" ]; then
+    IFS= read -r -d '' GIN 2>/dev/null; GREAD=1
+    BS=$'\134'; re="\"cwd\"[[:space:]]*:[[:space:]]*\"(([^\"$BS$BS]|$BS$BS.)*)\""
+    if [[ $GIN =~ $re ]]; then GP="${BASH_REMATCH[1]}"; GP="${GP//"$BS$BS"//}"; GP="${GP//"$BS"//}"; fi
+  fi
+  SD_GUARD_PF=""; SD_GUARD_LF=""
+  GH="${BASH_SOURCE[0]%[/\\]*}"; [ "$GH" = "${BASH_SOURCE[0]}" ] && GH="."
+  if [ -n "$GP" ] && . "$GH/lib-paths.sh" 2>/dev/null; then
+    sd_state_dir "$GP"; SD_GUARD_PF="$SD_STATE/config.json"; SD_GUARD_LF="$SD_LEGACY/config.json"
+  fi
+  export SD_GUARD_PF SD_GUARD_LF
+  if [ "$GREAD" = 1 ]; then awk -v mode=hook "$GUARD_AWK" <<< "$GIN" 2>/dev/null
+  else awk -v mode=hook "$GUARD_AWK" 2>/dev/null; fi
   exit 0
 fi
 
@@ -664,11 +686,14 @@ done
 [ -n "$CMD" ] || CMD=show
 [ -n "$PROJECT" ] || PROJECT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 UFILE="${HOME}/.subdeck/config.json"
-PFILE="$PROJECT/.subdeck/config.json"
+HERE="${BASH_SOURCE[0]%[/\\]*}"; [ "$HERE" = "${BASH_SOURCE[0]}" ] && HERE="."
+LFILE="$PROJECT/.subdeck/config.json"   # legacy project config: still read (new file wins), never written
+PFILE="$LFILE"; . "$HERE/lib-paths.sh" 2>/dev/null && { sd_state_dir "$PROJECT"; PFILE="$SD_STATE/config.json"; }
+[ "$LFILE" = "$PFILE" ] && LFILE=""
 if [ "$SCOPE" = project ]; then TARGET="$PFILE"; else TARGET="$UFILE"; fi
 
 show() {
-  awk -v mode=show -v uf="$UFILE" -v pf="$PFILE" "$GUARD_AWK" < /dev/null
+  SD_GUARD_PF="$PFILE" SD_GUARD_LF="$LFILE" awk -v mode=show -v uf="$UFILE" "$GUARD_AWK" < /dev/null
   echo "Usage: /subdeck:settings set guard=on|off <rule>=deny|ask|off protect=<glob>[,<glob>] unprotect=<glob> [--project] (low-level: guard.sh set push=off attribution=deny [--project] | on | off | reset | protect GLOBS | unprotect GLOBS)"
   echo "Modes: deny | ask | off. Env SUBDECK_GUARD=0 disables the guard for a session."
 }

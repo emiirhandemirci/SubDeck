@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import { clip } from '../lib/model.mjs';
-import { projectKey } from '../lib/paths.mjs';
+import { projectKey, stateDirs } from '../lib/paths.mjs';
 
 export const HEAD_BYTES = 65536;
 export const TAIL_BYTES = 65536;
@@ -230,16 +230,24 @@ async function readMeta(file, cache) {
   return value;
 }
 
-/** Reads <project>/.subdeck/events.jsonl + events.d/*.json; keeps only ids, types and timestamps. */
-export async function readHooks(projectPath, cache) {
-  const dir = path.join(projectPath, '.subdeck');
-  const dst = await statOrNull(dir);
+/**
+ * Reads events.jsonl + events.d/*.json from the project's state dir (~/.subdeck/projects/<key>/, see
+ * lib/paths.mjs stateDirs) and from a legacy <project>/.subdeck/; events of both are merged.
+ * Keeps only ids, types and timestamps. Without env only the legacy dir is read.
+ */
+export async function readHooks(projectPath, cache, env) {
+  const candidates = env ? stateDirs(projectPath, env) : [path.join(projectPath, '.subdeck')];
   const agents = new Map();
   const notifs = new Map();   // 's:<sessionId>' or 'a:<agentId>' -> latest waiting-type Notification time
   const notifTypes = new Map();   // same keys -> notification_type of that latest one
-  if (!dst || !dst.isDirectory()) return { agents, notifs, notifTypes, bad: 0, dir: null };
-  const files = [path.join(dir, 'events.jsonl')];
-  for (const e of await readdirSafe(path.join(dir, 'events.d'))) if (e.isFile() && e.name.endsWith('.json')) files.push(path.join(dir, 'events.d', e.name));
+  const dirs = [];
+  for (const d of candidates) { const st = await statOrNull(d); if (st && st.isDirectory()) dirs.push(d); }
+  if (!dirs.length) return { agents, notifs, notifTypes, bad: 0, dir: null, dirs };
+  const files = [];
+  for (const dir of dirs) {
+    files.push(path.join(dir, 'events.jsonl'));
+    for (const e of await readdirSafe(path.join(dir, 'events.d'))) if (e.isFile() && e.name.endsWith('.json')) files.push(path.join(dir, 'events.d', e.name));
+  }
   let bad = 0;
   for (const f of files) {
     const st = await statOrNull(f);
@@ -279,7 +287,7 @@ export async function readHooks(projectPath, cache) {
       agents.set(e.agentId, a);
     }
   }
-  return { agents, notifs, notifTypes, bad, dir };
+  return { agents, notifs, notifTypes, bad, dir: dirs[0], dirs };
 }
 
 function subTitle(meta, agentId) {
@@ -509,10 +517,10 @@ async function scan(env, { cache }) {
     if (!g.projectPath) continue;
     const key = projectKey(g.projectPath, env.platform);
     if (hooksByKey.has(key)) continue;
-    const h = await readHooks(g.projectPath, cache);
+    const h = await readHooks(g.projectPath, cache, env);
     hooksByKey.set(key, h);
     skipped += h.bad;
-    if (h.dir) watchExtra.push(h.dir);
+    for (const d of h.dirs) watchExtra.push(d);
   }
   const sessions = [];
   for (const g of groups) {

@@ -8,7 +8,7 @@ ok()  { PASS=$((PASS+1)); echo "ok   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "FAIL $1"; }
 has() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then ok "$3"; else bad "$3 (no match for: $2)"; printf '%s\n' "$1" | sed 's/^/     | /'; fi; }
 H="$(mktemp -d)"; P="$(mktemp -d)"; mkdir -p "$P/sub" "$P/build"
-unset SUBDECK_GUARD
+unset SUBDECK_GUARD SUBDECK_STATE_DIR SUBDECK_HOME
 
 esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/\\n}"; s="${s//$'\t'/\\t}"; printf '%s' "$s"; }
 bash_json() { printf '{"session_id":"s","cwd":"%s","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s","description":"d"},"tool_use_id":"t"}' "$(esc "${2:-$P}")" "$(esc "$1")"; }
@@ -143,7 +143,9 @@ got="$(printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"git \\u00
 
 # ---- config precedence, env disable ----
 cfg() { mkdir -p "$(dirname "$1")"; printf '%s\n' "$2" > "$1"; }
-UC="$H/.subdeck/config.json"; PC="$P/.subdeck/config.json"
+UC="$H/.subdeck/config.json"
+# project config: state dir outside the project (lib-paths.sh); LC = legacy <project>/.subdeck/config.json
+PC="$(HOME="$H"; unset SUBDECK_STATE_DIR SUBDECK_HOME; . "$HERE/../scripts/lib-paths.sh"; sd_state_dir "$P"; printf '%s' "$SD_STATE/config.json")"; LC="$P/.subdeck/config.json"
 cfg "$UC" '{"guard":{"rules":{"push":"off"}}}'
 expect allow 'git push' "user push=off"
 cfg "$PC" '{"guard":{"rules":{"push":"deny"}}}'
@@ -158,7 +160,21 @@ cfg "$UC" '{"guard":{"enabled":false}}'
 expect allow 'git add -A' "user enabled=false"
 cfg "$PC" '{"guard":{"enabled":true}}'
 expect deny 'git add -A' "project enabled=true beats user false"
-rm -f "$PC"; cfg "$UC" 'this is { not json'
+rm -f "$PC"
+# legacy <project>/.subdeck/config.json is still read; the state-dir file wins; a cwd-only payload finds both
+cfg "$UC" '{}'
+cfg "$LC" '{"guard":{"rules":{"push":"deny"}}}'
+expect deny 'git push' "legacy project config is read"
+cwd_only() { printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"%s"}}' "$P" "$1" | HOME="$H" CLAUDE_PROJECT_DIR= bash "$G"; }
+case "$(cwd_only 'git push')" in *'"deny"'*) ok "cwd-only payload reads the legacy config" ;; *) bad "cwd-only legacy" ;; esac
+cfg "$PC" '{"guard":{"rules":{"push":"off"}}}'
+expect allow 'git push' "state-dir project config wins over legacy"
+[ -z "$(cwd_only 'git push')" ] && ok "cwd-only payload (no CLAUDE_PROJECT_DIR) finds the state-dir config" || bad "cwd-only state dir"
+out="$(HOME="$H" bash "$G" cli show "$P")"
+has "$out" '^legacy file: ' "show names the legacy file"
+has "$out" '^push +off +project' "show: state-dir value wins"
+rm -f "$PC" "$LC"; rmdir "$P/.subdeck" 2>/dev/null
+cfg "$UC" 'this is { not json'
 expect deny 'git add -A' "broken config file ignored, defaults apply"
 rm -f "$UC"
 got="$(bash_json 'git add -A' | SUBDECK_GUARD=0 HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"

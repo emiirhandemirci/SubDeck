@@ -5,15 +5,17 @@
 # Zero groups are omitted; just `SubDeck` when nothing is active.
 #   SUBDECK_ASCII=1             ASCII symbols (* ~ x) instead of ● ◐ ✕
 #   NO_COLOR                    no ANSI colours (green running, orange waiting, red failed)
-#   SUBDECK_STATUSLINE_TTL      cache seconds for the counts (default 3, 0 = off); file .subdeck/statusline.cache
+#   SUBDECK_STATUSLINE_TTL      cache seconds for the counts (default 3, 0 = off); file statusline.cache in the
+#                               project state dir (~/.subdeck/projects/<key>/, see lib-paths.sh)
 #   SUBDECK_STATUSLINE_CHAIN    command of a previous status line; it gets the same stdin and its first
 #                               output line is appended after " | "
 # No jq/node; always exits 0.
 
-HERE="${BASH_SOURCE[0]%/*}"; [ "$HERE" = "${BASH_SOURCE[0]}" ] && HERE="."   # no fork
+HERE="${BASH_SOURCE[0]%[/\\]*}"; [ "$HERE" = "${BASH_SOURCE[0]}" ] && HERE="."   # no fork
 INPUT=""
 if [ ! -t 0 ]; then IFS= read -r -d '' INPUT 2>/dev/null; fi   # builtin read: no fork
 BS=$'\134'
+HAVE_LIB=0; . "$HERE/lib-paths.sh" 2>/dev/null && HAVE_LIB=1
 
 json_str() { # key -> unescaped string value (first match) in JSTR, empty when absent; pure bash
   JSTR=""
@@ -29,16 +31,21 @@ for k in project_dir current_dir cwd; do
   json_str "$k"; d="$JSTR"
   [ -n "$d" ] && [ -d "$d" ] || continue
   [ -n "$PROJECT" ] || PROJECT="$d"
+  if [ "$HAVE_LIB" = 1 ]; then sd_state_dir "$d"; [ -d "$SD_STATE" ] && { PROJECT="$d"; break; }; fi
   if [ -d "$d/.subdeck" ]; then PROJECT="$d"; break; fi
 done
 [ -n "$PROJECT" ] || PROJECT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
 RUN=0; WAIT=0; FAIL=0
-if [ -d "$PROJECT/.subdeck" ]; then
-  # short-TTL cache (default 3 s, SUBDECK_STATUSLINE_TTL=0 disables): "<epoch> <counts line>"; no forks when warm
+STATE=""
+if [ "$HAVE_LIB" = 1 ]; then sd_state_dir "$PROJECT"; STATE="$SD_STATE"; fi
+if { [ -n "$STATE" ] && [ -d "$STATE" ]; } || [ -d "$PROJECT/.subdeck" ]; then
+  # short-TTL cache (default 3 s, SUBDECK_STATUSLINE_TTL=0 disables): "<epoch> <counts line>"; no forks when warm.
+  # It lives in the state dir only (created when missing; never written into the project).
   TTL="${SUBDECK_STATUSLINE_TTL-3}"
   case "$TTL" in ""|*[!0-9]*) TTL=3 ;; esac
-  CACHE="$PROJECT/.subdeck/statusline.cache"
+  [ -n "$STATE" ] || TTL=0
+  CACHE="$STATE/statusline.cache"
   if ! printf -v NOWT '%(%s)T' -1 2>/dev/null; then NOWT="$(date +%s)"; fi
   LINE=""
   if [ "$TTL" -gt 0 ] && [ -f "$CACHE" ]; then
@@ -48,6 +55,7 @@ if [ -d "$PROJECT/.subdeck" ]; then
   if [ -z "$LINE" ]; then
     LINE="$(bash "$HERE/status.sh" --counts "$PROJECT" 2>/dev/null)"
     if [ "$TTL" -gt 0 ] && [ -n "$LINE" ]; then
+      [ -d "$STATE" ] || mkdir -p "$STATE" 2>/dev/null
       { printf '%s %s\n' "$NOWT" "$LINE" > "$CACHE.$$" && mv -f "$CACHE.$$" "$CACHE"; } 2>/dev/null || rm -f "$CACHE.$$" 2>/dev/null
     fi
   fi

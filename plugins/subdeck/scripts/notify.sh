@@ -8,12 +8,13 @@
 #   notify.sh events waiting,done,agent [--project]   choose events (valid: waiting done agent)
 #   notify.sh test                         fire a sample notification now (ignores enabled)
 # A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
-# Config key `notify` in ~/.subdeck/config.json (user) and <project>/.subdeck/config.json (project wins):
+# Config key `notify` in ~/.subdeck/config.json (user) and the project config (project wins): <state>/config.json,
+#   where <state> = ~/.subdeck/projects/<key>/ (lib-paths.sh); a legacy <project>/.subdeck/config.json is still read.
 #   {"notify":{"enabled":true,"events":["waiting","done","agent"]}}
 # Defaults (key absent): enabled=false (notifications are OFF until switched on), events=waiting,done,agent.
 # An old `sound` key in a config is ignored (and dropped on the next write); there is no sound option.
 # Env: SUBDECK_NOTIFY=0 disables everything; SUBDECK_NOTIFY_DRYRUN=1 prints the command instead of running it.
-# Debug log: <project>/.subdeck/notify.log, one line per attempt: time event method exit (never any content).
+# Debug log: <state>/notify.log, one line per attempt: time event method exit (never any content).
 #   A "spawn" line is written when an attempt starts; the detached child appends its own line with the
 #   method actually used (toast | balloon | notify-send | osascript | fail) and its exit code.
 # Only the project folder name and a fixed reason are shown, never prompt or transcript content.
@@ -46,7 +47,11 @@ if [ -z "$PROJECT" ]; then
   [ -n "$PROJECT" ] && [ -d "$PROJECT" ] || PROJECT="$(pwd)"
 fi
 UFILE="${HOME}/.subdeck/config.json"
-PFILE="$PROJECT/.subdeck/config.json"
+HERE="${BASH_SOURCE[0]%[/\\]*}"; [ "$HERE" = "${BASH_SOURCE[0]}" ] && HERE="."
+LFILE="$PROJECT/.subdeck/config.json"   # legacy project config: still read (new file wins), never written
+PFILE="$LFILE"; . "$HERE/lib-paths.sh" 2>/dev/null && { sd_state_dir "$PROJECT"; PFILE="$SD_STATE/config.json"; }
+[ "$LFILE" = "$PFILE" ] && LFILE=""
+SDIR="${PFILE%/config.json}"   # state dir: notify.log lives here, never in the project
 if [ "$SCOPE" = project ]; then TARGET="$PFILE"; else TARGET="$UFILE"; fi
 
 # Parsing is pure bash (no forks): the hook must stay fast on Windows where every fork costs ~30 ms.
@@ -77,9 +82,13 @@ resolve_settings() {
   notify_member "$UFILE"; parse_member "$NM"
   if [ -n "$M_EN" ]; then EN="$M_EN"; SRC_EN=user; fi
   if [ -n "$M_EV" ]; then EV="$M_EV"; SRC_EV=user; fi
-  notify_member "$PFILE"; parse_member "$NM"
-  if [ -n "$M_EN" ]; then EN="$M_EN"; SRC_EN=project; fi
-  if [ -n "$M_EV" ]; then EV="$M_EV"; SRC_EV=project; fi
+  local pf
+  for pf in "$LFILE" "$PFILE"; do   # legacy first, the new project file wins
+    [ -n "$pf" ] || continue
+    notify_member "$pf"; parse_member "$NM"
+    if [ -n "$M_EN" ]; then EN="$M_EN"; SRC_EN=project; fi
+    if [ -n "$M_EV" ]; then EV="$M_EV"; SRC_EV=project; fi
+  done
   if [ "$EV" = "-" ]; then EV=""; fi
   return 0
 }
@@ -96,11 +105,11 @@ detect_os() {
   esac
 }
 
-# log_attempt EVENT METHOD EXIT [trim]: one line to <project>/.subdeck/notify.log (time event method exit; never content).
+# log_attempt EVENT METHOD EXIT [trim]: one line to <state>/notify.log (time event method exit; never content).
 log_attempt() {
-  local ts f="$PROJECT/.subdeck/notify.log"
+  local ts f="$SDIR/notify.log"
   printf -v ts '%(%Y-%m-%dT%H:%M:%S%z)T' -1 2>/dev/null || ts="$(date +%Y-%m-%dT%H:%M:%S%z)"
-  mkdir -p "$PROJECT/.subdeck" 2>/dev/null
+  mkdir -p "$SDIR" 2>/dev/null
   printf '%s %s %s %s\n' "$ts" "$1" "$2" "$3" >> "$f" 2>/dev/null
   if [ "$4" = trim ] && [ -f "$f" ] && [ "$(wc -c < "$f")" -gt 32768 ]; then
     tail -n 100 "$f" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f" 2>/dev/null
@@ -211,6 +220,7 @@ show() {
   echo
   echo "user file:    $UFILE$([ -f "$UFILE" ] || echo ' (absent)')"
   echo "project file: $PFILE$([ -f "$PFILE" ] || echo ' (absent)')"
+  [ -n "$LFILE" ] && [ -f "$LFILE" ] && echo "legacy file:  $LFILE (still read; the project file wins; remove it by hand when no longer needed)"
   if [ "$DISABLED_ENV" = 1 ]; then echo "NOTE: SUBDECK_NOTIFY=0 is set in the environment: all notifications are off regardless of config."; fi
   echo "Events: waiting (needs your input), done (manager finished), agent (a sub-agent finished)."
   echo "Usage: /subdeck:settings set notify=on|off notify.events=... (low-level: notify.sh on | off | test | events waiting,done,agent [--project])"
@@ -256,7 +266,7 @@ case "$CMD" in
     resolve_settings
     PD="${PROJECT%/}"; clean "${PD##*/}"; NAME="$CLEAN"; [ -n "$NAME" ] || NAME="project"
     fire test "$NAME: test notification"
-    echo "test notification sent (see $PROJECT/.subdeck/notify.log for the method and exit code). Nothing appeared? Check OS notification / focus-assist settings."
+    echo "test notification sent (see $SDIR/notify.log for the method and exit code). Nothing appeared? Check OS notification / focus-assist settings."
     if [ "$DISABLED_ENV" = 1 ]; then echo "NOTE: SUBDECK_NOTIFY=0 disables real hook notifications."; fi
     ;;
   *) echo "error: unknown command '$CMD'"; echo "Usage: /subdeck:settings set notify=on|off notify.events=... (low-level: notify.sh on | off | test | events waiting,done,agent [--project])" ;;

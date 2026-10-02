@@ -122,3 +122,29 @@ test('GET: a project-level config that sets notify.enabled is reported as overri
   assert.equal(j.overriddenBy[0].enabled, false);
   assert.equal(j.overriddenBy[0].file, path.join(projects[0].path, '.subdeck', 'config.json'));
 });
+
+test('GET: the state-dir project config wins over a legacy <project>/.subdeck/config.json', async () => {
+  const { stateDirs, resolveEnv } = await import('../lib/paths.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-ovs-'));
+  const pub = path.join(dir, 'pub'); fs.mkdirSync(pub);
+  fs.writeFileSync(path.join(pub, 'index.html'), 'x');
+  const env = resolveEnv({ SUBDECK_STATE_DIR: path.join(dir, 'state') }, process.platform, path.join(dir, 'home'));
+  const mk = (name, legacy, state) => {
+    const pp = path.join(dir, 'work', name); fs.mkdirSync(pp, { recursive: true });
+    const [sd, ld] = stateDirs(pp, env);
+    if (legacy !== null) { fs.mkdirSync(ld, { recursive: true }); fs.writeFileSync(path.join(ld, 'config.json'), legacy); }
+    if (state !== null) { fs.mkdirSync(sd, { recursive: true }); fs.writeFileSync(path.join(sd, 'config.json'), state); }
+    return { name, path: pp, sd, ld };
+  };
+  const both = mk('Both', '{"notify":{"enabled":false}}', '{"notify":{"enabled":true}}');
+  const legacyOnly = mk('Legacy', '{"notify":{"enabled":false}}', null);
+  const stateNoKey = mk('StateNoKey', '{"notify":{"enabled":true}}', '{"modelPolicy":{}}');
+  const projects = [both, legacyOnly, stateNoKey].map(p => ({ name: p.name, path: p.path }));
+  const api = createApi({ core: { snapshot: () => ({ sources: [], projects, sessions: [] }) }, getPort: () => P, startedAt: 'x', days: 14, version: 't', publicDir: pub, configFile: path.join(dir, 'home', '.subdeck', 'config.json'), token: TOKEN, env });
+  const j = json(await call(api));
+  const by = Object.fromEntries(j.overriddenBy.map(o => [o.project, o]));
+  assert.equal(by.Both.enabled, true);
+  assert.equal(by.Both.file, path.join(both.sd, 'config.json'));
+  assert.equal(by.Legacy.file, path.join(legacyOnly.ld, 'config.json'));
+  assert.equal(by.StateNoKey.enabled, true);   // the new file has no notify key: the legacy value still applies
+});

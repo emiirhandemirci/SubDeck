@@ -13,7 +13,8 @@
 # (same state logic as the table; idle is always 0). `failed` = an agent (stopped or not) with an explicit failure record
 # (API error in its own transcript, or a failed/error completion in the parent transcript), as in Desk.
 # Default view: running agents + the last 10 finished; --all shows every agent.
-# Reads <project>/.subdeck/events.jsonl and <project>/.subdeck/events.d/*.json.
+# Reads events.jsonl + events.d/*.json from the project state dir (~/.subdeck/projects/<key>/, see lib-paths.sh)
+# and from a legacy <project>/.subdeck/ if present.
 
 ALL=0
 COUNTS=0
@@ -28,7 +29,9 @@ for a in "$@"; do
   esac
 done
 [ -n "$PROJECT" ] || PROJECT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-DIR="$PROJECT/.subdeck"
+HERE="${BASH_SOURCE[0]%[/\\]*}"; [ "$HERE" = "${BASH_SOURCE[0]}" ] && HERE="."
+. "$HERE/lib-paths.sh" 2>/dev/null && sd_state_dir "$PROJECT"
+DIRS=("${SD_STATE:-}" "$PROJECT/.subdeck")   # new location, then legacy (both read, events merged)
 
 read -r NOW ZONE <<< "$(date +"%s %z")"   # ZONE e.g. +0300 (one fork)
 SIGN=1; [ "${ZONE#-}" != "$ZONE" ] && SIGN=-1
@@ -37,8 +40,12 @@ OFF=$(( SIGN * (10#$ZH * 3600 + 10#$ZM * 60) ))
 
 # Collect all event lines (CRLF-safe); missing files are fine.
 collect() {
-  [ -f "$DIR/events.jsonl" ] && cat "$DIR/events.jsonl"
-  for f in "$DIR"/events.d/*.json; do [ -f "$f" ] && { cat "$f"; echo; }; done
+  local d f
+  for d in "${DIRS[@]}"; do
+    [ -n "$d" ] || continue
+    [ -f "$d/events.jsonl" ] && { cat "$d/events.jsonl"; echo; }
+    for f in "$d"/events.d/*.json; do [ -f "$f" ] && { cat "$f"; echo; }; done
+  done
 }
 
 # Fold: sort by ts (stable), then one record per agent, fields separated by \001.

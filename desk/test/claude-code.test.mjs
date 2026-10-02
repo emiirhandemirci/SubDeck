@@ -475,3 +475,21 @@ test('readHooks: Notification events are kept per session for waiting types only
   assert.equal(h.notifs.get('s:s2'), '2026-01-01T00:00:05.000Z');
   assert.equal(h.agents.size, 0);
 });
+
+test('readHooks with env: state-dir and legacy events are merged; both dirs are watched', async () => {
+  const { stateDirs, resolveEnv } = await import('../lib/paths.mjs');
+  const proj = tmpDir('subdeck-hook-st-');
+  const env = resolveEnv({ SUBDECK_STATE_DIR: path.join(tmpDir('subdeck-st-'), 'state') }, process.platform, tmpDir('subdeck-home-'));
+  const [sd, ld] = stateDirs(proj, env);
+  fs.mkdirSync(path.join(sd, 'events.d'), { recursive: true }); fs.mkdirSync(ld);
+  const ev = (event, id, ts) => JSON.stringify({ ts, event, agent_id: id, agent_type: 'w', session_id: 's' });
+  fs.writeFileSync(path.join(ld, 'events.jsonl'), ev('SubagentStart', 'old1', '2026-01-01T00:00:00Z') + '\n');
+  fs.writeFileSync(path.join(sd, 'events.jsonl'), ev('SubagentStop', 'old1', '2026-01-01T00:01:00Z') + '\n' + ev('SubagentStart', 'new1', '2026-01-01T00:02:00Z') + '\n');
+  fs.writeFileSync(path.join(sd, 'events.d', '1-1-1.json'), ev('SubagentStop', 'new1', '2026-01-01T00:03:00Z'));
+  const h = await readHooks(proj, new Map(), env);
+  assert.deepEqual(h.dirs, [sd, ld]);
+  assert.ok(h.agents.get('old1').start && h.agents.get('old1').stop);   // start in legacy, stop in the state dir
+  assert.ok(h.agents.get('new1').start && h.agents.get('new1').stop);
+  const only = tmpDir('subdeck-hook-none-');
+  assert.deepEqual((await readHooks(only, new Map(), env)).dirs, []);
+});

@@ -5,7 +5,9 @@
 #   bash <plugin>/scripts/models.sh set key=value ... [--project]  write user (default) or project config
 #   bash <plugin>/scripts/models.sh reset [--project]              remove the modelPolicy of that config file
 # A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
-# Precedence: built-in defaults < ~/.subdeck/config.json < <project>/.subdeck/config.json
+# Precedence: built-in defaults < ~/.subdeck/config.json < project config. The project config lives outside the
+# project in ~/.subdeck/projects/<key>/config.json (lib-paths.sh); a legacy <project>/.subdeck/config.json is
+# still read (below the new file) but never written.
 # Keys: mode (auto|named|current), worker, escalation, researcher, verifier, explore
 # Values: sonnet|opus|haiku|fable|inherit, a full model id (claude-...), or another backend's model id.
 # `set`/`reset` only replace/remove the modelPolicy member; other top-level members are re-emitted verbatim.
@@ -36,7 +38,10 @@ done
 [ -n "$CMD" ] || CMD=show
 [ -n "$PROJECT" ] || PROJECT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 UFILE="${HOME}/.subdeck/config.json"
-PFILE="$PROJECT/.subdeck/config.json"
+HERE="${BASH_SOURCE[0]%[/\\]*}"; [ "$HERE" = "${BASH_SOURCE[0]}" ] && HERE="."
+LFILE="$PROJECT/.subdeck/config.json"   # legacy project config: still read (new file wins), never written
+PFILE="$LFILE"; . "$HERE/lib-paths.sh" 2>/dev/null && { sd_state_dir "$PROJECT"; PFILE="$SD_STATE/config.json"; }
+[ "$LFILE" = "$PFILE" ] && LFILE=""
 if [ "$SCOPE" = project ]; then TARGET="$PFILE"; else TARGET="$UFILE"; fi
 
 getval() { # file key -> value or empty
@@ -142,6 +147,7 @@ show() {
   for k in $KEYS; do
     v="$(default_of "$k")"; src="default"
     val="$(getval "$UFILE" "$k")"; if [ -n "$val" ]; then v="$val"; src="user"; fi
+    if [ -n "$LFILE" ]; then val="$(getval "$LFILE" "$k")"; if [ -n "$val" ]; then v="$val"; src="project"; fi; fi
     val="$(getval "$PFILE" "$k")"; if [ -n "$val" ]; then v="$val"; src="project"; fi
     printf '%-11s %-24s %s\n' "$k" "$v" "$src"
     if [ "$k" != mode ]; then ids="$ids$k|$v"$'\n'; fi
@@ -154,6 +160,7 @@ show() {
   echo
   echo "user file:    $UFILE$([ -f "$UFILE" ] || echo ' (absent)')"
   echo "project file: $PFILE$([ -f "$PFILE" ] || echo ' (absent)')"
+  [ -n "$LFILE" ] && [ -f "$LFILE" ] && echo "legacy file:  $LFILE (still read; the project file wins; remove it by hand when no longer needed)"
   warn_overrides
   echo "Manager model: chosen in Claude Code with /model (not part of this policy)."
   echo "Usage: /subdeck:settings set worker=sonnet verifier=opus (low-level: models.sh set worker=haiku verifier=opus [--project] | reset [--project])"

@@ -9,7 +9,9 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL $1"; }
 has() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then ok "$3"; else bad "$3 (no match for: $2)"; printf '%s\n' "$1" | sed 's/^/     | /'; fi; }
 hasnt() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then bad "$3 (found: $2)"; else ok "$3"; fi; }
 H="$(mktemp -d)"; P="$(mktemp -d)"
-unset SUBDECK_NOTIFY SUBDECK_GUARD CLAUDE_CODE_SUBAGENT_MODEL_FORCE
+unset SUBDECK_NOTIFY SUBDECK_GUARD CLAUDE_CODE_SUBAGENT_MODEL_FORCE SUBDECK_STATE_DIR SUBDECK_HOME
+# project config lives in the state dir outside the project (lib-paths.sh), under the temp HOME
+PS="$(HOME="$H"; . "$HERE/../scripts/lib-paths.sh"; sd_state_dir "$P"; printf '%s' "$SD_STATE")"
 run() { HOME="$H" bash "$S" "$@" "$P"; }
 
 out="$(run)"; rc=$?
@@ -47,7 +49,7 @@ has "$out" 'needs your confirmation' "statusline not written by script"
 
 out="$(run set worker=sonnet --project)"
 has "$out" '^worker +sonnet +project' "project scope"
-[ -f "$P/.subdeck/config.json" ] && ok "project file written" || bad "project file missing"
+[ -f "$PS/config.json" ] && [ ! -e "$P/.subdeck" ] && ok "project file written" || bad "project file missing"
 
 mkdir -p "$H/.claude"; echo '{"statusLine":{"type":"command","command":"bash x/scripts/statusline.sh"}}' > "$H/.claude/settings.json"
 has "$(run)" '^statusline +installed' "table: statusline installed"
@@ -56,7 +58,7 @@ out="$(run reset)"
 has "$out" '^worker +sonnet +(default|project)' "reset: user model policy gone"
 has "$out" '^notify +off' "reset: notify off"
 has "$out" '^push +ask' "reset: guard rule default"
-rm -rf "$P/.subdeck"; run reset --project >/dev/null
+rm -rf "$P/.subdeck" "$PS"; run reset --project >/dev/null
 has "$(run)" '^worker +sonnet +default' "reset --project exits cleanly"
 
 
@@ -65,7 +67,7 @@ has "$out" '^protect +CLAUDE.md,migrations/\*\* +user' "set protect: table row"
 grep -q '"protectedPaths":\["CLAUDE.md","migrations/\*\*"\]' "$CFG" && ok "set protect: array written to config" || bad "protect config: $(cat "$CFG")"
 out="$(run set protect=*.lock unprotect=CLAUDE.md --project)"
 has "$out" '^protect +\*.lock +project' "set protect --project: project row wins"
-run reset --project >/dev/null; rm -rf "$P/.subdeck"
+run reset --project >/dev/null; rm -rf "$P/.subdeck" "$PS"
 out="$(run set unprotect=CLAUDE.md,migrations/**)"
 has "$out" '^protect +\(none\) +default' "set unprotect: list empty again"
 out="$(run set protect=)"; has "$out" 'protect needs a glob' "empty protect rejected"
@@ -74,7 +76,7 @@ out="$(run set protect=a.txt push=off)"
 has "$out" '^push +off +user' "protect and a rule in one call"
 has "$out" '^protect +a.txt +user' "protect and a rule in one call: list"
 out="$(run reset)"; has "$out" '^protect +\(none\)' "reset clears the protected list"
-rm -rf "$P/.subdeck"
+rm -rf "$P/.subdeck" "$PS"
 
 [ -f "$SK" ] && grep -q '^disable-model-invocation: true' "$SK" && ok "skill is user-only" || bad "skill frontmatter"
 grep -q '\${[A-Za-z_]*:-' "$SK" && bad "skill uses \${VAR:-default}" || ok "skill avoids \${VAR:-default}"

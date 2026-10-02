@@ -1,0 +1,28 @@
+# platform<TAB>input<TAB>normalised<TAB>key. Shared by plugins/subdeck/tests/test-paths.sh (bash) and desk/test/state-key.test.mjs (Desk).
+win	E:\x	e:/x	x-e559a9f1
+win	/e/x	e:/x	x-e559a9f1
+win	E:/x	e:/x	x-e559a9f1
+win	e:\x\	e:/x	x-e559a9f1
+win	E:\x\\	e:/x	x-e559a9f1
+win	E:/x/	e:/x	x-e559a9f1
+win	/cygdrive/E/x/	e:/x	x-e559a9f1
+win	E:\X	e:/x	x-e559a9f1
+win	E:\SubDeck\Sub Dir\..\Other	e:/subdeck/other	other-8c5dfa5b
+win	e:	e:/	root-2249e893
+win	C:\	c:/	root-cff792b5
+win	/c	c:/	root-cff792b5
+win	\\server\share\proj	//server/share/proj	proj-1fad945e
+win	//server/share/proj/	//server/share/proj	proj-1fad945e
+win	E:\Proj Ünï	e:/proj Ünï	proj___n__-a4ae376d
+win	C:/a/./b//c/../d	c:/a/b/d	d-763d0c9a
+posix	/home/u/proj	/home/u/proj	proj-2eccfc35
+posix	/home/u/proj/	/home/u/proj	proj-2eccfc35
+posix	/home/u//proj/./	/home/u/proj	proj-2eccfc35
+posix	/home/u/a/../proj	/home/u/proj	proj-2eccfc35
+posix	/e/x	/e/x	x-5e4153b6
+posix	/Users/U/Proj	/Users/U/Proj	Proj-312c57c4
+posix	/	/	root-2a0c975e
+posix	/home/u/café	/home/u/café	caf__-e09c98a4
+posix	/home/u/a very long project name that exceeds thirty two bytes	/home/u/a very long project name that exceeds thirty two bytes	a_very_long_project_name_that_ex-9b0b17f4
+posix	relative/../../x	../x	x-5c237dda
+posix	/../x	/x	x-57d1f0d2

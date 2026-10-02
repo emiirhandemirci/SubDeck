@@ -8,7 +8,9 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL $1"; }
 has() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then ok "$3"; else bad "$3 (no match for: $2)"; printf '%s\n' "$1" | sed 's/^/     | /'; fi; }
 hasnt() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then bad "$3 (unexpected: $2)"; else ok "$3"; fi; }
 H="$(mktemp -d)"; P0="$(mktemp -d)"; P="$P0/my-proj"; mkdir -p "$P"
-unset SUBDECK_NOTIFY SUBDECK_NOTIFY_DRYRUN CLAUDE_PROJECT_DIR
+unset SUBDECK_NOTIFY SUBDECK_NOTIFY_DRYRUN CLAUDE_PROJECT_DIR SUBDECK_STATE_DIR SUBDECK_HOME
+# sp HOME PROJECT: the project state dir (config.json, notify.log) outside the project (lib-paths.sh)
+sp() { ( HOME="$1"; . "$HERE/../scripts/lib-paths.sh"; sd_state_dir "$2"; printf '%s' "$SD_STATE" ); }
 run() { HOME="$H" bash "$N" "$@" "$P" </dev/null; }
 hook() { # KIND [payload]; dry-run on the given OS (default windows)
   printf '%s' "${2:-{\}}" | HOME="$H" SUBDECK_NOTIFY_DRYRUN=1 SUBDECK_NOTIFY_OS="${TOS:-windows}" CLAUDE_PROJECT_DIR="$P" bash "$N" hook "$1"
@@ -40,15 +42,15 @@ grep -q '"modelPolicy"' "$H/.subdeck/config.json" && ok "modelPolicy still there
 out="$(run off --project)"
 has "$out" '^enabled +false +project' "project overrides enabled"
 has "$out" '^events +waiting,done,agent +user' "user value survives project override"
-[ -f "$P/.subdeck/config.json" ] && ok "project file written" || bad "project file missing"
+[ -f "$(sp "$H" "$P")/config.json" ] && [ ! -e "$P/.subdeck" ] && ok "project file written" || bad "project file missing"
 out="$(run events agent --project)"; has "$out" '^events +agent +project' "project events"
 out="$(run on --project)"; has "$out" '^enabled +true +project' "project on"
 
 # garbage config left untouched
-G="$(mktemp -d)"; mkdir -p "$G/.subdeck"; echo 'not json' > "$G/.subdeck/config.json"
+G="$(mktemp -d)"; GS="$(sp "$H" "$G")"; mkdir -p "$GS"; echo 'not json' > "$GS/config.json"
 out="$(HOME="$H" bash "$N" off --project "$G")"
 has "$out" 'not a valid JSON object' "invalid config refused"
-[ "$(cat "$G/.subdeck/config.json")" = "not json" ] && ok "invalid config untouched" || bad "invalid config modified"
+[ "$(cat "$GS/config.json")" = "not json" ] && ok "invalid config untouched" || bad "invalid config modified"
 
 # hook behaviour (reset to a clean home)
 rm -rf "$P/.subdeck"; H="$(mktemp -d)"
@@ -88,11 +90,11 @@ done
 out="$(hook agent "$LEAK")"; has "$out" "agent abx finished" "agent type sanitised"
 
 # old sound key ignored and dropped on the next write
-S="$(mktemp -d)"; mkdir -p "$S/.subdeck"; echo '{"notify":{"enabled":true,"sound":true,"events":["done"]},"keep":1}' > "$S/.subdeck/config.json"
+S="$(mktemp -d)"; SS="$(sp "$H" "$S")"; mkdir -p "$SS"; echo '{"notify":{"enabled":true,"sound":true,"events":["done"]},"keep":1}' > "$SS/config.json"
 out="$(HOME="$H" bash "$N" show "$S")"; hasnt "$out" 'sound' "old sound key not shown"
 HOME="$H" bash "$N" events done,agent "$S" --project >/dev/null
-grep -q sound "$S/.subdeck/config.json" && bad "sound key kept on write" || ok "sound key dropped on write"
-grep -q '"keep":1' "$S/.subdeck/config.json" && ok "other member kept" || bad "other member lost"
+grep -q sound "$SS/config.json" && bad "sound key kept on write" || ok "sound key dropped on write"
+grep -q '"keep":1' "$SS/config.json" && ok "other member kept" || bad "other member lost"
 
 # multi-line CRLF config is parsed
 C="$(mktemp -d)"; mkdir -p "$C/.subdeck"; printf '{
@@ -109,15 +111,15 @@ out="$(HOME="$H" SUBDECK_NOTIFY_DRYRUN=1 SUBDECK_NOTIFY_OS=linux bash "$N" test 
 has "$out" "notify-send 'SubDeck' 'my-proj: test notification'" "test fires sample"
 
 # debug log: real (detached) run with a fake powershell.exe; method and exit code, no content
-LP="$(mktemp -d)/logproj"; mkdir -p "$LP"; LH="$(mktemp -d)"
+LP="$(mktemp -d)/logproj"; mkdir -p "$LP"; LH="$(mktemp -d)"; LS="$(sp "$LH" "$LP")"
 FP="$(mktemp -d)"; printf '#!/usr/bin/env bash
 echo toast
 exit 0
 ' > "$FP/powershell.exe"; chmod +x "$FP/powershell.exe"
 HOME="$LH" bash "$N" on "$LP" >/dev/null
 printf '{"message":"SECRETPROMPT"}' | HOME="$LH" PATH="$FP:$PATH" SUBDECK_NOTIFY_OS=windows CLAUDE_PROJECT_DIR="$LP" bash "$N" hook done >/dev/null 2>&1
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do grep -q ' done toast 0$' "$LP/.subdeck/notify.log" 2>/dev/null && break; sleep 0.5; done
-lg="$(cat "$LP/.subdeck/notify.log" 2>/dev/null)"
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do grep -q ' done toast 0$' "$LS/notify.log" 2>/dev/null && break; sleep 0.5; done
+lg="$(cat "$LS/notify.log" 2>/dev/null)"
 has "$lg" '^[0-9T:+-]+ done spawn -$' "log: spawn line"
 has "$lg" '^[0-9T:+-]+ done toast 0$' "log: result line with method and exit code"
 hasnt "$lg" 'SECRET|logproj' "log: no content or names"
@@ -125,11 +127,11 @@ printf '#!/usr/bin/env bash
 exit 1
 ' > "$FP/powershell.exe"
 HOME="$LH" PATH="$FP:$PATH" SUBDECK_NOTIFY_OS=windows bash "$N" test "$LP" >/dev/null 2>&1
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do grep -q ' test fail 1$' "$LP/.subdeck/notify.log" 2>/dev/null && break; sleep 0.5; done
-has "$(cat "$LP/.subdeck/notify.log")" ' test fail 1$' "log: failure recorded as fail with exit code"
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do grep -q ' test fail 1$' "$LS/notify.log" 2>/dev/null && break; sleep 0.5; done
+has "$(cat "$LS/notify.log")" ' test fail 1$' "log: failure recorded as fail with exit code"
 # dry-run writes no log
-rm -f "$LP/.subdeck/notify.log"; printf '{}' | HOME="$LH" SUBDECK_NOTIFY_DRYRUN=1 CLAUDE_PROJECT_DIR="$LP" bash "$N" hook done >/dev/null
-[ ! -f "$LP/.subdeck/notify.log" ] && ok "dry-run writes no log" || bad "dry-run wrote a log"
+rm -f "$LS/notify.log"; printf '{}' | HOME="$LH" SUBDECK_NOTIFY_DRYRUN=1 CLAUDE_PROJECT_DIR="$LP" bash "$N" hook done >/dev/null
+[ ! -f "$LS/notify.log" ] && ok "dry-run writes no log" || bad "dry-run wrote a log"
 
 # garbage stdin / no args
 for g in '' 'garbage' '{"unterminated' '{"cwd":'; do
@@ -156,6 +158,19 @@ for _ in 1 2 3; do
   e=$(date +%s%N); t=$(( (e - s) / 1000000 )); [ $t -lt $ms ] && ms=$t
 done
 [ $ms -lt $LIMIT ] && ok "detached: hook returned in ${ms} ms (best of 3) while child sleeps 3 s" || bad "not detached (${ms} ms)"
+
+# legacy <project>/.subdeck/config.json: read below the state-dir file, never written; no log in the project
+LG="$(mktemp -d)/legacy-proj"; mkdir -p "$LG/.subdeck"; LGH="$(mktemp -d)"
+echo '{"notify":{"enabled":true,"events":["done"]}}' > "$LG/.subdeck/config.json"; LB="$(cat "$LG/.subdeck/config.json")"
+out="$(HOME="$LGH" bash "$N" show "$LG")"
+has "$out" '^enabled +true +project' "legacy project config is read"
+has "$out" '^legacy file: ' "show names the legacy file"
+out="$(HOME="$LGH" bash "$N" events agent --project "$LG")"
+has "$out" '^events +agent +project' "state-dir project file wins over legacy"
+has "$out" '^enabled +true +project' "legacy key not in the new file still applies"
+[ "$LB" = "$(cat "$LG/.subdeck/config.json")" ] && ok "legacy file never written" || bad "legacy file modified"
+HOME="$LGH" SUBDECK_NOTIFY_DRYRUN= SUBDECK_NOTIFY_OS=none bash "$N" test "$LG" >/dev/null 2>&1
+[ "$(ls -A "$LG/.subdeck")" = config.json ] && ok "nothing new in the project folder" || bad "project folder written: $(ls -A "$LG/.subdeck")"
 
 echo "passed $PASS, failed $FAIL"
 [ $FAIL -eq 0 ]

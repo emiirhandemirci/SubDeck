@@ -9,6 +9,7 @@ has() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then ok "$3"; else bad "$3 (no
 hasnt() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then bad "$3"; else ok "$3"; fi; }
 
 export TZ=UTC
+SUBDECK_STATE_DIR="$(mktemp -d)"; export SUBDECK_STATE_DIR   # never write into the real ~/.subdeck
 P="$(mktemp -d)"; T="$(mktemp -d)"
 mkdir -p "$P/.subdeck/events.d"
 ev() { # ts event id type path [msg]

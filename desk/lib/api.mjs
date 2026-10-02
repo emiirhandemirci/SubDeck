@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { readNotifyEnabled, writeNotifyEnabled } from './notify-settings.mjs';
-import { projectKey, relativeTo, isSecretPath } from './paths.mjs';
+import { projectKey, relativeTo, isSecretPath, stateDirs } from './paths.mjs';
 import { showCommit, HASH_RE } from './git.mjs';
 
 const STATIC = {
@@ -93,18 +93,22 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     });
   }
 
-  // Projects whose own .subdeck/config.json sets notify.enabled; the project value wins over the user config, so the bell cannot change it.
+  // Projects whose own project config (state dir, else legacy .subdeck/config.json) sets notify.enabled; the project value wins over the user config, so the bell cannot change it.
   async function projectOverrides() {
     const out = [];
     const mine = path.resolve(configFile);
     for (const p of core.snapshot().projects || []) {
       if (!p.path || out.length >= 20) continue;
-      const file = path.join(p.path, '.subdeck', 'config.json');
-      if (path.resolve(file) === mine) continue;
-      try {
-        const o = JSON.parse(await fs.readFile(file, 'utf8'));
-        if (o && typeof o === 'object' && o.notify && typeof o.notify === 'object' && typeof o.notify.enabled === 'boolean') out.push({ project: p.name, file, enabled: o.notify.enabled });
-      } catch { /* absent or unreadable: no override */ }
+      // project config: state dir first (wins), then a legacy <project>/.subdeck/config.json
+      const dirs = env ? stateDirs(p.path, env) : [path.join(p.path, '.subdeck')];
+      for (const d of dirs) {
+        const file = path.join(d, 'config.json');
+        if (path.resolve(file) === mine) continue;
+        try {
+          const o = JSON.parse(await fs.readFile(file, 'utf8'));
+          if (o && typeof o === 'object' && o.notify && typeof o.notify === 'object' && typeof o.notify.enabled === 'boolean') { out.push({ project: p.name, file, enabled: o.notify.enabled }); break; }
+        } catch { /* absent or unreadable: no override */ }
+      }
     }
     return out;
   }

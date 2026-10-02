@@ -15,6 +15,8 @@ grep -q "git add" "$PLUG" 2>/dev/null && bad "plugin has no git logic" || ok "pl
 if ! command -v node >/dev/null 2>&1; then echo "skip JS behaviour tests (node not installed)"; echo "passed=$PASS failed=$FAIL"; [ $FAIL -eq 0 ]; exit; fi
 
 H="$(mktemp -d)"; P="$(mktemp -d)"; P="$(cd "$P" && { pwd -W 2>/dev/null || pwd; })"; PLUGW="$(cd "$HERE/../opencode" && { pwd -W 2>/dev/null || pwd; })/subdeck.js"
+# per-project state root outside the project; Windows form so node and any bash agree, never the real home
+SD="$(mktemp -d)"; SD="$(cd "$SD" && { pwd -W 2>/dev/null || pwd; })"; export SUBDECK_STATE_DIR="$SD"; unset SUBDECK_HOME
 cat > "$P/t.mjs" <<JS
 import { SubDeckPlugin } from "file:///$PLUGW"
 const h = await SubDeckPlugin({ directory: process.argv[2] })
@@ -42,10 +44,11 @@ chk "ls allowed"               '^bash-ls=allow$'
 chk "write .env asks first"    '^write-env=deny:Ask the user'
 chk "write normal file allowed" '^write-ok=allow$'
 chk "unguarded tool allowed"   '^read-tool=allow$'
-EV="$P/.subdeck/events.jsonl"
+EV="$(. "$HERE/../scripts/lib-paths.sh"; sd_state_dir "$P"; printf '%s' "$SD_STATE")/events.jsonl"   # state dir outside the project
+[ ! -e "$P/.subdeck" ] && ok "nothing written into the project" || bad "project .subdeck written"
 [ -f "$EV" ] && grep -q '"event":"SubagentStart".*"agent_id":"child1"' "$EV" && ok "SubagentStart logged" || bad "SubagentStart logged"
 [ -f "$EV" ] && grep -q '"event":"SubagentStop".*"agent_id":"child1"' "$EV" && ok "SubagentStop logged" || bad "SubagentStop logged"
 [ "$(grep -c . "$EV" 2>/dev/null)" = 2 ] && ok "root session idle not logged as sub-agent" || bad "event count"
 SUBDECK_PLUGIN_ROOT=/nonexistent HOME="$H" node "$P/t.mjs" "$P" >/dev/null 2>&1 && ok "runs without crashing" || bad "runs without crashing"
-rm -rf "$H" "$P"
+rm -rf "$H" "$P" "$SD"
 echo "passed=$PASS failed=$FAIL"; [ $FAIL -eq 0 ]

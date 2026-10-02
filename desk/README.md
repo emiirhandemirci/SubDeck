@@ -18,7 +18,7 @@ node desk/server.mjs [--port N] [--days N] [--open] [--no-content]
 
 | Tool | Location | Notes |
 |---|---|---|
-| Claude Code | `~/.claude/projects/` transcripts, plus `.subdeck/` hook events | Sub-agents are read from `subagents/`. The model column shows the real id from the last assistant record. |
+| Claude Code | `~/.claude/projects/` transcripts, plus SubDeck hook events from `~/.subdeck/projects/<key>/` (`SUBDECK_STATE_DIR` moves that root) and a legacy `<project>/.subdeck/` | Sub-agents are read from `subagents/`. The model column shows the real id from the last assistant record. |
 | Cursor | `state.vscdb` under the Cursor user directory | Opened read-only; retried when Cursor holds a lock. |
 | Codex | `$CODEX_HOME` (default `~/.codex`): `state_N.sqlite` index and `sessions/` rollout files | Needs Node 22.13+. Rollout event names and sub-agent status values are unverified. |
 | Copilot | CLI: `$COPILOT_HOME/session-state` (default `~/.copilot`); VS Code Chat: `chatSessions` under the VS Code user directory | A live `inuse` lock file marks running CLI sessions (state source `lock`). VS Code Chat gives title, times and request count only. |

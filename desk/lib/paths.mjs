@@ -78,6 +78,7 @@ export function resolveEnv(vars, platform, home, opts = {}) {
     platform,
     now: opts.now || Date.now,
     days: opts.days || 14,
+    stateRoot: stateRoot(vars, platform, home),
     claudeProjectsDir: vars.SUBDECK_CLAUDE_PROJECTS_DIR || join(home, '.claude', 'projects'),
     cursorUserDir,
     disabled: (vars.SUBDECK_DISABLE || '').split(',').map(s => s.trim()).filter(Boolean),
@@ -110,4 +111,77 @@ export function relativeTo(p, dir, platform) {
   if (!a || !b) return null;
   const ka = platform === 'win32' ? a.toLowerCase() : a, kb = platform === 'win32' ? b.toLowerCase() : b;
   return ka.startsWith(kb + '/') ? a.slice(b.length + 1) : null;
+}
+
+// ---- per-project state outside the project (same algorithm as plugins/subdeck/scripts/lib-paths.sh) ----
+const lowerAscii = s => s.replace(/[A-Z]/g, c => c.toLowerCase());
+
+/** Normalised project path used for the state key; win: /c/x and /cygdrive/c/x -> c:/x, ASCII lower case. */
+export function stateKeyPath(p, platform) {
+  if (p === null || p === undefined || p === '') return null;
+  const win = platform === 'win32';
+  let s = String(p).replace(/\\/g, '/');
+  if (win) {
+    let m = /^\/cygdrive\/([A-Za-z])(\/.*)?$/.exec(s) || /^\/([A-Za-z])(\/.*)?$/.exec(s);
+    if (m) s = m[1] + ':' + (m[2] || '');
+  }
+  let pre = '';
+  const d = /^([A-Za-z]):/.exec(s);
+  if (d) { pre = d[1].toLowerCase() + ':/'; s = s.slice(2); }
+  else if (win && s.startsWith('//')) { pre = '//'; s = s.slice(2); }
+  else if (s.startsWith('/')) { pre = '/'; s = s.slice(1); }
+  const st = [];
+  for (const seg of s.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      if (st.length && st[st.length - 1] !== '..') st.pop();
+      else if (!pre) st.push('..');
+      continue;
+    }
+    st.push(seg);
+  }
+  let out = pre + st.join('/');
+  if (!out) out = '.';
+  return win ? lowerAscii(out) : out;
+}
+
+/** <sanitised basename (max 32 bytes)>-<FNV-1a 32 hex of the UTF-8 bytes of stateKeyPath>. */
+export function stateKey(p, platform) {
+  const s = stateKeyPath(p, platform);
+  if (s === null) return null;
+  const bytes = Buffer.from(s, 'utf8');
+  let h = 0x811c9dc5;
+  for (const b of bytes) h = Math.imul(h ^ b, 16777619) >>> 0;
+  let name = s.replace(/\/$/, '');
+  name = name.slice(name.lastIndexOf('/') + 1);
+  if (name === '' || name === '.' || name.endsWith(':')) name = 'root';
+  const nb = Buffer.from(name, 'utf8');
+  let safe = '';
+  for (const b of nb) safe += /[A-Za-z0-9._-]/.test(String.fromCharCode(b)) && b < 128 ? String.fromCharCode(b) : '_';
+  return `${safe.slice(0, 32)}-${h.toString(16).padStart(8, '0')}`;
+}
+
+/** Root of all per-project state dirs: SUBDECK_STATE_DIR, else <home>/.subdeck/projects (home follows SUBDECK_HOME). */
+export function stateRoot(vars, platform, home) {
+  const v = vars || {};
+  const join = platform === 'win32' ? path.win32.join : path.posix.join;
+  let r = typeof v.SUBDECK_STATE_DIR === 'string' && v.SUBDECK_STATE_DIR ? v.SUBDECK_STATE_DIR : null;
+  if (r && platform === 'win32') {
+    const m = /^\/(?:cygdrive\/)?([A-Za-z])(\/.*)?$/.exec(r.replace(/\\/g, '/'));
+    if (m) r = m[1].toUpperCase() + ':' + (m[2] || '/');
+  }
+  return r || (home ? join(home, '.subdeck', 'projects') : null);
+}
+
+/** State dirs of a project, newest first: [<stateRoot>/<key>, <project>/.subdeck (legacy, read only)]. */
+export function stateDirs(projectPath, env) {
+  if (!projectPath) return [];
+  const e = env || {};
+  const platform = e.platform || process.platform;
+  const join = platform === 'win32' ? path.win32.join : path.posix.join;
+  const root = e.stateRoot !== undefined ? e.stateRoot : stateRoot(e.vars, platform, e.home);
+  const out = [];
+  if (root) out.push(join(root, stateKey(projectPath, platform)));
+  out.push(path.join(projectPath, '.subdeck'));
+  return out;
 }

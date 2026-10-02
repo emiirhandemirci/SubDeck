@@ -9,6 +9,7 @@ ok()  { PASS=$((PASS+1)); echo "ok   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "FAIL $1"; }
 chk() { if [ "$2" = 0 ]; then ok "$1"; else bad "$1"; fi; }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+export SUBDECK_STATE_DIR="$T/state"; unset SUBDECK_HOME   # hook scripts write per-project state here, never the real home
 
 # ---------- JSON files: parse + required keys (node, as Desk requires it anyway) ----------
 if command -v node >/dev/null 2>&1; then
@@ -66,11 +67,12 @@ OUT="$(printf '%s' '{"tool_name":"bash","cwd":"/tmp","tool_input":{"command":"ls
 [ -z "$OUT" ] && ok "copilot: harmless command allowed (no output)" || bad "copilot allow: $OUT"
 
 # ---------- log-event: agent_name fallback ----------
+mkdir -p "$T/proj"; ED="$(. "$PL/scripts/lib-paths.sh"; sd_state_dir "$T/proj"; printf '%s' "$SD_STATE")"   # state dir outside the project
 printf '%s' "{\"hook_event_name\":\"SubagentStart\",\"session_id\":\"s1\",\"cwd\":\"$T/proj\",\"agent_id\":\"a1\",\"agent_name\":\"researcher\"}" | bash "$PL/scripts/log-event.sh" SubagentStart
-grep -q '"agent_type":"researcher"' "$T/proj/.subdeck/events.jsonl" && ok "log-event: agent_name fills agent_type" || bad "log-event agent_name fallback"
-rm -rf "$T/proj/.subdeck"
+grep -q '"agent_type":"researcher"' "$ED/events.jsonl" && ok "log-event: agent_name fills agent_type" || bad "log-event agent_name fallback"
+rm -rf "$ED"
 printf '%s' "{\"hook_event_name\":\"SubagentStart\",\"session_id\":\"s1\",\"cwd\":\"$T/proj\",\"agent_id\":\"a1\",\"agent_type\":\"worker\",\"agent_name\":\"other\"}" | bash "$PL/scripts/log-event.sh" SubagentStart
-grep -q '"agent_type":"worker"' "$T/proj/.subdeck/events.jsonl" && ok "log-event: agent_type wins over agent_name" || bad "log-event agent_type precedence"
+grep -q '"agent_type":"worker"' "$ED/events.jsonl" && ok "log-event: agent_type wins over agent_name" || bad "log-event agent_type precedence"
 
 # ---------- install.sh --tool ----------
 IS="$ROOT/install.sh"

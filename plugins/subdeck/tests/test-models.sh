@@ -7,6 +7,9 @@ ok()  { PASS=$((PASS+1)); echo "ok   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "FAIL $1"; }
 has() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then ok "$3"; else bad "$3 (no match for: $2)"; printf '%s\n' "$1" | sed 's/^/     | /'; fi; }
 H="$(mktemp -d)"; P="$(mktemp -d)"
+unset SUBDECK_STATE_DIR SUBDECK_HOME
+# project config lives in the state dir outside the project (lib-paths.sh), under the temp HOME
+PF="$(HOME="$H"; . "$HERE/../scripts/lib-paths.sh"; sd_state_dir "$P"; printf '%s' "$SD_STATE/config.json")"
 unset ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_FABLE_MODEL
 run() { HOME="$H" bash "$M" "$@" "$P"; }
 validjson() { node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(!j.modelPolicy)process.exit(1)' "$1" 2>/dev/null; }
@@ -30,7 +33,7 @@ has "$out" '^verifier +opus +user' "user verifier opus"
 has "$out" '^researcher +sonnet +default' "untouched key stays default"
 
 out="$(run set worker=claude-sonnet-5-5 mode=current --project)"
-validjson "$P/.subdeck/config.json" && ok "project JSON valid" || bad "project JSON invalid"
+validjson "$PF" && ok "project JSON valid" || bad "project JSON invalid"
 out="$(run show)"
 has "$out" '^worker +claude-sonnet-5-5 +project' "project overrides user"
 has "$out" '^mode +current +project' "project mode"
@@ -58,7 +61,7 @@ out="$(run set)"; has "$out" 'error: set needs' "set without pairs"
 
 out="$(run reset --project)"; rc=$?
 [ $rc -eq 0 ] && ok "reset exits 0" || bad "reset exit $rc"
-[ ! -f "$P/.subdeck/config.json" ] && ok "project file removed" || bad "project file remains"
+[ ! -f "$PF" ] && ok "project file removed" || bad "project file remains"
 out="$(run show)"
 has "$out" '^worker +haiku +user' "user survives project reset"
 out="$(run reset)"; [ ! -f "$H/.subdeck/config.json" ] && ok "user file removed" || bad "user file remains"
@@ -95,6 +98,21 @@ out="$(run show)"; has "$out" 'WARNING: CLAUDE_CODE_SUBAGENT_MODEL_FORCE' "FORCE
 printf '%s\n' '{"availableModels":["sonnet"]}' > "$P/.claude/settings.json"
 out="$(run show)"; has "$out" 'WARNING: availableModels' "availableModels warns"
 rm -rf "$P/.claude"
+
+# legacy <project>/.subdeck/config.json: still read, new file wins, never written
+rm -rf "$H/.subdeck" "$P/.subdeck"
+mkdir -p "$P/.subdeck"; printf '%s\n' '{"modelPolicy":{"worker":"haiku","verifier":"opus"}}' > "$P/.subdeck/config.json"
+LB="$(cat "$P/.subdeck/config.json")"
+out="$(run show)"
+has "$out" '^worker +haiku +project' "legacy project config is read"
+has "$out" '^legacy file: ' "show names the legacy file"
+out="$(run set worker=fable --project)"
+out="$(run show)"
+has "$out" '^worker +fable +project' "new project file wins over legacy"
+has "$out" '^verifier +opus +project' "legacy key not in the new file still applies"
+[ "$LB" = "$(cat "$P/.subdeck/config.json")" ] && ok "legacy file never written" || bad "legacy file modified"
+[ "$(ls -A "$P/.subdeck")" = config.json ] && ok "nothing new in the project folder" || bad "project folder written"
+[ -f "$PF" ] && ok "set --project writes the state dir" || bad "state dir config missing"
 
 rm -rf "$H" "$P"
 echo "$PASS passed, $FAIL failed"

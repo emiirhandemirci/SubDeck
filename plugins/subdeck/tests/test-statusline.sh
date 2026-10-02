@@ -11,6 +11,8 @@ export TZ=UTC
 # independent of the caller: no inherited SUBDECK_* / project vars, and a fresh empty working directory
 for v in $(compgen -v | grep -E '^SUBDECK_') CLAUDE_PROJECT_DIR NO_COLOR COLUMNS; do unset "$v"; done
 SANDBOX="$(mktemp -d)"; cd "$SANDBOX" || exit 1
+export SUBDECK_STATE_DIR="$(mktemp -d)"   # per-project state root (lib-paths.sh), never the real home
+sd() { ( . "$HERE/../scripts/lib-paths.sh"; sd_state_dir "$1"; printf '%s' "$SD_STATE" ); }
 export SUBDECK_STATUSLINE_TTL=0   # cache off unless a test enables it
 P="$(mktemp -d)"; T="$(mktemp -d)"
 mkdir -p "$P/.subdeck" "$T/s1/subagents"
@@ -64,21 +66,33 @@ OUT="$(NO_COLOR=1 SUBDECK_STATUSLINE_CHAIN='grep -o "current_dir[^,}]*"' bash "$
 eq "$OUT" "SubDeck | current_dir\":\"$E\"" "chain receives the same stdin"
 
 # cache: reused within the TTL, refreshed after, atomic file, no leftovers
-PC="$(mktemp -d)"; mkdir -p "$PC/.subdeck"
-{ ev "$(isoat -100)" SubagentStart r1rrrrrr "$T/s1.jsonl"; } > "$PC/.subdeck/events.jsonl"
+PC="$(mktemp -d)"; PCS="$(sd "$PC")"; mkdir -p "$PCS"   # new layout: events and cache in the state dir
+{ ev "$(isoat -100)" SubagentStart r1rrrrrr "$T/s1.jsonl"; } > "$PCS/events.jsonl"
 cj() { NO_COLOR=1 SUBDECK_STATUSLINE_TTL=600 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PC\"}}"; }
 eq "$(cj)" "SubDeck ● 1 running" "cache: cold run"
-[ -f "$PC/.subdeck/statusline.cache" ] && ok "cache: file written" || bad "cache: file missing"
-grep -Eq '^[0-9]+ running=1 ' "$PC/.subdeck/statusline.cache" && ok "cache: format '<epoch> <counts>'" || bad "cache: format"
-ev "$(isoat -99)" SubagentStart r2rrrrrr "$T/s1.jsonl" >> "$PC/.subdeck/events.jsonl"
+[ -f "$PCS/statusline.cache" ] && ok "cache: file written" || bad "cache: file missing"
+grep -Eq '^[0-9]+ running=1 ' "$PCS/statusline.cache" && ok "cache: format '<epoch> <counts>'" || bad "cache: format"
+ev "$(isoat -99)" SubagentStart r2rrrrrr "$T/s1.jsonl" >> "$PCS/events.jsonl"
 eq "$(cj)" "SubDeck ● 1 running" "cache: warm run reuses the old counts"
 eq "$(NO_COLOR=1 SUBDECK_STATUSLINE_TTL=0 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PC\"}}")" "SubDeck ● 2 running" "cache: TTL=0 bypasses it"
-sed -i 's/^[0-9]* /1 /' "$PC/.subdeck/statusline.cache"
+sed -i 's/^[0-9]* /1 /' "$PCS/statusline.cache"
 eq "$(cj)" "SubDeck ● 2 running" "cache: expired entry is recomputed"
-[ "$(ls "$PC/.subdeck" | grep -c 'statusline.cache\.')" = 0 ] && ok "cache: no tmp leftovers" || bad "cache: tmp leftovers"
-printf 'junk' > "$PC/.subdeck/statusline.cache"
+[ "$(ls "$PCS" | grep -c 'statusline.cache\.')" = 0 ] && ok "cache: no tmp leftovers" || bad "cache: tmp leftovers"
+printf 'junk' > "$PCS/statusline.cache"
 eq "$(cj)" "SubDeck ● 2 running" "cache: corrupt file is ignored"
-rm -rf "$PC"
+rm -rf "$PC" "$PCS"
+
+# legacy <project>/.subdeck and the state dir are merged; the cache goes to the state dir, never the project
+PM="$(mktemp -d)"; PMS="$(sd "$PM")"; mkdir -p "$PM/.subdeck"
+ev "$(isoat -100)" SubagentStart r1rrrrrr "$T/s1.jsonl" > "$PM/.subdeck/events.jsonl"
+eq "$(NO_COLOR=1 SUBDECK_STATUSLINE_TTL=600 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PM\"}}")" "SubDeck ● 1 running" "legacy-only project counted"
+[ -f "$PMS/statusline.cache" ] && ok "legacy-only project: cache in the state dir" || bad "legacy-only: no cache"
+mkdir -p "$PMS"; ev "$(isoat -99)" SubagentStart r2rrrrrr "$T/s1.jsonl" > "$PMS/events.jsonl"
+eq "$(NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PM\"}}")" "SubDeck ● 2 running" "legacy and state-dir events merged"
+[ "$(ls -A "$PM/.subdeck")" = events.jsonl ] && ok "nothing written into the project" || bad "project written: $(ls -A "$PM/.subdeck")"
+E2="$(mktemp -d)"; mkdir -p "$(sd "$E2")"; ev "$(isoat -100)" SubagentStart r1rrrrrr "$T/s1.jsonl" > "$(sd "$E2")/events.jsonl"
+eq "$(NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$E\",\"project_dir\":\"$E2\"}}")" "SubDeck ● 1 running" "candidate with a state dir wins"
+rm -rf "$PM" "$PMS" "$E2" "$(sd "$E2")"
 
 # speed: cold (cache off) and warm (cache on) with 20 and 200 agents (info only unless SUBDECK_PERF_STRICT=1)
 ms_now() { date +%s%N 2>/dev/null; }
@@ -111,6 +125,6 @@ perf() { # agents
 }
 case "$(ms_now)" in *N*|"") echo "info timing unavailable" ;; *) perf 20; perf 200 ;; esac
 
-cd / ; rm -rf "$P" "$T" "$E" "$PF" "$SANDBOX"
+cd / ; rm -rf "$P" "$T" "$E" "$PF" "$SANDBOX" "$SUBDECK_STATE_DIR"
 echo "SUMMARY: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

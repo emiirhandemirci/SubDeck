@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Append one JSON line per subagent event to <project>/.subdeck/events.jsonl.
+# Append one JSON line per subagent event to <state>/events.jsonl, where <state> is the project's state dir
+# outside the project (~/.subdeck/projects/<key>/, see lib-paths.sh; SUBDECK_STATE_DIR overrides the root).
 # Usage: log-event.sh <SubagentStart|SubagentStop>   (hook payload on stdin)
 # No jq/node needed. Uses an mkdir lock; if not acquired in ~5 s, writes the event
-# lock-free to .subdeck/events.d/<ts>-<pid>-<rand>.json (never dropped). Always exits 0.
+# lock-free to <state>/events.d/<ts>-<pid>-<rand>.json (never dropped). Always exits 0.
 # Envelope lifts agent_id, agent_type, transcript_path, session_id to the top level.
 
 EVENT="${1:-}"
@@ -19,7 +20,11 @@ if [ -z "$PROJECT" ]; then
 fi
 [ -n "$PROJECT" ] && [ -d "$PROJECT" ] || PROJECT="$(pwd)"
 
-DIR="$PROJECT/.subdeck"
+HERE="${BASH_SOURCE[0]%[/\\]*}"; [ "$HERE" = "${BASH_SOURCE[0]}" ] && HERE="."
+. "$HERE/lib-paths.sh" 2>/dev/null || exit 0
+sd_state_dir "$PROJECT"
+DIR="$SD_STATE"
+[ -n "$SD_KEY" ] || exit 0
 LOCK="$DIR/events.lock"
 mkdir -p "$DIR" 2>/dev/null || exit 0
 
