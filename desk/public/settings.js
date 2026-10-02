@@ -39,6 +39,19 @@ export function applyTheme(t) {
   if (t === 'light' || t === 'dark') r.setAttribute('data-theme', t); else r.removeAttribute('data-theme');
 }
 
+const THEME_ICON = {
+  system: ['M4 5h16v11H4z', 'M9 20h6M12 16v4'],
+  light: ['M12 8a4 4 0 1 0 0.01 0z', 'M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8'],
+  dark: ['M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z'],
+};
+function themeIcon(id) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  for (const [k, v] of Object.entries({ viewBox: '0 0 24 24', width: '14', height: '14', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(k, v);
+  for (const d of THEME_ICON[id] || []) { const p = document.createElementNS(ns, 'path'); p.setAttribute('d', d); svg.appendChild(p); }
+  return svg;
+}
+
 export function initSettings({ $, el, store, getJSON, token, getProject, onWindow }) {
   const st = { theme: store.get('theme', 'system'), scope: 'user', data: null, error: null, busy: false, open: false, msg: null, gen: 0 };
   if (!THEMES.some(t => t[0] === st.theme)) st.theme = 'system';
@@ -49,7 +62,8 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
     const box = $('themeSwitch'); if (!box) return;
     box.replaceChildren();
     for (const [id, label] of THEMES) {
-      const b = el('button', 'seg', label); b.type = 'button';
+      const b = el('button', 'seg'); b.type = 'button';
+      b.append(themeIcon(id)); b.title = `Theme: ${label}`; b.setAttribute('aria-label', label);
       b.setAttribute('aria-pressed', String(st.theme === id));
       b.addEventListener('click', () => setTheme(id));
       box.append(b);

@@ -165,8 +165,9 @@ function renderBell() {
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   path.setAttribute('d', BELL_ON); path.setAttribute('fill', 'currentColor'); svg.appendChild(path);
   if (!on) { const l = document.createElementNS('http://www.w3.org/2000/svg', 'path'); l.setAttribute('d', 'M4 4l16 16'); l.setAttribute('stroke', 'currentColor'); l.setAttribute('stroke-width', '2'); l.setAttribute('stroke-linecap', 'round'); svg.appendChild(l); }
-  b.append(svg, el('span', 'bell-label', on ? 'Notifications on' : 'Notifications off'));
-  if (ov.length) b.append(el('span', 'bell-note', ov.length === 1 ? `overridden by ${ov[0].project || 'project'}` : `overridden by ${ov.length} projects`));
+  b.setAttribute('aria-label', on ? 'Notifications on' : 'Notifications off');
+  b.append(svg, el('span', 'sr-only', on ? 'Notifications on' : 'Notifications off'));
+  if (ov.length) b.append(el('span', 'sr-only', ov.length === 1 ? `overridden by ${ov[0].project || 'project'}` : `overridden by ${ov.length} projects`));
 }
 async function loadNotify() {
   try { const d = await getJSON('/api/settings/notify'); S.notify = d.enabled === true; S.notifyOverrides = Array.isArray(d.overriddenBy) ? d.overriddenBy : []; }
@@ -187,25 +188,99 @@ async function toggleNotify() {
 if ($('bell')) $('bell').addEventListener('click', () => { toggleNotify(); });
 
 // ---------- header ----------
+// Where each tool's data would be, shown in the detection popover for tools that were not found.
+const ABSENT_HINT = {
+  'claude-code': 'Looks for ~/.claude/projects',
+  cursor: 'Looks for Cursor user data (globalStorage/state.vscdb)',
+  codex: 'Looks for ~/.codex (or CODEX_HOME)',
+  copilot: 'Looks for ~/.copilot (or COPILOT_HOME)',
+  gemini: 'Looks for ~/.gemini',
+  cline: 'Looks for ~/.cline or the Cline/Roo extension storage in VS Code',
+  opencode: 'Looks for the OpenCode data folder (XDG data home)',
+};
+function sourceTip(s) {
+  const extra = [s.experimental ? `${s.label}: data format not yet verified on every platform` : '', s.lastError || ''].filter(Boolean);
+  return [`${s.counts.projects} projects, ${s.counts.sessions} sessions, ${s.counts.running} running${s.counts.waiting ? `, ${s.counts.waiting} waiting` : ''}`, ...extra].join('\n');
+}
+const sp = { open: false, opener: null };
+function renderSrcPanel() {
+  const box = $('srcPanel');
+  box.replaceChildren();
+  const det = S.sources.filter(x => x.detected), absent = S.sources.filter(x => !x.detected);
+  box.append(el('h3', 'pop-h', `Detected (${det.length})`));
+  if (!det.length) box.append(el('p', 'pop-empty', 'No supported tool found yet.'));
+  for (const s of det) {
+    const r = el('div', 'pop-row');
+    const head = el('div', 'pop-name'); head.append(el('span', `pop-dot ${s.health}`), el('span', null, `${s.label}: ${s.health}`));
+    r.append(head);
+    for (const line of sourceTip(s).split('\n')) r.append(el('div', 'pop-sub', line));
+    box.append(r);
+  }
+  box.append(el('h3', 'pop-h', `Not detected (${absent.length})`));
+  if (!absent.length) box.append(el('p', 'pop-empty', 'Every supported tool was found.'));
+  for (const s of absent) {
+    const r = el('div', 'pop-row');
+    r.append(el('div', 'pop-name muted', s.label), el('div', 'pop-sub', ABSENT_HINT[s.id] || 'No data folder found'));
+    box.append(r);
+  }
+}
+function openSrcPanel(opener) {
+  const same = sp.open && sp.opener === opener;
+  if (sp.open) closeSrcPanel(false);
+  if (same) { opener.focus(); return; }
+  sp.open = true; sp.opener = opener;
+  renderSrcPanel();
+  $('srcPanel').hidden = false;
+  for (const b of [$('srcInfo'), $('srcMore')]) b.setAttribute('aria-expanded', String(b === opener));
+  $('srcPanel').focus();
+}
+function closeSrcPanel(refocus) {
+  if (!sp.open) return;
+  sp.open = false;
+  $('srcPanel').hidden = true;
+  for (const b of [$('srcInfo'), $('srcMore')]) b.setAttribute('aria-expanded', 'false');
+  const o = sp.opener; sp.opener = null;
+  if (refocus) (o && !o.hidden ? o : $('srcInfo')).focus();
+}
+$('srcInfo').addEventListener('click', () => openSrcPanel($('srcInfo')));
+$('srcMore').addEventListener('click', () => openSrcPanel($('srcMore')));
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && sp.open) { ev.preventDefault(); closeSrcPanel(true); } });
+document.addEventListener('click', ev => { if (sp.open && !ev.target.closest('#srcPanel, #srcInfo, #srcMore')) closeSrcPanel(false); });
+// Keep the header on one row: badges that do not fit collapse into a "+N" button that opens the same popover.
+function fitSources() {
+  const box = $('sources'), more = $('srcMore');
+  const items = [...box.children];
+  for (const b of items) b.hidden = false;
+  more.hidden = true;
+  if (box.scrollWidth <= box.clientWidth + 1) return;
+  more.hidden = false;
+  let hid = 0;
+  while (hid < items.length) {
+    hid++; items[items.length - hid].hidden = true;
+    more.textContent = `+${hid}`;
+    if (box.scrollWidth <= box.clientWidth + 1) break;
+  }
+  more.title = `${hid} more detected tool${hid === 1 ? '' : 's'}: show details`;
+  more.setAttribute('aria-label', `${hid} more detected tool${hid === 1 ? '' : 's'}, show details`);
+}
+if (typeof ResizeObserver === 'function') new ResizeObserver(() => fitSources()).observe(document.querySelector('.src-group'));
+else window.addEventListener('resize', fitSources);
+
 function renderSources() {
   const box = $('sources');
   box.replaceChildren();
   for (const s of S.sources.filter(x => x.detected)) {
     const b = el('span', `badge src ${s.health} tool-${s.id}`);
     b.append(document.createTextNode(`${s.label}: ${s.health}`));
-    const extra = [s.experimental ? `${s.label}: data format not yet verified on every platform` : '', s.lastError || ''].filter(Boolean);
-    b.title = [`${s.counts.projects} projects, ${s.counts.sessions} sessions, ${s.counts.running} running${s.counts.waiting ? `, ${s.counts.waiting} waiting` : ''}`, ...extra].join('\n');
+    b.title = sourceTip(s);
     b.setAttribute('aria-label', b.title.split('\n').join('. '));
     box.append(b);
   }
-  const absent = S.sources.filter(x => !x.detected);
-  if (absent.length) {
-    const d = el('details', 'absent-sources');
-    d.append(el('summary', null, `not detected (${absent.length})`), el('span', 'muted', absent.map(x => x.label).join(', ')));
-    box.append(d);
-  }
   const last = S.sources.map(s => s.lastScanAt).filter(Boolean).sort().pop();
-  $('lastScan').textContent = last ? `Last scan ${formatClock(last)}` : '';
+  $('lastScan').textContent = last ? formatClock(last) : '';
+  $('lastScan').title = last ? `Last scan ${formatClock(last)}` : '';
+  fitSources();
+  if (sp.open) renderSrcPanel();
   const notices = $('notices');
   notices.replaceChildren();
   for (const s of S.sources) if (s.health === 'error') notices.append(el('div', 'notice error', `${s.label}: ${s.lastError || 'error'}`));
