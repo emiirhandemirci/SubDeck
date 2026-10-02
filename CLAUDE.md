@@ -14,6 +14,7 @@ Read `internal/design.md` (private, maintainers only) completely before doing an
 - Agents work on the current branch, commit only their own paths (`git add <new files>` then `git commit -m "..." -- <paths>`), never `git add -A` / `git add .`.
 - Never use `bypassPermissions`.
 - Stuck agent: stop after 3 failed attempts, report, ask the user.
+- Acceptance is not the worker's "done": verifier reports carry a HEAD + state fingerprint (stale if it changed), end with a stop reason, and approval of X is not approval of Y.
 
 ## Git and publishing
 

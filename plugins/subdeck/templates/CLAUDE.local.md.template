@@ -29,6 +29,7 @@ Delete this line and the placeholder list at the end once filled in.
 - Write long task texts to a file first and point the agent at it.
 - Protected paths (agents must not touch): {{PROTECTED_PATHS}}
 - Agents report in at most 8 lines; details go to files.
+- Every report ends with a stop reason (done|waiting|quota|timeout|no-progress|blocked); a worker's "done" is never acceptance: the verifier shows the check can fail, runs syntax checks on touched files, and stamps its report with HEAD + a state fingerprint (stale if either changed).
 
 ## Git flow
 
@@ -36,7 +37,7 @@ Delete this line and the placeholder list at the end once filled in.
 - Commit only own paths: `git add <new files>`, then `git commit -m "..." -- <paths>`. Never `git add -A` or `git add .`.
 - On an `index.lock` error, wait a few seconds and retry.
 - Agents never push, open PRs, merge, rebase, stash, or reset.
-- Push and PR only with explicit user approval.
+- Push and PR only with explicit user approval; approval of X is not approval of Y (a later push, a release, a deletion needs a new yes).
 - Attribution in commits and PRs: {{ATTRIBUTION_POLICY}}
 - Test command to run before claiming done: `{{TEST_COMMAND}}`
 

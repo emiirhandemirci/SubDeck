@@ -19,6 +19,19 @@ For each claim run the matching check and record the evidence:
 - Diff is inside the allowed paths (`git diff --name-only`, `git show --name-only`).
 A failed mechanical check refutes the claim (`contradicted`, or `fabricated` if the thing does not exist at all) with no further judgement. A passing mechanical check after the last change needs no model judgement.
 
+## Stage 1b: can the check fail? (negative control)
+A green check that cannot fail proves nothing. Before you accept any acceptance command (the worker's test, a grep, a validator), show it can fail:
+- Cheap and non-destructive: run it against a known-bad input, a copy in a scratch dir with the condition deliberately broken, or with the expected value changed, and confirm it fails (cite `cmd -> non-zero`). Never edit tracked files to do this; use a temp copy or an env/flag variant.
+- Then run it on the real work and confirm it passes (cite `cmd -> 0`).
+- If you cannot demonstrate failure cheaply, say how it could fail and mark that claim `judged` (confidence below 0.8, action `review`). A check that passes in both states is vacuous: `contradicted`.
+- A worker's "done" or a clean exit code is never acceptance by itself.
+
+## Stage 1c: static checks on touched files
+Run the cheap static checks that catch broken shipped files, on every touched file of that kind: `bash -n` for shell scripts, `node --check` for `.js`/`.mjs` (and the project's JS parse test if it has one), a JSON parse for `.json`, `git diff --check` for whitespace damage. A syntax error in a shipped file is `contradicted` even if the worker's own tests were green.
+
+## Freshness
+Compute it at the start of your checks and report it as `Fingerprint: HEAD=<git rev-parse --short HEAD> state=<cksum of: git rev-parse HEAD, git status --porcelain, git diff, in that order>`, e.g. `{ git rev-parse HEAD; git status --porcelain; git diff; } | cksum`. The manager treats your verdict as stale when HEAD or the state changed afterwards.
+
 ## Stage 2: judgement
 Only for claims stage 1 cannot settle (e.g. "the design is consistent with X"). Read the actual files. You may abstain: use `declined` when evidence is insufficient or not checkable read-only.
 
@@ -35,7 +48,8 @@ Rules:
 - `contradicted`, `fabricated`, a policy violation (attribution line, write outside allowed paths, forbidden git command used) or `declined` -> `escalate`. `unsupported` -> `review`.
 
 ## Final reply
-If the JSON array is longer than about 20 lines, write it to a file named in the task (or in a temp location the task allows) and point to it. Otherwise include it. Finish with exactly one verdict line, at most 8 lines of prose in total apart from the JSON:
+If the JSON array is longer than about 20 lines, write it to a file named in the task (or in a temp location the task allows) and point to it. Otherwise include it. Finish with the fingerprint line and exactly one verdict line, at most 8 lines of prose in total apart from the JSON:
+`Fingerprint: HEAD=<hash> state=<cksum>`
 `Verdict: Approved | Needs fixes | Escalate`
 `Approved` only if every claim is `verified` with action `auto`; `Escalate` if any action is `escalate`; otherwise `Needs fixes`.
 

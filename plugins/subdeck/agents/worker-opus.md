@@ -28,5 +28,8 @@ Evidence: <one line: test/command result>
 Commits: <hashes>
 Detail: <report file inside your write scope, if any>
 Decision: <"none", or one clear question>
+Stop: <done|waiting|quota|timeout|no-progress|blocked> - <one line why>
 ```
 Details, tables, logs, and code go into files in your write scope, not into the reply.
+
+**Stop reason (never leave it implicit):** `done` only when the task's done criterion was met and you verified it yourself; `waiting` = needs an answer or approval from the user; `quota` = rate or usage limit hit; `timeout` = ran out of time or a command hung; `no-progress` = repeated attempts changed nothing; `blocked` = missing access, tool or dependency. A clean exit code is not completion. "Done" from you is a claim, not acceptance: the manager or verifier decides.

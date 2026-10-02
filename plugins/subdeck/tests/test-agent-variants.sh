@@ -20,4 +20,16 @@ for pair in worker-sonnet:sonnet worker-opus:opus researcher:sonnet verifier:son
   if fm "$A/$n.md" | grep -qx "model: $m"; then ok "$n keeps model: $m"; else bad "$n model changed"; fi
 done
 if grep -q $'\r' "${BASH_SOURCE[0]}"; then bad "test file has CRLF"; else ok "test file LF endings"; fi
+for n in worker-sonnet worker-opus worker-current; do
+  if grep -q '^Stop: <done|waiting|quota|timeout|no-progress|blocked>' "$A/$n.md"; then ok "$n report has Stop line"; else bad "$n lacks Stop line"; fi
+done
+for n in verifier verifier-current; do
+  if grep -q 'negative control' "$A/$n.md"; then ok "$n has negative control rule"; else bad "$n lacks negative control"; fi
+  if grep -q 'node --check' "$A/$n.md"; then ok "$n has static syntax checks"; else bad "$n lacks static checks"; fi
+  if grep -q '^`Fingerprint: HEAD=' "$A/$n.md"; then ok "$n reports a fingerprint"; else bad "$n lacks fingerprint"; fi
+done
+O="$HERE/../skills/orchestrator/SKILL.md"
+for pat in 'approval of X is not approval of Y' 'Report freshness' 'Stop reason' 'negative control'; do
+  if grep -q "$pat" "$O"; then ok "orchestrator mentions: $pat"; else bad "orchestrator lacks: $pat"; fi
+done
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" -eq 0 ]
