@@ -225,6 +225,146 @@ if command -v node >/dev/null 2>&1; then
     && ok "rewritten CRLF config is valid JSON" || bad "invalid JSON after CRLF rewrite"
 fi
 rm -f "$UC"
+
+# ---- protected-paths (empty by default; configured per project) ----
+expect allow 'echo x > CLAUDE.md' "protected-paths inactive without a list"
+expect_file allow Write "$P/CLAUDE.md"
+cfg "$PC" '{"guard":{"protectedPaths":["CLAUDE.md",".github/workflows/**","migrations/**","*.lock","docs\\SPEC.md","Src/Locked"]}}'
+while IFS=$'\t' read -r want cmd; do
+  [ -n "$want" ] || continue
+  expect "$want" "${cmd//@P@/$P}"
+done <<'TABLE'
+ask	echo x > CLAUDE.md
+ask	echo x >> CLAUDE.md
+ask	echo x >CLAUDE.md
+ask	> CLAUDE.md
+ask	echo x 2> CLAUDE.md
+ask	echo x > @P@/CLAUDE.md
+ask	echo x > sub/CLAUDE.md
+ask	cd sub && echo x > ../CLAUDE.md
+ask	rm CLAUDE.md
+ask	rm -f -- CLAUDE.md
+ask	rm -rf .github
+ask	rm -rf .github/workflows
+ask	rm .github/workflows/ci.yml
+ask	rm migrations/001_init.sql
+ask	git rm migrations/001_init.sql
+ask	git rm -r --cached migrations
+ask	git -C sub rm ../CLAUDE.md
+ask	git checkout -- CLAUDE.md
+ask	git checkout HEAD -- migrations/002.sql
+ask	git restore CLAUDE.md
+ask	git mv CLAUDE.md OLD.md
+ask	mv notes.txt CLAUDE.md
+ask	mv CLAUDE.md notes.txt
+ask	cp other.md CLAUDE.md
+ask	sed -i 's/a/b/' CLAUDE.md
+ask	sed -i.bak -e 's/a/b/' migrations/x.sql
+ask	sed --in-place 's/a/b/' package.lock
+ask	sed -ni 's/a/b/p' CLAUDE.md
+ask	echo y | tee CLAUDE.md
+ask	bash -c "echo x > CLAUDE.md"
+ask	true && rm yarn.lock
+ask	rm SUB/../claude.MD
+ask	Remove-Item CLAUDE.md
+ask	Remove-Item -Path migrations -Recurse
+ask	dd if=/dev/zero of=CLAUDE.md
+ask	truncate -s 0 CLAUDE.md
+ask	rm docs/SPEC.md
+ask	rm src/locked/a.txt
+allow	cat CLAUDE.md
+allow	grep foo CLAUDE.md > out.txt
+allow	echo x > notes.md
+allow	echo x > /tmp/CLAUDE.md
+allow	echo x 2>&1
+allow	cp CLAUDE.md /tmp/copy.md
+allow	cp CLAUDE.md copy.md
+allow	sed 's/a/b/' CLAUDE.md
+allow	sed -n 1p CLAUDE.md
+allow	git checkout main
+allow	git checkout -b feature
+allow	git diff CLAUDE.md
+allow	git status migrations
+allow	git add CLAUDE.md
+allow	echo "rm CLAUDE.md"
+allow	rm other.txt
+allow	rm -rf build/
+allow	rm .github/dependabot.yml
+allow	rm migrations_old/a.sql
+allow	rm CLAUDE.md.bak
+TABLE
+expect_file ask   Write "$P/CLAUDE.md"
+expect_file ask   Edit  "$P/sub/CLAUDE.md"
+expect_file ask   MultiEdit "$P/.github/workflows/ci.yml"
+expect_file ask   Write "$P/migrations/2024/001.sql"
+expect_file ask   Write "$P/yarn.lock"
+expect_file ask   Write "$P/docs/spec.md"
+expect_file ask   Write "$P/claude.md"
+expect_file allow Write "$P/CLAUDE.md.bak"
+expect_file allow Write "$P/.github/dependabot.yml"
+expect_file allow Write "$P/src/migrations.js"
+expect_file allow Write "/tmp/elsewhere/CLAUDE.md"
+expect_file allow Write "$H/CLAUDE.md"
+# mode, project list replaces user list, env, disabled
+cfg "$PC" '{"guard":{"rules":{"protected-paths":"deny"},"protectedPaths":["CLAUDE.md"]}}'
+expect deny 'rm CLAUDE.md' "protected-paths=deny"
+cfg "$PC" '{"guard":{"rules":{"protected-paths":"off"},"protectedPaths":["CLAUDE.md"]}}'
+expect allow 'rm CLAUDE.md' "protected-paths=off"
+cfg "$UC" '{"guard":{"protectedPaths":["a.txt","b.txt"]}}'
+cfg "$PC" '{"guard":{"protectedPaths":["b.txt"]}}'
+expect allow 'rm a.txt' "project list replaces user list"
+expect ask   'rm b.txt' "project list entry protected"
+cfg "$PC" '{"guard":{"protectedPaths":[]}}'
+expect allow 'rm b.txt' "empty project list wins over user list"
+rm -f "$PC"
+expect ask   'rm a.txt' "user list applies without project list"
+cfg "$UC" '{"guard":{"enabled":false,"protectedPaths":["a.txt"]}}'
+expect allow 'rm a.txt' "guard disabled skips protected paths"
+cfg "$UC" "{\"guard\":{\"protectedPaths\":[\"a.txt\",\"big\u00e9.txt\"]}}"
+expect ask   'rm a.txt' "unicode escape in list does not break parsing"
+rm -f "$UC"
+# Codex (apply_patch, ask becomes deny) and Copilot (lowercase tools, path key, top-level decision)
+cfg "$PC" '{"guard":{"protectedPaths":["CLAUDE.md","migrations/**"]}}'
+PATCH='*** Begin Patch\n*** Update File: CLAUDE.md\n@@\n-a\n+b\n*** End Patch'
+codex_out="$(printf '{"session_id":"s","cwd":"%s","hook_event_name":"PreToolUse","tool_name":"apply_patch","tool_input":{"command":"%s"}}' "$P" "$PATCH" | SUBDECK_TOOL=codex HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+has "$codex_out" '"permissionDecision":"deny".*Ask the user for approval first.*protected-paths' "codex apply_patch on protected file: deny asking the user"
+PATCH='*** Begin Patch\n*** Add File: src/ok.js\n+x\n*** Delete File: migrations/001.sql\n*** End Patch'
+codex_out="$(printf '{"cwd":"%s","tool_name":"apply_patch","tool_input":{"command":"%s"}}' "$P" "$PATCH" | SUBDECK_TOOL=codex HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+has "$codex_out" 'protected-paths' "codex apply_patch delete of a protected file"
+PATCH='*** Begin Patch\n*** Add File: src/ok.js\n+x\n*** End Patch'
+codex_out="$(printf '{"cwd":"%s","tool_name":"apply_patch","tool_input":{"command":"%s"}}' "$P" "$PATCH" | SUBDECK_TOOL=codex HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+[ -z "$codex_out" ] && ok "codex apply_patch on an unprotected file is allowed" || bad "codex unprotected patch got: $codex_out"
+cop_out="$(printf '{"cwd":"%s","tool_name":"edit","tool_input":{"path":"%s/CLAUDE.md","old_str":"a","new_str":"b"}}' "$P" "$P" | SUBDECK_TOOL=copilot HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+has "$cop_out" '^\{"permissionDecision":"ask".*protected-paths' "copilot edit on protected file: top-level ask"
+cop_out="$(printf '{"cwd":"%s","tool_name":"create","tool_input":{"path":"%s/migrations/9.sql","file_text":"x"}}' "$P" "$P" | SUBDECK_TOOL=copilot HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+has "$cop_out" 'protected-paths' "copilot create in a protected directory"
+cop_out="$(printf '{"cwd":"%s","tool_name":"bash","tool_input":{"command":"rm CLAUDE.md"}}' "$P" | SUBDECK_TOOL=copilot HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+has "$cop_out" 'protected-paths' "copilot bash rm of a protected file"
+cop_out="$(printf '{"cwd":"%s","tool_name":"edit","tool_input":{"path":"%s/src/a.js"}}' "$P" "$P" | SUBDECK_TOOL=copilot HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+[ -z "$cop_out" ] && ok "copilot edit of an unprotected file is allowed" || bad "copilot unprotected got: $cop_out"
+rm -f "$PC"
+# settings: protect / unprotect / show / preservation
+out="$(run protect 'CLAUDE.md,migrations/**')"
+has "$out" '^protectedPaths \(user\): CLAUDE.md,migrations/\*\*' "protect lists the globs in show"
+grep -q '"protectedPaths":\["CLAUDE.md","migrations/\*\*"\]' "$H/.subdeck/config.json" && ok "protect writes the array" || bad "protect file: $(cat "$H/.subdeck/config.json")"
+out="$(run protect 'CLAUDE.md,*.lock' --project)"
+has "$out" '^protectedPaths \(project\): CLAUDE.md,\*.lock' "project list wins in show"
+out="$(run set protected-paths=deny)"
+grep -q '"protectedPaths"' "$H/.subdeck/config.json" && grep -q '"protected-paths":"deny"' "$H/.subdeck/config.json" && ok "set keeps protectedPaths" || bad "set lost list: $(cat "$H/.subdeck/config.json")"
+out="$(run off)"; out="$(run on)"
+grep -q '"protectedPaths":\["CLAUDE.md","migrations/\*\*"\]' "$H/.subdeck/config.json" && ok "on/off keep protectedPaths" || bad "on/off lost list"
+out="$(run unprotect 'CLAUDE.md')"
+grep -q '"protectedPaths":\["migrations/\*\*"\]' "$H/.subdeck/config.json" && ok "unprotect removes one entry" || bad "unprotect: $(cat "$H/.subdeck/config.json")"
+out="$(run unprotect 'nothing-here')"; has "$out" "is not in" "unprotect of unknown glob notes it"
+out="$(run protect 'migrations/**')"; [ "$(grep -o 'migrations' "$H/.subdeck/config.json" | wc -l)" -eq 1 ] && ok "protect does not duplicate" || bad "duplicate entry"
+out="$(run protect 'bad"glob')"; has "$out" 'invalid glob' "quote in glob rejected"
+out="$(run unprotect 'migrations/**')"
+grep -q 'protectedPaths' "$H/.subdeck/config.json" && bad "empty list still written" || ok "removing the last entry drops the key"
+cfg "$UC" "{\"modelPolicy\":{\"worker\":\"opus\"},\"guard\":{\"protectedPaths\":[\"x\u00e9.txt\"],\"rules\":{\"future-rule\":\"deny\"}}}"
+out="$(run protect 'y.txt')"
+grep -q '"protectedPaths":\["x\\u00e9.txt","y.txt"\]' "$UC" && grep -q '"future-rule":"deny"' "$UC" && grep -q '"modelPolicy":{"worker":"opus"}' "$UC" && ok "escaped entries and other keys survive" || bad "round trip damaged: $(cat "$UC")"
+out="$(run reset)"; grep -q protectedPaths "$UC" && bad "reset kept list" || ok "reset drops protectedPaths"
+rm -f "$UC" "$PC"
 # ---- timing (best of N runs; strict limits only with SUBDECK_PERF_STRICT=1, generous otherwise) ----
 if [ "${SUBDECK_PERF_STRICT:-0}" = 1 ]; then LIM1=400; LIM2=1500; else LIM1=1500; LIM2=3000; fi
 best_ms() { # runs payload -> minimum wall ms

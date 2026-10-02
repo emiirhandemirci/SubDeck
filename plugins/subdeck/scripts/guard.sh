@@ -10,20 +10,29 @@
 #   guard.sh [cli] set rule=mode ... [--project]     mode: deny | ask | off
 #   guard.sh [cli] on|off [--project]                guard.enabled true|false
 #   guard.sh [cli] reset [--project]                 remove the "guard" member of that config file
+#   guard.sh [cli] protect <glob>[,<glob>] [--project]   add to guard.protectedPaths (unprotect <glob>[,..] removes)
 #   A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
 # Config: key "guard" in ~/.subdeck/config.json (user) and <project>/.subdeck/config.json (project wins),
 #   e.g. {"guard":{"enabled":true,"rules":{"push":"off","attribution":"deny"}}}.
 #   Other top-level members are re-emitted verbatim; a file that is not a JSON object is left untouched.
 # Rules (default mode): git-add-all (deny), force-push (deny), push (ask), history-rewrite (ask),
-#   rm-rf-danger (deny), secret-files (ask), attribution (off).
+#   rm-rf-danger (deny), secret-files (ask), attribution (off), protected-paths (ask; active only when
+#   guard.protectedPaths, an array of globs in user/project config, is non-empty; a project list replaces the user list).
+#   Globs match the path relative to the project root (case-insensitive on Windows, / or \ separators):
+#   a glob without "/" matches that name at any depth (CLAUDE.md, *.lock); with "/" it is anchored at the root;
+#   * stays inside one segment, ** crosses segments; a match also covers everything below it.
+#   Checked: Write/Edit/MultiEdit/apply_patch targets, redirections (> >>), rm/mv/cp (destination)/tee/truncate/
+#   dd of=, sed -i, git rm/mv/restore/checkout -- <path>, PowerShell Remove-Item/Move-Item/Copy-Item.
 # This is a guard rail, not a sandbox: it reads the command text only. Chains (&& || ; | & newline),
 #   quoting, $(...) and backticks (also inside double quotes), heredoc bodies (skipped), env assignments,
 #   sudo/env/nohup/timeout prefixes, git -C/-c, `bash|sh -c "..."` and `eval` are handled. Known bypasses:
 #   git aliases, scripts/Makefiles, variables holding commands or paths ($X push, rm -rf "$DIR"),
-#   other interpreters (python -c, node -e), find -delete, writing secret files via the shell.
+#   other interpreters (python -c, node -e), find -delete, writing secret/protected files via the shell.
+#   Protected paths also escape through shell globs or variables in targets (rm CLA*), perl -pi, patch,
+#   editors, git checkout <branch> / stash / reset, and cp into a protected directory.
 # bash + awk only; one awk process per hook call.
 
-RULES="git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution"
+RULES="git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths"
 
 if [ $# -eq 0 ] || [ "$1" = hook ]; then
   case "$SUBDECK_GUARD" in 0|off|false|no|OFF|FALSE|NO) exit 0 ;; esac
@@ -77,6 +86,7 @@ function jval(path,  c, k, i, s, rk, vs, rv) {
       if (c != ",") { JERR = 1; return }
     }
   } else if (c == "[") {
+    if (path == "/guard/protectedPaths") HASPP = 1
     P++; jws(); if (substr(T, P, 1) == "]") { P++; return }
     i = 0
     while (1) {
@@ -87,6 +97,7 @@ function jval(path,  c, k, i, s, rk, vs, rv) {
     }
   } else if (c == "\"") {
     s = jstr(); if (JERR) return
+    if (path ~ /^\/guard\/protectedPaths\/[0-9]+$/) { NPP++; PPRAW[NPP] = s; PPDEC[NPP] = jdec(s) }
     if (path ~ WANT) { V[path] = jdec(s); if (HOOKPARSE && want_done()) STOP = 1 }
   } else {
     if (!match(substr(T, P), /^[-+0-9a-zA-Z.]+/)) { JERR = 1; return }
@@ -98,7 +109,7 @@ function want_done() {
   return ("/tool_name" in V) && ("/cwd" in V) && (("/tool_input/command" in V) || ("/tool_input/file_path" in V))
 }
 function jparse(text) {
-  T = text; N = length(T); P = 1; JERR = 0; STOP = 0; split("", V); NRK = 0
+  T = text; N = length(T); P = 1; JERR = 0; STOP = 0; split("", V); NRK = 0; NPP = 0; HASPP = 0
   jws(); if (substr(T, P, 1) != "{") return 0
   jval("")
   if (STOP) return 1
@@ -114,13 +125,13 @@ function slurp(f,  t, line, r) {
 
 # ---------- config ----------
 function initrules(  i, n, a) {
-  n = split("git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution", a, " ")
+  n = split("git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths", a, " ")
   NRULE = n
   for (i = 1; i <= n; i++) RID[i] = a[i]
   DEF["git-add-all"] = "deny"; DEF["force-push"] = "deny"; DEF["push"] = "ask"
-  DEF["history-rewrite"] = "ask"; DEF["rm-rf-danger"] = "deny"; DEF["secret-files"] = "ask"; DEF["attribution"] = "off"
+  DEF["history-rewrite"] = "ask"; DEF["rm-rf-danger"] = "deny"; DEF["secret-files"] = "ask"; DEF["attribution"] = "off"; DEF["protected-paths"] = "ask"
   for (i = 1; i <= n; i++) { MODE[RID[i]] = DEF[RID[i]]; SRC[RID[i]] = "default" }
-  ENABLED = 1; ENSRC = "default"
+  ENABLED = 1; ENSRC = "default"; NPL = 0; PLSRC = "default"
 }
 function isknown(id,  i) { for (i = 1; i <= NRULE; i++) if (RID[i] == id) return 1; return 0 }
 function cfgfile(f, src,  t, i, v, id) {
@@ -129,6 +140,7 @@ function cfgfile(f, src,  t, i, v, id) {
   HOOKPARSE = 0; WANT = "^/guard/"
   if (!jparse(t)) { CFGSTATE[src] = "invalid JSON, ignored"; return }
   CFGSTATE[src] = "ok"
+  if (HASPP) { NPL = 0; for (i = 1; i <= NPP; i++) if (PPDEC[i] != "") PL[++NPL] = PPDEC[i]; PLSRC = src }
   for (i = 1; i <= NRK; i++) if (!isknown(RKD[i])) UNK = UNK (UNK == "" ? "" : ", ") RKD[i] " (" src ")"
   if ("/guard/enabled" in V) {
     v = tolower(V["/guard/enabled"])
@@ -197,11 +209,11 @@ function danger_target(t,  p) {
 
 # ---------- shell tokenizer: words per segment, split on ; & | newline ( ) $( ` ----------
 function newseg() { NSEG++; CS = NSEG; NW = 0 }
-function endseg(d) { if (NW > 0) { WC[d, CS] = NW; NSG[d]++; SEGS[d, NSG[d]] = CS } newseg() }
+function endseg(d) { if (NW > 0 || RN[d, CS] > 0) { WC[d, CS] = NW; NSG[d]++; SEGS[d, NSG[d]] = CS } newseg() }
 function flush(d) {
   if (HASW || WD != "") {
     if (HDNEXT) { HDN++; HD[HDN] = WD; HS[HDN] = HDSTRIPNEXT; HDNEXT = 0 }
-    else if (SKIPNEXT) SKIPNEXT = 0
+    else if (SKIPNEXT) { if (SKIPOUT) { RN[d, CS]++; RD[d, CS, RN[d, CS]] = WD }; SKIPNEXT = 0 }
     else { NW++; W[d, CS, NW] = WD }
   }
   WD = ""; HASW = 0
@@ -229,7 +241,7 @@ function skiphd(cmd, i, n,  k, e, line) {
   return i
 }
 function tokenize(cmd, d,  n, i, c, nx, m) {
-  n = length(cmd); SP = 0; WD = ""; HASW = 0; HDN = 0; HDNEXT = 0; SKIPNEXT = 0; PD = 0; NSG[d] = 0
+  n = length(cmd); SP = 0; WD = ""; HASW = 0; HDN = 0; HDNEXT = 0; SKIPNEXT = 0; SKIPOUT = 0; PD = 0; NSG[d] = 0
   newseg()
   for (i = 1; i <= n; i++) {
     c = substr(cmd, i, 1); m = (SP > 0) ? ST[SP] : "u"
@@ -268,7 +280,7 @@ function tokenize(cmd, d,  n, i, c, nx, m) {
       if (!HASW && WD ~ /^[0-9]+$/) WD = ""
       flush(d)
       if (c == "<" && substr(cmd, i + 1, 1) == "<") {
-        if (substr(cmd, i + 2, 1) == "<") { i += 2; SKIPNEXT = 1; continue }
+        if (substr(cmd, i + 2, 1) == "<") { i += 2; SKIPNEXT = 1; SKIPOUT = 0; continue }
         i++; HDSTRIPNEXT = 0
         if (substr(cmd, i + 1, 1) == "-") { i++; HDSTRIPNEXT = 1 }
         HDNEXT = 1; continue
@@ -276,7 +288,7 @@ function tokenize(cmd, d,  n, i, c, nx, m) {
       nx = substr(cmd, i + 1, 1)
       if (nx == ">" || nx == "|") { i++; nx = substr(cmd, i + 1, 1) }
       if (nx == "&") { i++; while (substr(cmd, i + 1, 1) ~ /[0-9-]/) i++; continue }
-      SKIPNEXT = 1; continue
+      SKIPNEXT = 1; SKIPOUT = (c == ">"); continue
     }
     WD = WD c
   }
@@ -295,8 +307,106 @@ function analyze(cmd, d,  s) {
   tokenize(cmd, d)
   for (s = 1; s <= NSG[d]; s++) seg(d, SEGS[d, s])
 }
+# ---------- protected paths ----------
+function g2re(g,  out, i, c, n) {
+  out = ""; n = length(g)
+  for (i = 1; i <= n; i++) {
+    c = substr(g, i, 1)
+    if (c == "*") {
+      if (substr(g, i + 1, 1) == "*") {
+        i++
+        if (substr(g, i + 1, 1) == "/") { i++; out = out "(.*/)?" } else out = out ".*"
+      } else out = out "[^/]*"
+    } else if (c == "?") out = out "[^/]"
+    else if (index("\\.+(){}|^$[]", c)) out = out "\\" c
+    else out = out c
+  }
+  return out
+}
+function pp_prepare(  i, g, anc, a, n, j, an) {
+  PPON = 0
+  if (MODE["protected-paths"] == "off" || NPL == 0) return
+  for (i = 1; i <= NPL; i++) {
+    g = PL[i]; gsub(/\\/, "/", g)
+    if (WIN) g = tolower(g)
+    sub(/^(\.\/)+/, "", g); an = (g ~ /^\//); sub(/^\/+/, "", g); sub(/\/+$/, "", g)
+    if (g == "") { PRE[i] = "^$"; PANC[i] = ""; continue }
+    if (index(g, "/")) an = 1
+    PRE[i] = (an ? "^" : "^(.*/)?") g2re(g) "(/.*)?$"
+    PANC[i] = ""
+    if (an) {
+      n = split(g, a, "/"); anc = ""
+      for (j = 1; j <= n; j++) { if (a[j] ~ /[*?[]/) break; anc = anc (j > 1 ? "/" : "") a[j] }
+      PANC[i] = anc
+    }
+  }
+  PPON = 1
+}
+# target path relative to the project root; "\001" when outside it or unknown
+function pp_rel(p,  r, bl, rl) {
+  r = resolve(p); if (r == "" || PROJN == "") return "\001"
+  rl = r; bl = PROJN
+  if (WIN) { rl = tolower(rl); bl = tolower(bl) }
+  if (rl == bl) return ""
+  if (bl !~ /\/$/) bl = bl "/"
+  if (substr(rl, 1, length(bl)) == bl) return substr(rl, length(bl) + 1)
+  return "\001"
+}
+function pp_check(p, destr,  r, i) {
+  if (!PPON || p == "") return
+  r = pp_rel(p); if (r == "\001") return
+  for (i = 1; i <= NPL; i++) {
+    if (r != "" && r ~ PRE[i]) { pp_hit(p, i); return }
+    if (destr && PANC[i] != "" && (r == "" || PANC[i] == r || substr(PANC[i], 1, length(r) + 1) == r "/")) { pp_hit(p, i); return }
+  }
+}
+function pp_hit(p, i) { if (PPINFO == "") PPINFO = p " matches \"" PL[i] "\""; hit("protected-paths") }
+# non-option arguments of one command into TG[1..TN] (after "--" everything is an argument)
+function pp_args(d, id, k, nw,  i, x, dd) {
+  TN = 0; dd = 0
+  for (i = k; i <= nw; i++) {
+    x = W[d, id, i]
+    if (!dd && x == "--") { dd = 1; continue }
+    if (!dd && x ~ /^-./) continue
+    TG[++TN] = x
+  }
+}
+function pp_all(destr,  i) { for (i = 1; i <= TN; i++) pp_check(TG[i], destr) }
+function prot_cmd(cmd, d, id, k, nw,  i, x, sc, inplace, svcur, dd) {
+  if (cmd ~ /^(rm|unlink|rmdir|rd|del|erase|ri|remove-item)$/) { pp_args(d, id, k, nw); pp_all(1) }
+  else if (cmd ~ /^(mv|move|mi|move-item)$/) { pp_args(d, id, k, nw); pp_all(1) }
+  else if (cmd ~ /^(cp|copy|cpi|copy-item)$/) { pp_args(d, id, k, nw); if (TN > 1) pp_check(TG[TN], 0) }
+  else if (cmd ~ /^(tee|truncate)$/) { pp_args(d, id, k, nw); pp_all(0) }
+  else if (cmd == "dd") { for (i = k; i <= nw; i++) if (W[d, id, i] ~ /^of=/) pp_check(substr(W[d, id, i], 4), 0) }
+  else if (cmd == "sed") {
+    inplace = 0
+    for (i = k; i <= nw; i++) { x = W[d, id, i]; if (x == "--") break; if (x ~ /^--in-place/ || x ~ /^-i/ || (x ~ /^-[a-zA-Z]+$/ && x ~ /i/)) inplace = 1 }
+    if (inplace) { pp_args(d, id, k, nw); pp_all(0) }
+  }
+  else if (cmd == "git") {
+    svcur = CUR
+    while (k <= nw) {
+      x = W[d, id, k]
+      if (x == "-C" && k < nw) { CUR = resolve(W[d, id, k + 1]); if (CUR == "") CUR = svcur; k += 2; continue }
+      if (x ~ /^(-c|--git-dir|--work-tree|--namespace|--config-env|--super-prefix)$/) { k += 2; continue }
+      if (x ~ /^-/) { k++; continue }
+      break
+    }
+    if (k <= nw) {
+      sc = W[d, id, k]; k++
+      if (sc == "rm" || sc == "mv") { pp_args(d, id, k, nw); pp_all(1) }
+      else if (sc == "restore") { pp_args(d, id, k, nw); pp_all(0) }
+      else if (sc == "checkout") {
+        dd = 0
+        for (i = k; i <= nw; i++) { x = W[d, id, i]; if (!dd) { if (x == "--") dd = 1; continue }; pp_check(x, 0) }
+      }
+    }
+    CUR = svcur
+  }
+}
 function seg(d, id,  nw, k, x, cmd, j, str) {
   nw = WC[d, id]; k = 1
+  if (PPON) for (j = 1; j <= RN[d, id]; j++) pp_check(RD[d, id, j], 0)
   while (k <= nw) {
     x = W[d, id, k]
     if (x ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { k++; continue }
@@ -309,6 +419,7 @@ function seg(d, id,  nw, k, x, cmd, j, str) {
   }
   if (k > nw) return
   cmd = x; sub(/.*[\/\\]/, "", cmd); cmd = tolower(cmd); sub(/\.exe$/, "", cmd)
+  if (PPON) prot_cmd(cmd, d, id, k + 1, nw)
   if (cmd == "git") git_seg(d, id, k + 1, nw)
   else if (cmd == "rm") rm_seg(d, id, k + 1, nw)
   else if (cmd == "cd" || cmd == "pushd") {
@@ -433,6 +544,7 @@ function reason(id) {
   if (id == "rm-rf-danger") return "SubDeck guard (rm-rf-danger): recursive delete of /, a drive root, the home directory, the project root or one of their ancestors is blocked. Delete specific subdirectories instead."
   if (id == "secret-files") return "SubDeck guard (secret-files): this file looks like a secret (.env, key, certificate, credentials); writing it needs explicit user approval."
   if (id == "attribution") return "SubDeck guard (attribution): the commit message contains an attribution line (Co-Authored-By / Generated with); remove it and commit again."
+  if (id == "protected-paths") return "SubDeck guard (protected-paths): " PPINFO "; this path is protected (guard.protectedPaths) and editing, moving or deleting it needs explicit user approval."
   return "SubDeck guard (" id ")"
 }
 function jesc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/\n/, "\\n", s); gsub(/\t/, " ", s); return s }
@@ -456,13 +568,14 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
   initrules(); cfgfile(uf, "user"); if (pf != "") cfgfile(pf, "project")
   if (!ENABLED) return
   HOMEN = norm(ENVIRON["HOME"]); PROJN = norm(PROJ); CUR = norm(cwd); if (CUR == "") CUR = PROJN
-  DENYID = ""; ASKID = ""; COMMIT = 0; NOPRES = 0
+  DENYID = ""; ASKID = ""; COMMIT = 0; NOPRES = 0; PPINFO = ""; pp_prepare()
   if (tool == "Bash" || tool == "PowerShell") {
     if (cmd == "") return
     analyze(cmd, 0)
     if (COMMIT) { low = tolower(cmd); if (index(low, "co-authored-by") || index(low, "generated with")) hit("attribution") }
   } else if (tool == "Write" || tool == "Edit" || tool == "MultiEdit") {
     if (fp != "" && secret_path(fp)) hit("secret-files")
+    pp_check(fp, 0)
   } else if (tool == "apply_patch") {
     # Codex patch text: file paths are on "*** Add|Update|Delete File: <path>" and "*** Move to: <path>" lines
     np = split(cmd, pl, "\n")
@@ -470,7 +583,8 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
       pp = pl[pi]; sub(/\r$/, "", pp)
       if (match(pp, /^\*\*\* (Add File|Update File|Delete File|Move to): /)) {
         pp = substr(pp, RLENGTH + 1)
-        if (secret_path(pp)) { hit("secret-files"); break }
+        if (secret_path(pp)) hit("secret-files")
+        pp_check(pp, 0)
       }
     }
   }
@@ -493,6 +607,9 @@ function do_show(  i, id, e) {
   printf "%-16s %-5s %s\n", "RULE", "MODE", "SOURCE"
   for (i = 1; i <= NRULE; i++) { id = RID[i]; printf "%-16s %-5s %s\n", id, MODE[id], SRC[id] }
   if (UNK != "") print "unknown (ignored): " UNK
+  e = ""; for (i = 1; i <= NPL; i++) e = e (i > 1 ? "," : "") PL[i]
+  if (NPL == 0) print "protectedPaths: (none)"
+  else printf "protectedPaths (%s): %s\n", PLSRC, e
   print ""
   printf "user file:    %s (%s)\n", uf, CFGSTATE["user"]
   printf "project file: %s (%s)\n", pf, CFGSTATE["project"]
@@ -503,6 +620,7 @@ function do_dump(  t, i, id, v) {
   if (!jparse(t)) { print "ERR"; return }
   initrules()
   for (i = 1; i <= NRK; i++) if (!isknown(RKD[i])) print "unknown\t" RKR[i] "\t" RKV[i]
+  for (i = 1; i <= NPP; i++) if (PPDEC[i] != "") print "protect\t" PPRAW[i]
   if ("/guard/enabled" in V) {
     v = tolower(V["/guard/enabled"])
     if (v == "false" || v == "0" || v == "off" || v == "no") print "enabled false"
@@ -529,14 +647,16 @@ fi
 
 # ---------- settings mode ----------
 [ "$1" = cli ] && shift
-CMD=""; SCOPE=user; PROJECT=""; PAIRS=(); BADARGS=()
+CMD=""; SCOPE=user; PROJECT=""; PAIRS=(); BADARGS=(); PLIST=""; PADD=(); PDEL=()
 for a in "$@"; do
   a="${a%$'\r'}"
+  # protect/unprotect take one positional glob list (a glob may look like a directory name)
+  if { [ "$CMD" = protect ] || [ "$CMD" = unprotect ]; } && [ -z "$PLIST" ] && [ -n "$a" ] && [[ "$a" != --* ]]; then PLIST="$a"; continue; fi
   case "$a" in
     "") ;;
     --project) SCOPE=project ;;
     --*) BADARGS+=("$a") ;;
-    show|set|on|off|reset) if [ -z "$CMD" ]; then CMD="$a"; else BADARGS+=("$a"); fi ;;
+    show|set|on|off|reset|protect|unprotect) if [ -z "$CMD" ]; then CMD="$a"; else BADARGS+=("$a"); fi ;;
     *=*) PAIRS+=("$a") ;;
     *) if [ -d "$a" ]; then PROJECT="$a"; else BADARGS+=("$a"); fi ;;
   esac
@@ -549,7 +669,7 @@ if [ "$SCOPE" = project ]; then TARGET="$PFILE"; else TARGET="$UFILE"; fi
 
 show() {
   awk -v mode=show -v uf="$UFILE" -v pf="$PFILE" "$GUARD_AWK" < /dev/null
-  echo "Usage: /subdeck:settings set guard=on|off <rule>=deny|ask|off [--project] (low-level: guard.sh set push=off attribution=deny [--project] | on | off | reset)"
+  echo "Usage: /subdeck:settings set guard=on|off <rule>=deny|ask|off protect=<glob>[,<glob>] unprotect=<glob> [--project] (low-level: guard.sh set push=off attribution=deny [--project] | on | off | reset | protect GLOBS | unprotect GLOBS)"
   echo "Modes: deny | ask | off. Env SUBDECK_GUARD=0 disables the guard for a session."
 }
 
@@ -601,7 +721,7 @@ valid_rule() { case " $RULES " in *" $1 "*) return 0 ;; esac; return 1; }
 
 # update ENABLED(true|false|keep) [rule=mode ...]: merge into TARGET's guard member.
 update() {
-  local TAB=$'\t' unk="" en="$1" cur others dump line en_cur="" rules="" id m kv g="" rj=""
+  local TAB=$'\t' unk="" en="$1" cur others dump line en_cur="" rules="" id m kv g="" rj="" pl="" pitem pdup; local -a PPL=()
   shift
   if ! others="$(members "$TARGET")"; then
     echo "error: $TARGET is not a valid JSON object; left untouched (fix or delete it by hand)."; return 1
@@ -613,6 +733,7 @@ update() {
   while IFS= read -r line; do
     case "$line" in
       unknown$TAB*) line="${line#unknown$TAB}"; unk="$unk,${line%%$TAB*}:${line#*$TAB}" ;;
+      protect$TAB*) PPL+=("${line#protect$TAB}") ;;
       *) IFS=' ' read -r a b c <<< "$line"; case "$a" in enabled) en_cur="$b" ;; rule) rules="$rules $b=$c" ;; esac ;;
     esac
   done <<< "$dump"
@@ -626,6 +747,15 @@ update() {
   [ -n "$en_cur" ] && g="\"enabled\":$en_cur"
   rj="$rj$unk"
   [ -n "$rj" ] && g="$g${g:+,}\"rules\":{${rj#,}}"
+  # protectedPaths: existing raw entries minus PDEL, plus PADD (exact, no duplicates)
+  for pitem in "${PPL[@]}"; do
+    pdup=0; for kv in "${PDEL[@]}"; do [ "$kv" = "$pitem" ] && pdup=1; done
+    [ $pdup -eq 0 ] && pl="$pl,\"$pitem\""
+  done
+  for kv in "${PADD[@]}"; do
+    case ",$pl," in *",\"$kv\","*) ;; *) pl="$pl,\"$kv\"" ;; esac
+  done
+  [ -n "$pl" ] && g="$g${g:+,}\"protectedPaths\":[${pl#,}]"
   write_file "$TARGET" "$others" "{$g}" && echo "wrote $TARGET"
 }
 
@@ -646,6 +776,21 @@ case "$CMD" in
     done
     if [ $ERR -ne 0 ]; then echo "nothing written."; exit 0; fi
     update keep "${NEW[@]}"
+    echo; show ;;
+  protect|unprotect)
+    if [ -z "$PLIST" ]; then echo "error: $CMD needs a glob list, e.g. $CMD 'CLAUDE.md,migrations/**'"; exit 0; fi
+    ERR=0; IFS=',' read -ra ITEMS <<< "$PLIST"
+    for it in "${ITEMS[@]}"; do
+      it="${it//\\//}"; it="${it#"${it%%[![:space:]]*}"}"; it="${it%"${it##*[![:space:]]}"}"
+      [ -n "$it" ] || continue
+      case "$it" in *\"*|*[[:cntrl:]]*) echo "error: invalid glob '$it' (no quotes or control characters)"; ERR=1; continue ;; esac
+      if [ "$CMD" = protect ]; then PADD+=("$it"); else PDEL+=("$it"); fi
+    done
+    if [ $ERR -ne 0 ] || [ $((${#PADD[@]} + ${#PDEL[@]})) -eq 0 ]; then echo "nothing written."; exit 0; fi
+    if [ "$CMD" = unprotect ] && [ -f "$TARGET" ] && ! tr -d '\r' < "$TARGET" | grep -qF -- "\"${PDEL[0]}\""; then
+      echo "note: '${PDEL[0]}' is not in $TARGET (check with: show); other scope files are not changed"
+    fi
+    update keep
     echo; show ;;
   reset)
     if [ ! -f "$TARGET" ]; then echo "reset: nothing to remove ($TARGET absent)"

@@ -59,6 +59,23 @@ has "$out" '^push +ask' "reset: guard rule default"
 rm -rf "$P/.subdeck"; run reset --project >/dev/null
 has "$(run)" '^worker +sonnet +default' "reset --project exits cleanly"
 
+
+out="$(run set protect=CLAUDE.md,migrations/**)"
+has "$out" '^protect +CLAUDE.md,migrations/\*\* +user' "set protect: table row"
+grep -q '"protectedPaths":\["CLAUDE.md","migrations/\*\*"\]' "$CFG" && ok "set protect: array written to config" || bad "protect config: $(cat "$CFG")"
+out="$(run set protect=*.lock unprotect=CLAUDE.md --project)"
+has "$out" '^protect +\*.lock +project' "set protect --project: project row wins"
+run reset --project >/dev/null; rm -rf "$P/.subdeck"
+out="$(run set unprotect=CLAUDE.md,migrations/**)"
+has "$out" '^protect +\(none\) +default' "set unprotect: list empty again"
+out="$(run set protect=)"; has "$out" 'protect needs a glob' "empty protect rejected"
+has "$out" 'nothing written' "empty protect writes nothing"
+out="$(run set protect=a.txt push=off)"
+has "$out" '^push +off +user' "protect and a rule in one call"
+has "$out" '^protect +a.txt +user' "protect and a rule in one call: list"
+out="$(run reset)"; has "$out" '^protect +\(none\)' "reset clears the protected list"
+rm -rf "$P/.subdeck"
+
 [ -f "$SK" ] && grep -q '^disable-model-invocation: true' "$SK" && ok "skill is user-only" || bad "skill frontmatter"
 grep -q '\${[A-Za-z_]*:-' "$SK" && bad "skill uses \${VAR:-default}" || ok "skill avoids \${VAR:-default}"
 grep -q '|| true' "$SK" && ok "injected command ends with || true" || bad "no || true"

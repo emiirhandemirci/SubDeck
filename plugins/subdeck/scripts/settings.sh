@@ -8,6 +8,7 @@
 # Keys: mode|worker|escalation|researcher|verifier|explore  -> models.sh
 #       notify=on|off, notify.events=waiting,done,agent      -> notify.sh
 #       guard=on|off, <guard rule id>=deny|ask|off           -> guard.sh
+#       protect=<glob>[,<glob>], unprotect=<glob>[,<glob>]   -> guard.sh protect|unprotect (guard.protectedPaths)
 #       statusline=on|off                                    -> not written here (the skill edits settings.json after confirmation)
 # No jq/node. Always exits 0 (a failing injected command would abort the skill).
 
@@ -50,11 +51,15 @@ show() {
     $1 == "events" && NF >= 3 { printf "%-18s %-20s %s\n", "notify.events", $2, $3 }'
   printf '%s\n' "$go" | awk '
     /^enabled:/ { v = ($2 == "yes") ? "on" : "off"; printf "%-18s %-20s %s\n", "guard", v, "(rules below)" }
+    /^protectedPaths/ {
+      s = "default"; if ($0 ~ /^protectedPaths \(user\)/) s = "user"; else if ($0 ~ /^protectedPaths \(project\)/) s = "project"
+      v = $0; sub(/^protectedPaths[^:]*: /, "", v); printf "%-18s %-20s %s\n", "protect", v, s
+    }
     $2 ~ /^(deny|ask|off)$/ && $3 ~ /^(default|user|project)$/ { printf "%-18s %-20s %s\n", $1, $2, $3 }'
   printf '%-18s %-20s %s\n' statusline "$sl" "~/.claude/settings.json"
   echo
   echo "Usage: set key=value ... [--project] | reset [--project]   (statusline=on|off is applied by the skill after confirmation)"
-  echo "Keys: $MODEL_KEYS | notify=on|off notify.events=waiting,done,agent | guard=on|off $(guard_rules | tr '\n' ' ')| statusline=on|off"
+  echo "Keys: $MODEL_KEYS | notify=on|off notify.events=waiting,done,agent | guard=on|off $(guard_rules | tr '\n' ' ')| protect=<glob>[,<glob>] unprotect=<glob> | statusline=on|off"
   printf '%s\n' "$mo" | grep -E '^WARNING:' | head -1
 }
 
@@ -65,7 +70,7 @@ case "$CMD" in
   set)
     if [ ${#PAIRS[@]} -eq 0 ]; then echo "error: set needs key=value pairs, e.g. set notify=on worker=opus"; exit 0; fi
     RULES=" $(guard_rules | tr '\n' ' ')"
-    MP=(); GP=(); NV=""; NE=""; GE=""; SL=""; ERR=0
+    MP=(); GP=(); NV=""; NE=""; GE=""; SL=""; PR=""; UP=""; ERR=0
     for kv in "${PAIRS[@]}"; do
       k="${kv%%=*}"; v="${kv#*=}"; lv="$(printf '%s' "$v" | tr 'A-Z' 'a-z')"
       case "$k" in
@@ -74,6 +79,9 @@ case "$CMD" in
         notify.events) NE="$v" ;;
         guard)
           case "$lv" in on|true) GE=on ;; off|false) GE=off ;; *) echo "error: guard must be on or off (got '$v')"; ERR=1 ;; esac ;;
+        protect|unprotect)
+          if [ -z "$v" ]; then echo "error: $k needs a glob (e.g. $k=CLAUDE.md,migrations/**)"; ERR=1
+          elif [ "$k" = protect ]; then PR="$PR${PR:+,}$v"; else UP="$UP${UP:+,}$v"; fi ;;
         statusline)
           case "$lv" in on|install) SL=on ;; off|remove) SL=off ;; *) echo "error: statusline must be on or off (got '$v')"; ERR=1 ;; esac ;;
         *)
@@ -87,6 +95,8 @@ case "$CMD" in
     [ -n "$NV" ] && N "$NV" $SCOPE | head -1
     [ -n "$NE" ] && N events "$NE" $SCOPE | head -1
     [ ${#GP[@]} -gt 0 ] && G set "${GP[@]}" $SCOPE | head -1
+    [ -n "$PR" ] && G protect "$PR" $SCOPE | head -1
+    [ -n "$UP" ] && G unprotect "$UP" $SCOPE | head -1
     [ -n "$GE" ] && G "$GE" $SCOPE | head -1
     [ -n "$SL" ] && echo "statusline=$SL: not written by this script; it needs your confirmation (handled by the skill)."
     echo; show ;;
