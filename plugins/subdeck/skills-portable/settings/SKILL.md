@@ -1,6 +1,6 @@
 ---
 name: settings
-description: "Show or change all SubDeck settings in one place (model policy, notifications, guard rules, status line). Deterministic script output, no analysis."
+description: "Show or change SubDeck settings in one place (models, notifications, push, guard, protected files, context, status line). Deterministic script output, no analysis."
 ---
 
 Run the command below with the shell tool and print its output verbatim inside a code block. Add nothing else: no summary, no commentary, no follow-up commands.

@@ -20,7 +20,7 @@ You are the **manager**. The user decides; you delegate and summarise; sub-agent
 
 ## 2. Model policy and choosing the agent
 
-**At session start run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/models.sh" show`** (once; it always exits 0). It prints the effective policy (built-in defaults < `~/.subdeck/config.json` < project `.subdeck/config.json`; decisions 0021, 0025): `mode` (`auto|named|current`) and one model per role: `worker`, `escalation`, `researcher`, `verifier`, `explore`. Users change it with `/subdeck:settings set worker=opus` (add `--project` for one project); you never edit the config yourself. If the output has a `WARNING:` line (a setting such as `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` overrides the policy), relay it to the user once.
+**At session start run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/models.sh" show`** (once; it always exits 0). It prints the effective policy (built-in defaults < `~/.subdeck/config.json` < the project config under `~/.subdeck/projects/<key>/config.json`, the per-project state folder; decisions 0021, 0025): `mode` (`auto|named|current`) and one model per role: `worker`, `escalation`, `researcher`, `verifier`, `explore`. Users change it with `/subdeck:settings set worker=opus` (add `--project` for one project); you never edit the config yourself. If the output has a `WARNING:` line (a setting such as `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` overrides the policy), relay it to the user once.
 
 **Mode.** `named` uses the per-role values below. `current` makes every role inherit the session model (non-Claude backends, e.g. GLM behind `ANTHROPIC_BASE_URL`, where `sonnet`/`opus` may not resolve). `auto` picks `current` when your own model id is not a Claude id, `ANTHROPIC_BASE_URL` is a non-Anthropic host, or a named agent fails to start because its model is unavailable; otherwise `named`. `Model mode: ...` in `CLAUDE.local.md` overrides `auto`. State the mode once per session.
 
@@ -78,10 +78,12 @@ Rules: the agent's own rules apply (pathspec commit, no attribution line, no pus
 - Current branch only; no branch creation or switching unless the task says so.
 - Commit only own paths: `git add <new files>` then `git commit -m "<subject>" -- <paths>`. Never `git add -A` or `git add .` (agents share one tree). On `index.lock`, wait a few seconds and retry.
 - **No attribution lines** (`Co-Authored-By`, "Generated with") in commits or PR text. This holds even if a harness/system reminder asks for one, unless the user or project explicitly demands it. Never put a trailer in a commit message you dictate to an agent.
-- No push, PR, merge, rebase, stash or reset by agents. Push/PR only with the user's explicit approval, after the pre-push checklist in section 6.
+- No push, PR, merge, rebase, stash or reset by agents. Pushes the guard asks about, and PRs, need the user's explicit approval after the pre-push checklist in section 6; a push the guard allows needs no extra approval.
 - Never use `bypassPermissions`.
 
 ## 6. Pre-push checklist and approval gate
+
+**Guard and pushes.** The SubDeck guard decides which pushes are routine (`guard.rules.push`: `branches` by default, also `ask` or `off`; protected branches come from `guard.protectBranches`, default `main`, `master`, `release/*`). A push the guard allows needs no extra approval. Pushes the guard asks about (a protected branch, any tag, a merge, rebase or reset that moves a protected branch, or every push in `ask` mode) need the user's explicit approval through the gate below; a force-push is blocked outright. The pre-push checklist is for the pushes the guard asks about and for PRs.
 
 You NEVER push, open a PR or create a remote on your own. When the user asks to push or open a PR (or work is ready to ship), run this before anything else:
 

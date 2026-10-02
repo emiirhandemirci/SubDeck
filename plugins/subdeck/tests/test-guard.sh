@@ -8,6 +8,8 @@ ok()  { PASS=$((PASS+1)); echo "ok   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "FAIL $1"; }
 has() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then ok "$3"; else bad "$3 (no match for: $2)"; printf '%s\n' "$1" | sed 's/^/     | /'; fi; }
 H="$(mktemp -d)"; P="$(mktemp -d)"; mkdir -p "$P/sub" "$P/build"
+(cd "$P" && git init -q 2>/dev/null; git -C "$P" symbolic-ref HEAD refs/heads/main 2>/dev/null)
+setbranch() { git -C "$P" symbolic-ref HEAD "refs/heads/$1"; }
 unset SUBDECK_GUARD SUBDECK_STATE_DIR SUBDECK_HOME
 
 esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/\\n}"; s="${s//$'\t'/\\t}"; printf '%s' "$s"; }
@@ -59,7 +61,7 @@ deny	git push origin +main
 deny	git push -uf origin main
 deny	/usr/bin/git push --force
 ask	git push
-ask	git push -u origin feature
+allow	git push -u origin feature
 ask	git status; git push origin main
 ask	false || git push
 ask	git fetch | git push
@@ -73,7 +75,7 @@ allow	echo git push is disabled here
 allow	git log --oneline | grep push
 allow	git status # git push -f
 ask	git reset --hard HEAD~1
-allow	git reset --soft HEAD~1
+ask	git reset --soft HEAD~1
 ask	git rebase -i main
 allow	git rebase --abort
 ask	git filter-repo --path x
@@ -184,7 +186,7 @@ printf '%s' "$got" | grep -q '"deny"' && ok "run-hook.cmd guard launcher" || bad
 
 # ---- settings subcommands ----
 run() { HOME="$H" bash "$G" cli "$@" "$P"; }
-out="$(run)"; has "$out" '^push +ask +default' "show default push ask"
+out="$(run)"; has "$out" '^push +branches +default' "show default push branches"
 has "$out" '^attribution +off +default' "show default attribution off"
 cfg "$UC" '{"desk":{"days":30,"note":"a,b}"},"modelPolicy":{"worker":"opus"},"list":[1,2]}'
 out="$(run set push=off attribution=DENY)"
@@ -380,6 +382,105 @@ cfg "$UC" "{\"modelPolicy\":{\"worker\":\"opus\"},\"guard\":{\"protectedPaths\":
 out="$(run protect 'y.txt')"
 grep -q '"protectedPaths":\["x\\u00e9.txt","y.txt"\]' "$UC" && grep -q '"future-rule":"deny"' "$UC" && grep -q '"modelPolicy":{"worker":"opus"}' "$UC" && ok "escaped entries and other keys survive" || bad "round trip damaged: $(cat "$UC")"
 out="$(run reset)"; grep -q protectedPaths "$UC" && bad "reset kept list" || ok "reset drops protectedPaths"
+rm -f "$UC" "$PC"
+# ---- branch-aware push (mode "branches", the default) ----
+rm -f "$UC" "$PC"; setbranch feature/x
+git -C "$P" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init 2>/dev/null; git -C "$P" tag v1.0 2>/dev/null
+expect allow 'git push'                         "branches: bare push on a feature branch"
+expect allow 'git push origin feature/x'        "branches: push a feature branch"
+expect allow 'git push -u origin HEAD'          "branches: HEAD resolves to the feature branch"
+expect allow 'git push origin HEAD:feature/y'   "branches: refspec to a feature branch"
+expect allow 'git push origin other:wip'        "branches: src:dst to a feature branch"
+expect ask   'git push origin main'             "branches: protected main"
+expect ask   'git push origin master'           "branches: protected master"
+expect ask   'git push origin release/1.2'      "branches: release/* glob"
+expect ask   'git push origin HEAD:main'        "branches: HEAD:main"
+expect ask   'git push origin feature/x:refs/heads/main' "branches: explicit refs/heads/main"
+expect ask   'git push origin :main'            "branches: delete protected branch"
+expect ask   'git push --delete origin main'    "branches: --delete protected branch"
+expect ask   'git push --tags'                  "branches: --tags"
+expect ask   'git push origin v1.0'             "branches: existing tag by bare name"
+expect ask   'git push origin refs/tags/v2'     "branches: refs/tags refspec"
+expect ask   'git push origin tag v3'           "branches: push ... tag <name>"
+expect ask   'git push --all origin'            "branches: --all"
+expect ask   'git push --mirror'                "branches: --mirror"
+expect deny  'git push -f origin feature/x'     "branches: force push stays deny"
+expect allow 'git status && git push origin feature/x' "branches: chain with an allowed push"
+expect ask   'git status && git push origin main' "branches: chain with a protected push"
+expect ask   'bash -c "git push origin main"'   "branches: nested shell protected push"
+expect allow 'git merge topic'                  "branches: merge on a feature branch"
+expect allow 'git reset --soft HEAD~1'          "branches: reset on a feature branch"
+setbranch main
+expect ask   'git push'                         "branches: bare push on main"
+expect ask   'git push -u origin HEAD'          "branches: HEAD resolves to main"
+expect allow 'git push origin feature/x'        "branches: feature push while on main"
+expect ask   'git merge topic'                  "branches: merge on main"
+expect allow 'git merge --abort'                "branches: merge --abort on main"
+expect ask   'git reset --soft HEAD~1'          "branches: reset --soft on main"
+expect ask   'git reset --mixed HEAD~2'         "branches: reset --mixed on main"
+expect ask   'git reset --hard origin/main'     "branches: reset --hard on main"
+expect allow 'git reset HEAD src/a.js'          "branches: unstage a path on main"
+expect allow 'git reset -- src/a.js'            "branches: reset -- path on main"
+expect ask   'git rebase topic'                 "branches: rebase on main"
+expect allow 'git rebase --abort'               "branches: rebase --abort on main"
+expect ask   "git -C $P push"                   "branches: git -C repo push on main"
+setbranch release/2.0
+expect ask   'git push'                         "branches: bare push on release/2.0"
+setbranch feature/x
+expect allow "git -C $P push"                   "branches: git -C repo push on a feature branch"
+# no repo / detached: the target is unknown -> ask
+NR="$(mktemp -d)"
+got="$(printf '{"session_id":"s","cwd":"%s","tool_name":"Bash","tool_input":{"command":"git push"}}' "$NR" | HOME="$H" CLAUDE_PROJECT_DIR="$NR" bash "$G")"
+has "$got" '"permissionDecision":"ask".*current branch could not be determined' "branches: unknown branch asks"
+rmdir "$NR" 2>/dev/null
+# reason text names the cause and the settings key
+got="$(bash_json 'git push origin main' | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+has "$got" 'pushing to the protected branch main.*set push=off' "branches: ask reason names the branch"
+# modes ask / off / deny
+cfg "$UC" '{"guard":{"rules":{"push":"ask"}}}'
+expect ask   'git push origin feature/x'        "mode ask: every push asks"
+expect allow 'git merge topic'                  "mode ask: merge is not covered"
+cfg "$UC" '{"guard":{"rules":{"push":"off"}}}'
+expect allow 'git push origin main'             "mode off: push allowed"
+expect allow 'git push --tags'                  "mode off: tags allowed"
+expect deny  'git push -f origin main'          "mode off: force push still denied"
+cfg "$UC" '{"guard":{"rules":{"push":"branches"},"protectBranches":["prod","hotfix/*"]}}'
+expect ask   'git push origin prod'             "custom protectBranches: prod"
+expect ask   'git push origin hotfix/9'         "custom protectBranches: hotfix/*"
+expect allow 'git push origin main'             "custom protectBranches replaces the default list"
+cfg "$PC" '{"guard":{"protectBranches":["main"]}}'
+expect ask   'git push origin main'             "project protectBranches wins"
+expect allow 'git push origin prod'             "project list replaces the user list"
+rm -f "$UC" "$PC"
+# payload shapes of the other tools
+cx="$(bash_json 'git push origin main' | SUBDECK_TOOL=codex HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+has "$cx" '"permissionDecision":"deny".*Ask the user for approval first' "codex: protected push becomes ask-first deny"
+cx="$(bash_json 'git push origin feature/x' | SUBDECK_TOOL=codex HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+[ -z "$cx" ] && ok "codex: feature push allowed" || bad "codex feature push got: $cx"
+cp_out="$(printf '{"cwd":"%s","tool_name":"bash","tool_input":{"command":"git push origin main"}}' "$P" | SUBDECK_TOOL=copilot HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+has "$cp_out" '^\{"permissionDecision":"ask".*protected branch main' "copilot: protected push asks (top-level decision)"
+cp_out="$(printf '{"cwd":"%s","tool_name":"bash","tool_input":{"command":"git push origin feature/x"}}' "$P" | SUBDECK_TOOL=copilot HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+[ -z "$cp_out" ] && ok "copilot: feature push allowed" || bad "copilot feature push got: $cp_out"
+cp_out="$(printf '{"cwd":"%s","tool_name":"powershell","tool_input":{"command":"git push origin main"}}' "$P" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+has "$cp_out" '"permissionDecision":"ask"' "powershell tool name: protected push asks"
+# CLI: push mode and protected branch list
+out="$(run push off)"; has "$out" '^push +off +user' "cli push off"
+out="$(run push branches)"; has "$out" '^push +branches +user' "cli push branches"
+out="$(run push deny)"; has "$out" 'error: usage: push' "cli push rejects deny"
+out="$(run push)";      has "$out" 'error: usage: push' "cli push needs a value"
+out="$(run set push=branches)"; has "$out" '^push +branches +user' "set accepts push=branches"
+out="$(run set history-rewrite=branches)"; has "$out" "invalid mode 'branches' for history-rewrite" "branches only valid for push"
+out="$(run branches 'main, develop,release/*')"
+has "$out" '^protectBranches \(user\): main,develop,release/\*' "cli branches replaces the list"
+grep -q '"protectBranches":\["main","develop","release/\*"\]' "$H/.subdeck/config.json" && ok "branches writes the array" || bad "branches file: $(cat "$H/.subdeck/config.json")"
+out="$(run set attribution=deny)"
+grep -q '"protectBranches"' "$H/.subdeck/config.json" && ok "set keeps protectBranches" || bad "set lost protectBranches"
+out="$(run protect 'a.txt')"
+grep -q '"protectBranches"' "$H/.subdeck/config.json" && grep -q '"protectedPaths"' "$H/.subdeck/config.json" && ok "protect keeps protectBranches" || bad "protect lost branches"
+out="$(run branches 'x"y')"; has "$out" 'invalid branch pattern' "cli branches rejects quotes"
+out="$(run branches '')"; has "$out" 'error: usage: branches' "cli branches rejects an empty list"
+out="$(run branches 'staging' --project)"; has "$out" '^protectBranches \(project\): staging' "cli branches --project"
+out="$(run reset)"; grep -q protectBranches "$H/.subdeck/config.json" 2>/dev/null && bad "reset kept protectBranches" || ok "reset drops protectBranches"
 rm -f "$UC" "$PC"
 # ---- timing (best of N runs; strict limits only with SUBDECK_PERF_STRICT=1, generous otherwise) ----
 if [ "${SUBDECK_PERF_STRICT:-0}" = 1 ]; then LIM1=400; LIM2=1500; else LIM1=1500; LIM2=3000; fi

@@ -2,25 +2,32 @@
 # SubDeck desktop notification when the user is needed. OS native only, no network, NO SOUND of any kind.
 #
 # STABLE CLI (the settings skill and Desk rely on it; do not change without a decision):
-#   notify.sh hook <waiting|done|agent>    hook mode (from hooks.json), hook payload on stdin
+#   notify.sh hook <waiting|done|agent|idle>   hook mode (from hooks.json), hook payload on stdin
 #   notify.sh [show]                       effective settings + source of each value
 #   notify.sh on | off [--project]         enable / disable
-#   notify.sh events waiting,done,agent [--project]   choose events (valid: waiting done agent)
+#   notify.sh events waiting,done,agent [--project]   choose events (valid: waiting done agent idle)
 #   notify.sh test                         fire a sample notification now (ignores enabled)
 # A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
 # Config key `notify` in ~/.subdeck/config.json (user) and the project config (project wins): <state>/config.json,
 #   where <state> = ~/.subdeck/projects/<key>/ (lib-paths.sh); a legacy <project>/.subdeck/config.json is still read.
-#   {"notify":{"enabled":true,"events":["waiting","done","agent"]}}
-# Defaults (key absent): enabled=false (notifications are OFF until switched on), events=waiting,done,agent.
+#   {"notify":{"enabled":true,"events":["waiting","done"]}}
+# Defaults (key absent): enabled=false (notifications are OFF until switched on), events=waiting,done (agent and idle are opt-in).
+# Kinds: waiting (needs your input: permission_prompt, elicitation_dialog, agent_needs_input), done (manager turn
+#   finished), agent (a sub-agent finished; skipped when agent_type or the transcript path is empty), idle (Notification
+#   idle_prompt, an idle reminder, not a question; routed here by hooks.json, label "idle").
+# Noise control: per session (payload session_id) at most one toast per 10 s (env SUBDECK_NOTIFY_COLLAPSE=seconds,
+#   0 disables). Priority waiting > done > agent > idle: a toast of equal or lower priority inside the window is
+#   collapsed (not shown) and logged with the method "collapsed"; a higher priority one still shows. State: <state>/notify.last.
 # An old `sound` key in a config is ignored (and dropped on the next write); there is no sound option.
 # Env: SUBDECK_NOTIFY=0 disables everything; SUBDECK_NOTIFY_DRYRUN=1 prints the command instead of running it.
 # Debug log: <state>/notify.log, one line per attempt: time event method exit (never any content).
 #   A "spawn" line is written when an attempt starts; the detached child appends its own line with the
-#   method actually used (toast | balloon | notify-send | osascript | fail) and its exit code.
+#   method actually used (toast | balloon | notify-send | osascript | fail) and its exit code. A collapsed attempt
+#   logs "collapsed -". Waiting/idle lines end with "type=<notification_type>" when the payload carries it.
 # Only the project folder name and a fixed reason are shown, never prompt or transcript content.
 # Other top-level config members (modelPolicy, ...) are preserved verbatim. No jq/node. Always exits 0.
 
-ALL_EVENTS="waiting done agent"
+ALL_EVENTS="waiting done agent idle"
 TITLE="SubDeck"
 
 CMD=""; SCOPE=user; PROJECT=""; ARGS=(); BADARGS=()
@@ -78,7 +85,7 @@ parse_member() {
 
 # Effective settings: EN EV plus sources
 resolve_settings() {
-  EN=false; EV="waiting,done,agent"; SRC_EN=default; SRC_EV=default
+  EN=false; EV="waiting,done"; SRC_EN=default; SRC_EV=default
   notify_member "$UFILE"; parse_member "$NM"
   if [ -n "$M_EN" ]; then EN="$M_EN"; SRC_EN=user; fi
   if [ -n "$M_EV" ]; then EV="$M_EV"; SRC_EV=user; fi
@@ -110,7 +117,7 @@ log_attempt() {
   local ts f="$SDIR/notify.log"
   printf -v ts '%(%Y-%m-%dT%H:%M:%S%z)T' -1 2>/dev/null || ts="$(date +%Y-%m-%dT%H:%M:%S%z)"
   mkdir -p "$SDIR" 2>/dev/null
-  printf '%s %s %s %s\n' "$ts" "$1" "$2" "$3" >> "$f" 2>/dev/null
+  printf '%s %s %s %s%s\n' "$ts" "$1" "$2" "$3" "${LOGX:+ $LOGX}" >> "$f" 2>/dev/null   # LOGX: optional "type=<notification_type>" token
   if [ "$4" = trim ] && [ -f "$f" ] && [ "$(wc -c < "$f")" -gt 32768 ]; then
     tail -n 100 "$f" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f" 2>/dev/null
   fi
@@ -222,8 +229,8 @@ show() {
   echo "project file: $PFILE$([ -f "$PFILE" ] || echo ' (absent)')"
   [ -n "$LFILE" ] && [ -f "$LFILE" ] && echo "legacy file:  $LFILE (still read; the project file wins; remove it by hand when no longer needed)"
   if [ "$DISABLED_ENV" = 1 ]; then echo "NOTE: SUBDECK_NOTIFY=0 is set in the environment: all notifications are off regardless of config."; fi
-  echo "Events: waiting (needs your input), done (manager finished), agent (a sub-agent finished)."
-  echo "Usage: /subdeck:settings set notify=on|off notify.events=... (low-level: notify.sh on | off | test | events waiting,done,agent [--project])"
+  echo "Events: waiting (needs your input), done (manager finished), agent (a sub-agent finished; off by default), idle (idle reminder; off by default)."
+  echo "Usage: /subdeck:settings set notify=on|off notify.events=... (low-level: notify.sh on | off | test | events waiting,done,agent,idle [--project])"
 }
 
 for b in "${BADARGS[@]}"; do echo "warning: ignored argument '$b'"; done
@@ -232,20 +239,53 @@ case "$CMD" in
   hook)
     [ "$DISABLED_ENV" = 1 ] && exit 0
     KIND="${ARGS[0]}"
-    case "$KIND" in waiting|done|agent) ;; *) exit 0 ;; esac
+    case "$KIND" in waiting|done|agent|idle) ;; *) exit 0 ;; esac
+    NTYPE=""
+    if [[ "$PAYLOAD" =~ \"notification_type\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then NTYPE="${BASH_REMATCH[1]//[^A-Za-z0-9_]/}"; fi
+    # idle_prompt is an idle reminder, not a question: it is its own kind even if a matcher routed it as waiting
+    if [ "$KIND" = waiting ] && [ "$NTYPE" = idle_prompt ]; then KIND=idle; fi
     resolve_settings
     [ "$EN" = true ] || exit 0
     case ",$EV," in *",$KIND,"*) ;; *) exit 0 ;; esac
     PD="${PROJECT%/}"; clean "${PD##*/}"; NAME="$CLEAN"; [ -n "$NAME" ] || NAME="project"
     case "$KIND" in
       waiting) REASON="needs your input" ;;
+      idle) REASON="idle, waiting for you" ;;
       done) REASON="finished" ;;
       agent)
-        AT=""
+        AT=""; TP=""
         if [[ "$PAYLOAD" =~ \"agent_type\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then clean "${BASH_REMATCH[1]}"; AT="$CLEAN"; fi
-        [ -n "$AT" ] || AT="sub-agent"
+        if [[ "$PAYLOAD" =~ \"[a-z_]*transcript_path\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then TP="${BASH_REMATCH[1]}"; fi
+        # phantom / internal sub-agent stops carry no agent_type or no transcript: nothing to tell the user
+        { [ -n "$AT" ] && [ -n "$TP" ]; } || exit 0
         REASON="agent $AT finished" ;;
     esac
+    # collapse per session: <state>/notify.last holds "session epoch kind" lines
+    SID=""
+    if [[ "$PAYLOAD" =~ \"session_id\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then SID="${BASH_REMATCH[1]//[^A-Za-z0-9_-]/}"; fi
+    WIN="${SUBDECK_NOTIFY_COLLAPSE:-10}"; case "$WIN" in ''|*[!0-9]*) WIN=10 ;; esac
+    if [ -n "$SID" ] && [ "$WIN" -gt 0 ]; then
+      printf -v NOW '%(%s)T' -1 2>/dev/null || NOW="$(date +%s)"
+      SF="$SDIR/notify.last"; KEEP=""; OLDEP=""; OLDK=""
+      if [ -f "$SF" ]; then
+        while IFS=' ' read -r s e k; do
+          case "$e" in ''|*[!0-9]*) continue ;; esac
+          if [ "$s" = "$SID" ]; then OLDEP="$e"; OLDK="$k"
+          elif [ $((NOW - e)) -lt 3600 ]; then KEEP="$KEEP$s $e $k"$'\n'; fi
+        done < "$SF"
+      fi
+      prio() { case "$1" in waiting) PRIO=4 ;; done) PRIO=3 ;; agent) PRIO=2 ;; *) PRIO=1 ;; esac; }
+      if [ -n "$OLDEP" ] && [ $((NOW - OLDEP)) -lt "$WIN" ]; then
+        prio "$KIND"; NP="$PRIO"; prio "$OLDK"
+        if [ "$NP" -le "$PRIO" ]; then
+          if [ -n "$SUBDECK_NOTIFY_DRYRUN" ]; then echo "DRYRUN collapsed: $KIND"; else LOGX="${NTYPE:+type=$NTYPE}"; log_attempt "$KIND" collapsed -; fi
+          exit 0
+        fi
+      fi
+      mkdir -p "$SDIR" 2>/dev/null
+      printf '%s%s %s %s\n' "$KEEP" "$SID" "$NOW" "$KIND" > "$SF" 2>/dev/null
+    fi
+    LOGX=""; case "$KIND" in waiting|idle) [ -n "$NTYPE" ] && LOGX="type=$NTYPE" ;; esac
     fire "$KIND" "$NAME: $REASON"
     exit 0 ;;
   show) show ;;
@@ -269,6 +309,6 @@ case "$CMD" in
     echo "test notification sent (see $SDIR/notify.log for the method and exit code). Nothing appeared? Check OS notification / focus-assist settings."
     if [ "$DISABLED_ENV" = 1 ]; then echo "NOTE: SUBDECK_NOTIFY=0 disables real hook notifications."; fi
     ;;
-  *) echo "error: unknown command '$CMD'"; echo "Usage: /subdeck:settings set notify=on|off notify.events=... (low-level: notify.sh on | off | test | events waiting,done,agent [--project])" ;;
+  *) echo "error: unknown command '$CMD'"; echo "Usage: /subdeck:settings set notify=on|off notify.events=... (low-level: notify.sh on | off | test | events waiting,done,agent,idle [--project])" ;;
 esac
 exit 0

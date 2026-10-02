@@ -10,13 +10,15 @@
 #   guard.sh [cli] set rule=mode ... [--project]     mode: deny | ask | off
 #   guard.sh [cli] on|off [--project]                guard.enabled true|false
 #   guard.sh [cli] reset [--project]                 remove the "guard" member of that config file
+#   guard.sh [cli] push <ask|branches|off> [--project]   push mode (default branches); branches <glob>[,<glob>] [--project]
+#       sets guard.protectBranches (default main,master,release/*)
 #   guard.sh [cli] protect <glob>[,<glob>] [--project]   add to guard.protectedPaths (unprotect <glob>[,..] removes)
 #   A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
 # Config: key "guard" in ~/.subdeck/config.json (user) and the project config (project wins), which is
 #   ~/.subdeck/projects/<key>/config.json (lib-paths.sh); a legacy <project>/.subdeck/config.json is still read
 #   below it and never written. E.g. {"guard":{"enabled":true,"rules":{"push":"off","attribution":"deny"}}}.
 #   Other top-level members are re-emitted verbatim; a file that is not a JSON object is left untouched.
-# Rules (default mode): git-add-all (deny), force-push (deny), push (ask), history-rewrite (ask),
+# Rules (default mode): git-add-all (deny), force-push (deny), push (branches: ask only for protected branches and tags; or ask | off), history-rewrite (ask),
 #   rm-rf-danger (deny), secret-files (ask), attribution (off), protected-paths (ask; active only when
 #   guard.protectedPaths, an array of globs in user/project config, is non-empty; a project list replaces the user list).
 #   Globs match the path relative to the project root (case-insensitive on Windows, / or \ separators):
@@ -88,6 +90,7 @@ function jval(path,  c, k, i, s, rk, vs, rv) {
     }
   } else if (c == "[") {
     if (path == "/guard/protectedPaths") HASPP = 1
+    if (path == "/guard/protectBranches") HASBR = 1
     P++; jws(); if (substr(T, P, 1) == "]") { P++; return }
     i = 0
     while (1) {
@@ -99,6 +102,7 @@ function jval(path,  c, k, i, s, rk, vs, rv) {
   } else if (c == "\"") {
     s = jstr(); if (JERR) return
     if (path ~ /^\/guard\/protectedPaths\/[0-9]+$/) { NPP++; PPRAW[NPP] = s; PPDEC[NPP] = jdec(s) }
+    if (path ~ /^\/guard\/protectBranches\/[0-9]+$/) { NBR++; BRRAW[NBR] = s; BRDEC[NBR] = jdec(s) }
     if (path ~ WANT) { V[path] = jdec(s); if (HOOKPARSE && want_done()) STOP = 1 }
   } else {
     if (!match(substr(T, P), /^[-+0-9a-zA-Z.]+/)) { JERR = 1; return }
@@ -110,7 +114,7 @@ function want_done() {
   return ("/tool_name" in V) && ("/cwd" in V) && (("/tool_input/command" in V) || ("/tool_input/file_path" in V))
 }
 function jparse(text) {
-  T = text; N = length(T); P = 1; JERR = 0; STOP = 0; split("", V); NRK = 0; NPP = 0; HASPP = 0
+  T = text; N = length(T); P = 1; JERR = 0; STOP = 0; split("", V); NRK = 0; NPP = 0; HASPP = 0; NBR = 0; HASBR = 0
   jws(); if (substr(T, P, 1) != "{") return 0
   jval("")
   if (STOP) return 1
@@ -129,10 +133,11 @@ function initrules(  i, n, a) {
   n = split("git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths", a, " ")
   NRULE = n
   for (i = 1; i <= n; i++) RID[i] = a[i]
-  DEF["git-add-all"] = "deny"; DEF["force-push"] = "deny"; DEF["push"] = "ask"
+  DEF["git-add-all"] = "deny"; DEF["force-push"] = "deny"; DEF["push"] = "branches"
   DEF["history-rewrite"] = "ask"; DEF["rm-rf-danger"] = "deny"; DEF["secret-files"] = "ask"; DEF["attribution"] = "off"; DEF["protected-paths"] = "ask"
   for (i = 1; i <= n; i++) { MODE[RID[i]] = DEF[RID[i]]; SRC[RID[i]] = "default" }
   ENABLED = 1; ENSRC = "default"; NPL = 0; PLSRC = "default"
+  NPB = 3; PB[1] = "main"; PB[2] = "master"; PB[3] = "release/*"; PBSRC = "default"
 }
 function isknown(id,  i) { for (i = 1; i <= NRULE; i++) if (RID[i] == id) return 1; return 0 }
 function cfgfile(f, src,  t, i, v, id) {
@@ -142,6 +147,7 @@ function cfgfile(f, src,  t, i, v, id) {
   if (!jparse(t)) { CFGSTATE[src] = "invalid JSON, ignored"; return }
   CFGSTATE[src] = "ok"
   if (HASPP) { NPL = 0; for (i = 1; i <= NPP; i++) if (PPDEC[i] != "") PL[++NPL] = PPDEC[i]; PLSRC = src }
+  if (HASBR) { NPB = 0; for (i = 1; i <= NBR; i++) if (BRDEC[i] != "") PB[++NPB] = BRDEC[i]; PBSRC = src }
   for (i = 1; i <= NRK; i++) if (!isknown(RKD[i])) UNK = UNK (UNK == "" ? "" : ", ") RKD[i] " (" src ")"
   if ("/guard/enabled" in V) {
     v = tolower(V["/guard/enabled"])
@@ -152,7 +158,7 @@ function cfgfile(f, src,  t, i, v, id) {
     id = RID[i]
     if (("/guard/rules/" id) in V) {
       v = tolower(V["/guard/rules/" id])
-      if (v == "deny" || v == "ask" || v == "off") { MODE[id] = v; SRC[id] = src }
+      if (v == "deny" || v == "ask" || v == "off" || (id == "push" && v == "branches")) { MODE[id] = v; SRC[id] = src }
     }
   }
 }
@@ -301,7 +307,96 @@ function tokenize(cmd, d,  n, i, c, nx, m) {
 # ---------- rules ----------
 function hit(id) {
   if (MODE[id] == "deny") { if (DENYID == "") DENYID = id }
-  else if (MODE[id] == "ask") { if (ASKID == "") ASKID = id }
+  else if (MODE[id] == "ask" || MODE[id] == "branches") { if (ASKID == "") ASKID = id }
+}
+# ---------- branch-aware push rule (push mode "branches") ----------
+function sq(s) { return "\047" s "\047" }
+function safename(s) { return s != "" && s !~ /[^A-Za-z0-9._\/@+-]/ }
+# current branch of the repository at dir (read-only git call, cached); "" when unknown or detached
+function curbranch(dir,  cmd, b) {
+  if (dir in CB) return CB[dir]
+  b = ""
+  if (dir != "" && index(dir, "\047") == 0) {
+    cmd = "git -C " sq(dir) " symbolic-ref -q --short HEAD 2>/dev/null"
+    if ((cmd | getline b) <= 0) b = ""
+    close(cmd); sub(/\r$/, "", b)
+  }
+  CB[dir] = b
+  return b
+}
+function tagexists(dir, name,  cmd) {
+  if (dir == "" || index(dir, "\047") || !safename(name)) return 0
+  cmd = "git -C " sq(dir) " show-ref -q --verify refs/tags/" name " 2>/dev/null"
+  return system(cmd) == 0
+}
+function globre(g,  i, c, o) {
+  o = ""
+  for (i = 1; i <= length(g); i++) {
+    c = substr(g, i, 1)
+    if (c == "*") o = o ".*"
+    else if (c == "?") o = o "."
+    else if (index("\\.+^$|(){}[]", c)) o = o "\\" c
+    else o = o c
+  }
+  return "^" o "$"
+}
+function isprot(b,  i) {
+  for (i = 1; i <= NPB; i++) if (b ~ globre(PB[i])) return 1
+  return 0
+}
+function pushnote(s) { if (PUSHINFO == "") PUSHINFO = s; hit("push") }
+# one refspec (or branch name) of a push: ask when it targets a protected branch or a tag
+function push_ref(r, dir,  dst, cb) {
+  sub(/^\+/, "", r)
+  dst = r
+  if (index(r, ":")) { dst = r; sub(/^[^:]*:/, "", dst) }
+  if (dst == "") return
+  if (dst ~ /[*?]/) { pushnote("the refspec " r " may touch a protected branch"); return }
+  if (dst ~ /^refs\/tags\//) { pushnote("pushing a tag (" r ")"); return }
+  sub(/^refs\/heads\//, "", dst)
+  if (dst == "HEAD") {
+    cb = curbranch(dir)
+    if (cb == "") { pushnote("the current branch could not be determined"); return }
+    dst = cb
+  }
+  if (isprot(dst)) { pushnote("pushing to the protected branch " dst); return }
+  if (index(r, ":") == 0 && tagexists(dir, dst)) pushnote("pushing the tag " dst)
+}
+# git push in "branches" mode: ask only for protected branches, tags, --all/--mirror, or when the target is unknown
+function push_branches(d, id, k, nw, dir,  i, x, dd, npos, tags, bulk, cb, refs, nref, tagword) {
+  dd = 0; npos = 0; nref = 0; tags = 0; bulk = 0; tagword = 0
+  for (i = k; i <= nw; i++) {
+    x = W[d, id, i]
+    if (!dd && x == "--") { dd = 1; continue }
+    if (!dd && x ~ /^--/) {
+      if (x ~ /^--(tags|follow-tags)$/) tags = 1
+      else if (x ~ /^--(all|mirror|branches)$/) bulk = 1
+      else if (x ~ /^--(repo|receive-pack|exec|push-option)$/) i++
+      continue
+    }
+    if (!dd && x ~ /^-./) {
+      if (x ~ /^-[a-zA-Z]*o$/) i++
+      continue
+    }
+    npos++
+    if (npos == 2 && x == "tag") { tagword = 1; continue }
+    if (npos >= 2) refs[++nref] = x
+  }
+  if (tags || tagword) { pushnote("pushing tags"); return }
+  if (bulk) { pushnote("pushing all branches (--all/--mirror) includes the protected ones"); return }
+  if (nref == 0) {
+    cb = curbranch(dir)
+    if (cb == "") pushnote("the current branch could not be determined")
+    else if (isprot(cb)) pushnote("pushing the protected branch " cb)
+    return
+  }
+  for (i = 1; i <= nref; i++) push_ref(refs[i], dir)
+}
+# merge / rebase / reset on a protected current branch (mode "branches" only)
+function move_check(what, dir,  cb) {
+  if (MODE["push"] != "branches") return
+  cb = curbranch(dir)
+  if (cb != "" && isprot(cb)) pushnote(what " moves the protected branch " cb)
 }
 function analyze(cmd, d,  s) {
   if (d > 3) return
@@ -436,9 +531,11 @@ function seg(d, id,  nw, k, x, cmd, j, str) {
     analyze(str, d + 1)
   }
 }
-function git_seg(d, id, k, nw,  x, sc, i, j, ch, len, force, dd, npos, noop) {
+function git_seg(d, id, k, nw,  x, sc, i, j, ch, len, force, dd, npos, noop, cdir, hard) {
+  cdir = CUR
   while (k <= nw) {
     x = W[d, id, k]
+    if (x == "-C" && k < nw) { cdir = resolve(W[d, id, k + 1]); k += 2; continue }
     if (x ~ /^(-C|-c|--git-dir|--work-tree|--namespace|--config-env|--super-prefix)$/) { k += 2; continue }
     if (x ~ /^-/) { k++; continue }
     break
@@ -492,12 +589,25 @@ function git_seg(d, id, k, nw,  x, sc, i, j, ch, len, force, dd, npos, noop) {
       npos++
       if (npos >= 2 && substr(x, 1, 1) == "+") force = 1
     }
-    if (force) hit("force-push"); else hit("push")
+    if (force) hit("force-push")
+    else if (MODE["push"] == "branches") push_branches(d, id, k, nw, cdir)
+    else hit("push")
   } else if (sc == "reset") {
-    for (i = k; i <= nw; i++) if (W[d, id, i] == "--hard") { hit("history-rewrite"); return }
+    npos = 0; hard = 0
+    for (i = k; i <= nw; i++) {
+      x = W[d, id, i]
+      if (x == "--hard") { hit("history-rewrite"); hard = 1 }
+      else if (x ~ /^--(soft|mixed|keep|merge)$/) hard = 1
+      else if (x == "--") { npos = 99; break }
+      else if (x !~ /^-/) npos++
+    }
+    if (hard || npos == 1) move_check("git reset", cdir)
   } else if (sc == "rebase") {
     for (i = k; i <= nw; i++) if (W[d, id, i] ~ /^--(abort|quit|show-current-patch)$/) return
-    hit("history-rewrite")
+    hit("history-rewrite"); move_check("git rebase", cdir)
+  } else if (sc == "merge") {
+    for (i = k; i <= nw; i++) if (W[d, id, i] ~ /^--(abort|quit)$/) return
+    move_check("git merge", cdir)
   } else if (sc == "filter-branch" || sc == "filter-repo") {
     hit("history-rewrite")
   } else if (sc == "clean") {
@@ -540,6 +650,7 @@ function secret_path(p,  b) {
 function reason(id) {
   if (id == "git-add-all") return "SubDeck guard (git-add-all): do not stage everything; other agents share this working tree. Stage explicit paths (git add <file> ...) and commit with a pathspec (git commit -m \"...\" -- <paths>)."
   if (id == "force-push") return "SubDeck guard (force-push): force pushes rewrite remote history and are blocked. Push without --force/-f/--force-with-lease/+refspec, or ask the user to run it by hand."
+  if (id == "push" && PUSHINFO != "") return "SubDeck guard (push): " PUSHINFO "; this needs explicit user approval (push mode branches: protected branches, tags and branch-moving merges/rebases/resets ask; other pushes are allowed)."
   if (id == "push") return "SubDeck guard (push): pushing needs explicit user approval."
   if (id == "history-rewrite") return "SubDeck guard (history-rewrite): git reset --hard / rebase / filter-branch / filter-repo / clean -f discard or rewrite work and need explicit user approval."
   if (id == "rm-rf-danger") return "SubDeck guard (rm-rf-danger): recursive delete of /, a drive root, the home directory, the project root or one of their ancestors is blocked. Delete specific subdirectories instead."
@@ -570,7 +681,7 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
   initrules(); cfgfile(uf, "user"); if (lf != "" && lf != pf) cfgfile(lf, "project"); if (pf != "") cfgfile(pf, "project")
   if (!ENABLED) return
   HOMEN = norm(ENVIRON["HOME"]); PROJN = norm(PROJ); CUR = norm(cwd); if (CUR == "") CUR = PROJN
-  DENYID = ""; ASKID = ""; COMMIT = 0; NOPRES = 0; PPINFO = ""; pp_prepare()
+  DENYID = ""; ASKID = ""; PUSHINFO = ""; split("", CB); COMMIT = 0; NOPRES = 0; PPINFO = ""; pp_prepare()
   if (tool == "Bash" || tool == "PowerShell") {
     if (cmd == "") return
     analyze(cmd, 0)
@@ -609,12 +720,15 @@ function do_show(  i, id, e) {
   e = ENVIRON["SUBDECK_GUARD"]
   printf "enabled: %s (%s)\n", ENABLED ? "yes" : "no", ENSRC
   if (e == "0" || e == "off" || e == "false" || e == "no") print "note: SUBDECK_GUARD=" e " in this environment disables the guard entirely"
-  printf "%-16s %-5s %s\n", "RULE", "MODE", "SOURCE"
-  for (i = 1; i <= NRULE; i++) { id = RID[i]; printf "%-16s %-5s %s\n", id, MODE[id], SRC[id] }
+  printf "%-16s %-8s %s\n", "RULE", "MODE", "SOURCE"
+  for (i = 1; i <= NRULE; i++) { id = RID[i]; printf "%-16s %-8s %s\n", id, MODE[id], SRC[id] }
   if (UNK != "") print "unknown (ignored): " UNK
   e = ""; for (i = 1; i <= NPL; i++) e = e (i > 1 ? "," : "") PL[i]
   if (NPL == 0) print "protectedPaths: (none)"
   else printf "protectedPaths (%s): %s\n", PLSRC, e
+  e = ""; for (i = 1; i <= NPB; i++) e = e (i > 1 ? "," : "") PB[i]
+  if (NPB == 0) print "protectBranches: (none)"
+  else printf "protectBranches (%s): %s\n", PBSRC, e
   print ""
   printf "user file:    %s (%s)\n", uf, CFGSTATE["user"]
   printf "project file: %s (%s)\n", pf, CFGSTATE["project"]
@@ -627,6 +741,7 @@ function do_dump(  t, i, id, v) {
   initrules()
   for (i = 1; i <= NRK; i++) if (!isknown(RKD[i])) print "unknown\t" RKR[i] "\t" RKV[i]
   for (i = 1; i <= NPP; i++) if (PPDEC[i] != "") print "protect\t" PPRAW[i]
+  if (HASBR) { print "branches-set"; for (i = 1; i <= NBR; i++) if (BRDEC[i] != "") print "branch\t" BRRAW[i] }
   if ("/guard/enabled" in V) {
     v = tolower(V["/guard/enabled"])
     if (v == "false" || v == "0" || v == "off" || v == "no") print "enabled false"
@@ -634,7 +749,7 @@ function do_dump(  t, i, id, v) {
   }
   for (i = 1; i <= NRULE; i++) {
     id = RID[i]
-    if (("/guard/rules/" id) in V) { v = tolower(V["/guard/rules/" id]); if (v == "deny" || v == "ask" || v == "off") print "rule " id " " v }
+    if (("/guard/rules/" id) in V) { v = tolower(V["/guard/rules/" id]); if (v == "deny" || v == "ask" || v == "off" || (id == "push" && v == "branches")) print "rule " id " " v }
   }
 }
 BEGIN {
@@ -673,12 +788,12 @@ CMD=""; SCOPE=user; PROJECT=""; PAIRS=(); BADARGS=(); PLIST=""; PADD=(); PDEL=()
 for a in "$@"; do
   a="${a%$'\r'}"
   # protect/unprotect take one positional glob list (a glob may look like a directory name)
-  if { [ "$CMD" = protect ] || [ "$CMD" = unprotect ]; } && [ -z "$PLIST" ] && [ -n "$a" ] && [[ "$a" != --* ]]; then PLIST="$a"; continue; fi
+  if { [ "$CMD" = protect ] || [ "$CMD" = unprotect ] || [ "$CMD" = push ] || [ "$CMD" = branches ]; } && [ -z "$PLIST" ] && [ -n "$a" ] && [[ "$a" != --* ]] && { { [ "$CMD" != push ] && [ "$CMD" != branches ]; } || { [[ "$a" != /* ]] && [[ "$a" != [A-Za-z]:* ]]; }; }; then PLIST="$a"; continue; fi
   case "$a" in
     "") ;;
     --project) SCOPE=project ;;
     --*) BADARGS+=("$a") ;;
-    show|set|on|off|reset|protect|unprotect) if [ -z "$CMD" ]; then CMD="$a"; else BADARGS+=("$a"); fi ;;
+    show|set|on|off|reset|protect|unprotect|push|branches) if [ -z "$CMD" ]; then CMD="$a"; else BADARGS+=("$a"); fi ;;
     *=*) PAIRS+=("$a") ;;
     *) if [ -d "$a" ]; then PROJECT="$a"; else BADARGS+=("$a"); fi ;;
   esac
@@ -742,11 +857,12 @@ write_file() {
   echo "error: could not write $f"; return 1
 }
 
+BRREPLACE=0; BRNEW=()
 valid_rule() { case " $RULES " in *" $1 "*) return 0 ;; esac; return 1; }
 
 # update ENABLED(true|false|keep) [rule=mode ...]: merge into TARGET's guard member.
 update() {
-  local TAB=$'\t' unk="" en="$1" cur others dump line en_cur="" rules="" id m kv g="" rj="" pl="" pitem pdup; local -a PPL=()
+  local TAB=$'\t' BRS=0 bl="" unk="" en="$1" cur others dump line en_cur="" rules="" id m kv g="" rj="" pl="" pitem pdup; local -a PPL=() BRL=()
   shift
   if ! others="$(members "$TARGET")"; then
     echo "error: $TARGET is not a valid JSON object; left untouched (fix or delete it by hand)."; return 1
@@ -759,6 +875,8 @@ update() {
     case "$line" in
       unknown$TAB*) line="${line#unknown$TAB}"; unk="$unk,${line%%$TAB*}:${line#*$TAB}" ;;
       protect$TAB*) PPL+=("${line#protect$TAB}") ;;
+      branches-set) BRS=1 ;;
+      branch$TAB*) BRL+=("${line#branch$TAB}") ;;
       *) IFS=' ' read -r a b c <<< "$line"; case "$a" in enabled) en_cur="$b" ;; rule) rules="$rules $b=$c" ;; esac ;;
     esac
   done <<< "$dump"
@@ -781,6 +899,9 @@ update() {
     case ",$pl," in *",\"$kv\","*) ;; *) pl="$pl,\"$kv\"" ;; esac
   done
   [ -n "$pl" ] && g="$g${g:+,}\"protectedPaths\":[${pl#,}]"
+  if [ $BRREPLACE -eq 1 ]; then for kv in "${BRNEW[@]}"; do bl="$bl,\"$kv\""; done; BRS=1
+  else for kv in "${BRL[@]}"; do bl="$bl,\"$kv\""; done; fi
+  [ $BRS -eq 1 ] && g="$g${g:+,}\"protectBranches\":[${bl#,}]"
   write_file "$TARGET" "$others" "{$g}" && echo "wrote $TARGET"
 }
 
@@ -797,11 +918,27 @@ case "$CMD" in
     for kv in "${PAIRS[@]}"; do
       k="${kv%%=*}"; v="$(printf '%s' "${kv#*=}" | tr 'A-Z' 'a-z')"
       if ! valid_rule "$k"; then echo "error: unknown rule '$k' (rules: $RULES)"; ERR=1
-      else case "$v" in deny|ask|off) NEW+=("$k=$v") ;; *) echo "error: invalid mode '$v' for $k (valid: deny, ask, off)"; ERR=1 ;; esac; fi
+      else case "$v" in deny|ask|off) NEW+=("$k=$v") ;; branches) if [ "$k" = push ]; then NEW+=("$k=$v"); else echo "error: invalid mode '$v' for $k (valid: deny, ask, off)"; ERR=1; fi ;; *) echo "error: invalid mode '$v' for $k (valid: deny, ask, off; push also: branches)"; ERR=1 ;; esac; fi
     done
     if [ $ERR -ne 0 ]; then echo "nothing written."; exit 0; fi
     update keep "${NEW[@]}"
     echo; show ;;
+  push)
+    V="$(printf '%s' "$PLIST" | tr 'A-Z' 'a-z')"
+    case "$V" in
+      ask|branches|off) update keep "push=$V"; echo; show ;;
+      *) echo "error: usage: push <ask|branches|off> [--project] (got '$PLIST'); nothing written." ;;
+    esac ;;
+  branches)
+    ERR=0; IFS=',' read -ra ITEMS <<< "$PLIST"
+    for it in "${ITEMS[@]}"; do
+      it="${it#"${it%%[![:space:]]*}"}"; it="${it%"${it##*[![:space:]]}"}"
+      [ -n "$it" ] || continue
+      case "$it" in *\"*|*\\*|*[[:cntrl:]]*) echo "error: invalid branch pattern '$it' (no quotes, backslashes or control characters)"; ERR=1; continue ;; esac
+      BRNEW+=("$it")
+    done
+    if [ $ERR -ne 0 ] || [ ${#BRNEW[@]} -eq 0 ]; then echo "error: usage: branches <glob>[,<glob>] [--project] (e.g. main,release/*); nothing written."; exit 0; fi
+    BRREPLACE=1; update keep; echo; show ;;
   protect|unprotect)
     if [ -z "$PLIST" ]; then echo "error: $CMD needs a glob list, e.g. $CMD 'CLAUDE.md,migrations/**'"; exit 0; fi
     ERR=0; IFS=',' read -ra ITEMS <<< "$PLIST"

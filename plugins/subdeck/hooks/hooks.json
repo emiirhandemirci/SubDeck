@@ -1,5 +1,5 @@
 {
-  "description": "SubDeck hooks: event logger (subagent start/stop, input-needed) to .subdeck/events.jsonl; local desktop notifications (toggle with /subdeck:settings); Bash/PowerShell/Write/Edit guard",
+  "description": "SubDeck hooks: event logger (subagent start/stop, input-needed) to the per-project state folder (~/.subdeck/projects/<key>/events.jsonl); local desktop notifications (toggle with /subdeck:settings); Bash/PowerShell/Write/Edit guard",
   "hooks": {
     "SessionStart": [
       {
@@ -56,11 +56,22 @@
         ]
       },
       {
-        "matcher": "permission_prompt|elicitation_dialog|agent_needs_input|idle_prompt",
+        "matcher": "permission_prompt|elicitation_dialog|agent_needs_input",
         "hooks": [
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.cmd\" notify hook waiting",
+            "shell": "bash",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.cmd\" notify hook idle",
             "shell": "bash",
             "timeout": 10
           }

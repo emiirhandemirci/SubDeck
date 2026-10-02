@@ -21,7 +21,7 @@ out="$(run show)"; rc=$?
 [ $rc -eq 0 ] && ok "show exits 0" || bad "show exit $rc"
 has "$out" '^enabled +false +default' "default disabled"
 hasnt "$out" 'sound' "no sound row in show"
-has "$out" '^events +waiting,done,agent +default' "default events include agent"
+has "$out" '^events +waiting,done +default' "default events: waiting,done"
 
 # subcommands preserve other keys; user file
 mkdir -p "$H/.subdeck"
@@ -62,7 +62,9 @@ has "$out" "Setting -ne 'Enabled'" "windows: toast checks notifier Setting"
 has "$out" "NotifyIcon" "windows: balloon fallback present"
 has "$out" "SubDeck" "title present"
 out="$(hook done)"; has "$out" "my-proj: finished" "done fires"
-out="$(hook agent '{"agent_type":"worker-sonnet"}')"; has "$out" "agent worker-sonnet finished" "agent fires by default once enabled"
+out="$(hook agent '{"agent_type":"worker-sonnet","transcript_path":"/x"}')"; [ -z "$out" ] && ok "agent is off by default" || bad "agent fired by default"
+HOME="$H" bash "$N" events waiting,done,agent "$P" >/dev/null
+out="$(hook agent '{"agent_type":"worker-sonnet","transcript_path":"/x"}')"; has "$out" "agent worker-sonnet finished" "agent fires once opted in"
 HOME="$H" bash "$N" events done "$P" >/dev/null
 out="$(hook waiting)"; [ -z "$out" ] && ok "event filter blocks waiting" || bad "waiting not filtered"
 out="$(hook done)"; has "$out" "finished" "event filter allows done"
@@ -82,8 +84,8 @@ hasnt "$out" "paplay|canberra" "linux: no sound"
 
 # no content leak; unsafe characters stripped
 LEAK='{"message":"SECRETPROMPT rm -rf","transcript_path":"/x/SECRETTRANSCRIPT","cwd":"/x","last_assistant_message":"SECRETREPLY","agent_type":"a'"'"'b;$(x)"}'
-for k in waiting done agent; do
-  HOME="$H" bash "$N" events waiting,done,agent "$P" >/dev/null
+for k in waiting done agent idle; do
+  HOME="$H" bash "$N" events waiting,done,agent,idle "$P" >/dev/null
   out="$(hook "$k" "$LEAK")"
   hasnt "$out" "SECRET" "no payload content in $k notification"
 done
@@ -158,6 +160,57 @@ for _ in 1 2 3; do
   e=$(date +%s%N); t=$(( (e - s) / 1000000 )); [ $t -lt $ms ] && ms=$t
 done
 [ $ms -lt $LIMIT ] && ok "detached: hook returned in ${ms} ms (best of 3) while child sleeps 3 s" || bad "not detached (${ms} ms)"
+
+# ---- noise control: idle kind, agent filter, per-session collapse ----
+NH="$(mktemp -d)"; NP="$(mktemp -d)/noisy"; mkdir -p "$NP"; NS="$(sp "$NH" "$NP")"
+nh() { # KIND payload -> dry-run output (windows), own home/project
+  printf '%s' "$2" | HOME="$NH" SUBDECK_NOTIFY_DRYRUN=1 SUBDECK_NOTIFY_OS=windows CLAUDE_PROJECT_DIR="$NP" bash "$N" hook "$1"
+}
+HOME="$NH" bash "$N" on "$NP" >/dev/null
+out="$(HOME="$NH" bash "$N" show "$NP")"; has "$out" '^events +waiting,done +default' "fresh config: events waiting,done"
+out="$(nh idle '{"session_id":"i1","notification_type":"idle_prompt"}')"; [ -z "$out" ] && ok "idle is off by default" || bad "idle fired by default"
+out="$(nh waiting '{"session_id":"i2","notification_type":"idle_prompt"}')"; [ -z "$out" ] && ok "idle_prompt routed as waiting is treated as idle (off)" || bad "idle_prompt shown as waiting"
+out="$(nh waiting '{"session_id":"i3","notification_type":"permission_prompt"}')"; has "$out" 'noisy: needs your input' "permission_prompt is waiting"
+HOME="$NH" bash "$N" events waiting,done,agent,idle "$NP" >/dev/null
+out="$(nh idle '{"session_id":"i4","notification_type":"idle_prompt"}')"; has "$out" 'noisy: idle, waiting for you' "idle has its own label when enabled"
+hasnt "$out" 'needs your input' "idle never says needs your input"
+out="$(nh waiting '{"session_id":"i5","notification_type":"idle_prompt"}')"; has "$out" 'noisy: idle, waiting for you' "idle_prompt under the waiting entry shows as idle"
+out="$(HOME="$NH" bash "$N" events bogus,idle "$NP")"; has "$out" 'unknown event' "events list still validated"
+# agent filter
+out="$(nh agent '{"session_id":"a1","agent_type":"","transcript_path":"/x"}')"; [ -z "$out" ] && ok "agent: empty agent_type skipped" || bad "empty agent_type fired"
+out="$(nh agent '{"session_id":"a2","agent_type":"worker"}')"; [ -z "$out" ] && ok "agent: no transcript skipped" || bad "no transcript fired"
+out="$(nh agent '{"session_id":"a3","agent_type":"worker","agent_transcript_path":""}')"; [ -z "$out" ] && ok "agent: empty transcript skipped" || bad "empty transcript fired"
+out="$(nh agent '{"session_id":"a4","agent_type":"worker","agent_transcript_path":"/t/a.jsonl"}')"; has "$out" 'agent worker finished' "agent: real stop shown"
+# collapse within the window, per session
+HOME="$NH" bash "$N" events waiting,done,agent,idle "$NP" >/dev/null
+J() { printf '{"session_id":"%s","transcript_path":"/t","agent_type":"w","notification_type":"%s"}' "$1" "$2"; }
+out="$(nh done "$(J c1 x)")"; has "$out" 'finished' "collapse: first toast shows"
+out="$(nh done "$(J c1 x)")"; has "$out" '^DRYRUN collapsed: done' "collapse: same kind in the window is collapsed"
+out="$(nh agent "$(J c1 x)")"; has "$out" '^DRYRUN collapsed: agent' "collapse: lower priority (agent after done)"
+out="$(nh idle "$(J c1 idle_prompt)")"; has "$out" '^DRYRUN collapsed: idle' "collapse: lowest priority (idle after done)"
+out="$(nh waiting "$(J c1 permission_prompt)")"; has "$out" 'needs your input' "collapse: higher priority (waiting after done) still shows"
+out="$(nh done "$(J c1 x)")"; has "$out" '^DRYRUN collapsed: done' "collapse: done right after waiting is collapsed"
+out="$(nh done "$(J c2 x)")"; has "$out" 'finished' "collapse: another session is independent"
+out="$(nh agent "$(J c3 x)")"; has "$out" 'agent w finished' "collapse: agent first"
+out="$(nh agent "$(J c3 x)")"; has "$out" '^DRYRUN collapsed: agent' "collapse: parallel sub-agent burst becomes one toast"
+out="$(nh done "$(J c3 x)")"; has "$out" 'finished' "collapse: done after agent shows (higher priority)"
+out="$(printf '{"transcript_path":"/t"}' | HOME="$NH" SUBDECK_NOTIFY_DRYRUN=1 SUBDECK_NOTIFY_OS=windows CLAUDE_PROJECT_DIR="$NP" bash "$N" hook done)"; has "$out" 'finished' "no session id: no collapse (1)"
+out="$(printf '{"transcript_path":"/t"}' | HOME="$NH" SUBDECK_NOTIFY_DRYRUN=1 SUBDECK_NOTIFY_OS=windows CLAUDE_PROJECT_DIR="$NP" bash "$N" hook done)"; has "$out" 'finished' "no session id: no collapse (2)"
+out="$(printf '%s' "$(J c4 x)" | HOME="$NH" SUBDECK_NOTIFY_COLLAPSE=0 SUBDECK_NOTIFY_DRYRUN=1 SUBDECK_NOTIFY_OS=windows CLAUDE_PROJECT_DIR="$NP" bash "$N" hook done)"
+has "$out" 'finished' "collapse: SUBDECK_NOTIFY_COLLAPSE=0 disables"
+# window expiry: an old stamp does not collapse
+printf 'c5 1 waiting\n' > "$NS/notify.last"
+out="$(nh done "$(J c5 x)")"; has "$out" 'finished' "collapse: expired stamp ignored"
+# real (non-dry) collapse is logged with a collapsed marker, plus the notification type on real attempts
+FPN="$(mktemp -d)"; printf '#!/usr/bin/env bash\necho toast\nexit 0\n' > "$FPN/powershell.exe"; chmod +x "$FPN/powershell.exe"
+rm -f "$NS/notify.log" "$NS/notify.last"
+for i in 1 2; do printf '%s' "$(J L1 permission_prompt)" | HOME="$NH" PATH="$FPN:$PATH" SUBDECK_NOTIFY_OS=windows CLAUDE_PROJECT_DIR="$NP" bash "$N" hook waiting >/dev/null 2>&1; done
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do grep -q ' waiting toast 0' "$NS/notify.log" 2>/dev/null && break; sleep 0.5; done
+lg="$(cat "$NS/notify.log" 2>/dev/null)"
+has "$lg" ' waiting spawn - type=permission_prompt$' "log: spawn line carries the notification type"
+has "$lg" ' waiting collapsed -( |$)' "log: collapsed attempt keeps a log line"
+[ "$(printf '%s\n' "$lg" | grep -c ' waiting spawn ')" -eq 1 ] && ok "log: only one real toast for two events" || bad "two toasts: $lg"
+[ ! -e "$NP/.subdeck" ] && ok "noise state stays outside the project" || bad "project folder written"
 
 # legacy <project>/.subdeck/config.json: read below the state-dir file, never written; no log in the project
 LG="$(mktemp -d)/legacy-proj"; mkdir -p "$LG/.subdeck"; LGH="$(mktemp -d)"
