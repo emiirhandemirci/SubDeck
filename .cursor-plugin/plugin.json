@@ -1,0 +1,13 @@
+{
+  "name": "subdeck",
+  "version": "0.5.2",
+  "description": "Manager plus sub-agents toolkit: orchestrator rulebook, live agent status, SubDeck Desk dashboard and settings.",
+  "author": { "name": "Emirhan Demirci" },
+  "homepage": "https://github.com/emiirhandemirci/SubDeck",
+  "repository": "https://github.com/emiirhandemirci/SubDeck",
+  "license": "MIT",
+  "keywords": ["sub-agents", "orchestration", "dashboard", "guard"],
+  "skills": "./plugins/subdeck/skills-portable/",
+  "agents": "./.cursor-plugin/agents/",
+  "rules": "./.cursor-plugin/rules/"
+}

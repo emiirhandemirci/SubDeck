@@ -1,0 +1,2 @@
+<!-- managed by SubDeck install script -->
+SubDeck is installed. When you delegate work or launch sub-agents, load the orchestrator skill first and follow it (model policy, task template, git rules, pre-push checklist, push only after explicit user approval). User skills: desk, status, settings.

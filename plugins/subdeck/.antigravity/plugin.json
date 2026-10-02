@@ -1,0 +1,5 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "subdeck",
+  "description": "Manager plus sub-agents toolkit: orchestrator rulebook, live agent status, SubDeck Desk dashboard and settings."
+}

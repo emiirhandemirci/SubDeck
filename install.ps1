@@ -1,12 +1,14 @@
-# SubDeck installer / updater. Usage: .\install.ps1 [-Tool claude|codex|copilot] [-Uninstall] [-Hooks]
+# SubDeck installer / updater. Usage: .\install.ps1 [-Tool claude|codex|copilot|cursor|antigravity|opencode] [-Uninstall] [-Hooks]
 #   claude (default): talks to the claude CLI only.
+#   opencode: plugin + 3 commands into $env:OPENCODE_CONFIG_HOME or ~.configopencode, plugin copy in $env:SUBDECK_PLUGIN_COPY or ~.subdeckplugin.
+#   cursor / antigravity: assemble the generated plugin (+ scripts) in ~.cursorpluginsocalsubdeck / ~.subdeckntigravity-plugin (SUBDECK_ANTIGRAVITY_DIR); antigravity then runs agy plugin install when agy is present.
 #   codex:   writes the agents as Codex custom-agent TOML to $env:CODEX_HOME or ~\.codex\agents
 #   copilot: writes the agents as <name>.agent.md to $env:COPILOT_HOME or ~\.copilot\agents plus
 #            hooks\subdeck.json pointing at this clone's scripts (-Hooks adds the hooks file, only if the plugin's own hooks do not fire).
 # Written files carry a "managed by SubDeck" marker; -Uninstall removes only those and an existing
 # foreign file of the same name is never overwritten. Never edits settings files.
 param(
-  [ValidateSet('claude', 'codex', 'copilot')][string]$Tool = 'claude',
+  [ValidateSet('claude', 'codex', 'copilot', 'cursor', 'antigravity', 'opencode')][string]$Tool = 'claude',
   [switch]$Uninstall,
   [switch]$Hooks
 )
@@ -47,6 +49,84 @@ function Test-Owned([string]$Path) {
 function Write-Lf([string]$Path, [string[]]$Lines) {
   [IO.File]::WriteAllText($Path, (($Lines -join "`n") + "`n"), $Utf8)
   Write-Host "wrote $Path"
+}
+
+if ($Tool -eq 'cursor' -or $Tool -eq 'antigravity') {
+  $pl = Join-Path $PSScriptRoot 'plugins\subdeck'
+  if ($Tool -eq 'cursor') {
+    $cb = if ($env:CURSOR_HOME) { $env:CURSOR_HOME } else { Join-Path $HOME '.cursor' }
+    $dest = Join-Path $cb 'plugins\local\subdeck'; $chk = Join-Path $PSScriptRoot '.cursor-plugin\plugin.json'
+  } else {
+    $dest = if ($env:SUBDECK_ANTIGRAVITY_DIR) { $env:SUBDECK_ANTIGRAVITY_DIR } else { Join-Path $HOME '.subdeck\antigravity-plugin' }
+    $chk = Join-Path $pl '.antigravity\plugin.json'
+  }
+  $marker = Join-Path $dest '.subdeck-managed'
+  if ($Uninstall) {
+    if (Test-Path $marker) { Remove-Item $dest -Recurse -Force; Write-Host "removed $dest" } else { Write-Host "nothing to remove at $dest" }
+    if ($Tool -eq 'antigravity') { Write-Host 'Also run: agy plugin uninstall subdeck' }
+    exit 0
+  }
+  if (-not (Test-Path $chk)) { Write-Host "missing $chk (run from a SubDeck clone; plugins/subdeck/scripts/build-portable.sh regenerates it)"; exit 1 }
+  if ((Test-Path $dest) -and -not (Test-Path $marker)) { Write-Host "skip $dest (exists and is not managed by SubDeck)"; exit 0 }
+  if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+  New-Item -ItemType Directory -Force -Path $dest | Out-Null
+  if ($Tool -eq 'cursor') {
+    Copy-Item (Join-Path $PSScriptRoot '.cursor-plugin') (Join-Path $dest '.cursor-plugin') -Recurse -Force
+    $sub = Join-Path $dest 'plugins\subdeck'; New-Item -ItemType Directory -Force -Path $sub | Out-Null
+    Copy-Item (Join-Path $pl 'skills-portable') (Join-Path $sub 'skills-portable') -Recurse -Force
+    Copy-Item (Join-Path $pl 'scripts') (Join-Path $sub 'scripts') -Recurse -Force
+  } else {
+    Copy-Item (Join-Path $pl '.antigravity\*') $dest -Recurse -Force
+    Copy-Item (Join-Path $pl 'scripts') (Join-Path $dest 'scripts') -Recurse -Force
+  }
+  [IO.File]::WriteAllText($marker, "$Mark`n", $Utf8)
+  Write-Host "wrote $dest"
+  Write-Host ''
+  if ($Tool -eq 'cursor') {
+    Write-Host "Restart Cursor or run 'Developer: Reload Window'; SubDeck appears under Customize. Skills, sub-agents and the rulebook rule are loaded; guard and logging hooks are not shipped for Cursor."
+  } else {
+    $agy = Get-Command agy -ErrorAction SilentlyContinue
+    if ($agy) {
+      & $agy.Source plugin install $dest
+      if ($LASTEXITCODE -ne 0) { Write-Host "agy plugin install failed; run it yourself: agy plugin install `"$dest`"" }
+    } else { Write-Host "Antigravity CLI (agy) not found. Install the plugin with: agy plugin install `"$dest`"" }
+    Write-Host "Guard and logging hooks are not shipped for Antigravity. Gemini CLI users: gemini extensions install https://github.com/$Repo"
+  }
+  exit 0
+}
+
+if ($Tool -eq 'opencode') {
+  $pl = Join-Path $PSScriptRoot 'plugins\subdeck'
+  $oc = if ($env:OPENCODE_CONFIG_HOME) { $env:OPENCODE_CONFIG_HOME } else { Join-Path $HOME '.config\opencode' }
+  $copy = if ($env:SUBDECK_PLUGIN_COPY) { $env:SUBDECK_PLUGIN_COPY } else { Join-Path $HOME '.subdeck\plugin' }
+  $marker = Join-Path $copy '.subdeck-managed'
+  $cmdNames = 'subdeck-status.md', 'subdeck-settings.md', 'subdeck-desk.md'
+  if ($Uninstall) {
+    if (Test-Path $marker) {
+      Remove-Item (Join-Path $oc 'plugins\subdeck.js') -Force -ErrorAction SilentlyContinue
+      foreach ($c in $cmdNames) { Remove-Item (Join-Path $oc "commands\$c") -Force -ErrorAction SilentlyContinue }
+      Remove-Item $copy -Recurse -Force
+      Write-Host "removed OpenCode plugin, commands and $copy"
+    } else { Write-Host "nothing to remove (no SubDeck copy at $copy)" }
+    Write-Host 'If you added SubDeck to the "instructions" array in opencode.json, remove that entry yourself.'
+    exit 0
+  }
+  if (-not (Test-Path (Join-Path $pl 'opencode\subdeck.js'))) { Write-Host "missing $pl\opencode\subdeck.js (run from a SubDeck clone)"; exit 1 }
+  if ((Test-Path $copy) -and -not (Test-Path $marker)) { Write-Host "skip $copy (exists and is not managed by SubDeck)"; exit 0 }
+  if (-not (Test-Path $marker) -and ((Test-Path (Join-Path $oc 'plugins\subdeck.js')) -or (Test-Path (Join-Path $oc 'commands\subdeck-status.md')))) { Write-Host "skip: $oc already has a subdeck plugin or command that SubDeck did not write"; exit 0 }
+  New-Item -ItemType Directory -Force -Path (Join-Path $oc 'plugins'), (Join-Path $oc 'commands'), (Split-Path $copy -Parent) | Out-Null
+  if (Test-Path $copy) { Remove-Item $copy -Recurse -Force }
+  Copy-Item $pl $copy -Recurse -Force
+  Remove-Item (Join-Path $copy 'tests') -Recurse -Force -ErrorAction SilentlyContinue
+  [IO.File]::WriteAllText($marker, "$Mark`n", $Utf8)
+  Copy-Item (Join-Path $pl 'opencode\subdeck.js') (Join-Path $oc 'plugins\subdeck.js') -Force
+  Copy-Item (Join-Path $pl 'opencode\commands\*.md') (Join-Path $oc 'commands') -Force
+  Write-Host "wrote $oc\plugins\subdeck.js, three commands in $oc\commands, and $copy"
+  Write-Host ''
+  Write-Host "Rulebook: add this to $oc\opencode.json yourself (the installer never edits settings files):"
+  Write-Host "  {`"instructions`": [`"$($copy.Replace('\', '/'))/skills/orchestrator/SKILL.md`"]}"
+  Write-Host 'Needs bash (Git Bash on Windows). Restart OpenCode. Commands: /subdeck-status, /subdeck-settings, /subdeck-desk.'
+  exit 0
 }
 
 if ($Tool -ne 'claude') {

@@ -30,8 +30,12 @@ SubDeck is a Claude Code plugin marketplace for running a **manager session with
 | Claude Code | `claude plugin marketplace add emiirhandemirci/SubDeck && claude plugin install subdeck@subdeck` |
 | GitHub Copilot CLI | `copilot plugin marketplace add emiirhandemirci/SubDeck && copilot plugin install subdeck@subdeck` |
 | Codex | `codex plugin marketplace add emiirhandemirci/SubDeck && codex plugin add subdeck@subdeck` |
+| Cursor | `./install.sh --tool cursor` (Windows: `.install.ps1 -Tool cursor`), or in Cursor: Customize, import this repository |
+| Antigravity | `./install.sh --tool antigravity` (runs `agy plugin install` on the assembled plugin), or `agy plugin install <path-to-the-assembled-plugin>` |
+| Gemini CLI (legacy) | `gemini extensions install https://github.com/emiirhandemirci/SubDeck` |
+| OpenCode (experimental) | `./install.sh --tool opencode` (Windows: `.install.ps1 -Tool opencode`); local install, works offline, not on npm |
 
-More tools are coming. Copilot gets skills, agents and hooks from the plugin itself; Codex plugins cannot bundle agents, so for Codex also run `./install.sh --tool codex` from a clone (`.\install.ps1 -Tool codex` on Windows PowerShell). `./install.sh --tool copilot` is a fallback if Copilot does not pick up the plugin's agents (add `--hooks` only if its hooks do not fire). `--uninstall` removes only the files the installer wrote. Copilot and Codex support is built from the official docs and still needs a live check; see [what works per tool](docs/USER_GUIDE.md#3-install).
+Copilot gets skills, agents and hooks from the plugin itself; Codex plugins cannot bundle agents, so for Codex also run `./install.sh --tool codex` from a clone (`.\install.ps1 -Tool codex` on Windows PowerShell). `./install.sh --tool copilot` is a fallback if Copilot does not pick up the plugin's agents (add `--hooks` only if its hooks do not fire). `--uninstall` removes only the files the installer wrote. Cursor and Antigravity get the skills, the seven sub-agents and the rulebook but no guard or logging hooks; the Gemini CLI extension only loads the rulebook (`GEMINI.md`). OpenCode gets a small JS plugin (guard, event log, notifications), three commands and a rulebook pointer; it needs bash. Copilot, Codex, Cursor, Antigravity, Gemini and OpenCode support is built from the official docs and not yet live-tested; see [what works per tool](docs/USER_GUIDE.md#3-install).
 
 - Claude Code alternatives: run `./install.sh` (macOS, Linux, Git Bash) / `.\install.ps1` (Windows) from a clone; both also update, and `--uninstall` / `-Uninstall` removes. Inside Claude Code: `/plugin marketplace add emiirhandemirci/SubDeck`, then `/plugin install subdeck@subdeck`.
 - Update (Claude Code): `claude plugin marketplace update subdeck && claude plugin update subdeck@subdeck`.
@@ -163,7 +167,7 @@ Check the manifests with `claude plugin validate .` and `claude plugin validate 
 What SubDeck does not do:
 
 - **No sandbox.** The guard is a rail, not a wall: aliases, shell globs and variables, other interpreters and scripts can get around it.
-- **Copilot CLI and Codex are not live-tested.** Support is built from the official docs; see [what works per tool](docs/USER_GUIDE.md#3-install).
+- **Copilot CLI, Codex, Cursor, Antigravity, Gemini CLI and OpenCode are not live-tested.** Support is built from the official docs; see [what works per tool](docs/USER_GUIDE.md#3-install).
 - **Desk reads local files only** and may estimate a state ("running", "idle") from file activity when a tool has no hooks.
 - **"Changed files" misses shell edits.** Only Write, Edit, MultiEdit and NotebookEdit calls are listed, not files written by shell commands.
 - **Weak or local models may narrate instead of launching agents.** The manager rulebook assumes a model that follows tool-use instructions.

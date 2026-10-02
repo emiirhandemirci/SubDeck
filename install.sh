@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # SubDeck installer / updater.
-# Usage: ./install.sh [--tool claude|codex|copilot] [--uninstall] [--hooks]
+# Usage: ./install.sh [--tool claude|codex|copilot|cursor|antigravity|opencode] [--uninstall] [--hooks]
 #   claude (default): talks to the claude CLI only (marketplace add/update + plugin install/update).
 #   codex:   copies the SubDeck agents as Codex custom-agent TOML to ${CODEX_HOME:-~/.codex}/agents
 #            (plugins cannot bundle agents). Install the plugin itself with the two codex commands it prints.
+#   cursor:  copies a self-contained plugin (.cursor-plugin + portable skills + scripts) to ${CURSOR_HOME:-~/.cursor}/plugins/local/subdeck.
+#   antigravity: assembles plugin.json + skills + agents + rules + scripts in ${SUBDECK_ANTIGRAVITY_DIR:-~/.subdeck/antigravity-plugin} and runs "agy plugin install" on it when agy is present.
+#   opencode: copies subdeck.js + 3 commands into ${OPENCODE_CONFIG_HOME:-~/.config/opencode} and a plugin copy to ${SUBDECK_PLUGIN_COPY:-~/.subdeck/plugin}; prints the opencode.json instructions line.
 #   copilot: fallback for what the plugin does not deliver: copies the agents as <name>.agent.md to
 #            ${COPILOT_HOME:-~/.copilot}/agents; with --hooks also writes ${COPILOT_HOME:-~/.copilot}/hooks/subdeck.json
 #            pointing at this clone's scripts (only if the plugin's own hooks do not fire; both together run twice).
@@ -21,11 +24,11 @@ while [ $# -gt 0 ]; do
     --hooks) WITHHOOKS=1 ;;
     --tool) shift; TOOL="${1:-}" ;;
     --tool=*) TOOL="${1#--tool=}" ;;
-    *) echo "Unknown argument: $1" >&2; echo "Usage: ./install.sh [--tool claude|codex|copilot] [--uninstall] [--hooks]" >&2; exit 2 ;;
+    *) echo "Unknown argument: $1" >&2; echo "Usage: ./install.sh [--tool claude|codex|copilot|cursor|antigravity|opencode] [--uninstall] [--hooks]" >&2; exit 2 ;;
   esac
   shift
 done
-case "$TOOL" in claude|codex|copilot) ;; *) echo "Unknown tool: $TOOL (use claude, codex or copilot)" >&2; exit 2 ;; esac
+case "$TOOL" in claude|codex|copilot|cursor|antigravity|opencode) ;; *) echo "Unknown tool: $TOOL (use claude, codex, copilot, cursor, antigravity or opencode)" >&2; exit 2 ;; esac
 
 MARK="managed by SubDeck install script"
 AGENT_DIR="$HERE/plugins/subdeck/agents"
@@ -67,6 +70,71 @@ copy_copilot_agent() {
   owned "$out" || { echo "skip $out (not managed by SubDeck)"; return 0; }
   cp "$src" "$out" && echo "wrote $out"
 }
+
+# Cursor and Antigravity: assemble a self-contained plugin directory from the committed (generated) files.
+if [ "$TOOL" = cursor ] || [ "$TOOL" = antigravity ]; then
+  PL="$HERE/plugins/subdeck"
+  if [ "$TOOL" = cursor ]; then
+    DEST="${CURSOR_HOME:-$HOME/.cursor}/plugins/local/subdeck"; SRCCHK="$HERE/.cursor-plugin/plugin.json"
+  else
+    DEST="${SUBDECK_ANTIGRAVITY_DIR:-$HOME/.subdeck/antigravity-plugin}"; SRCCHK="$PL/.antigravity/plugin.json"
+  fi
+  if [ "$UNINSTALL" = 1 ]; then
+    if [ -f "$DEST/.subdeck-managed" ]; then rm -rf "$DEST"; echo "removed $DEST"; else echo "nothing to remove at $DEST"; fi
+    [ "$TOOL" = antigravity ] && echo "Also run: agy plugin uninstall subdeck"
+    exit 0
+  fi
+  [ -f "$SRCCHK" ] || { echo "missing $SRCCHK (run from a SubDeck clone; plugins/subdeck/scripts/build-portable.sh regenerates it)" >&2; exit 1; }
+  if [ -e "$DEST" ] && [ ! -f "$DEST/.subdeck-managed" ]; then echo "skip $DEST (exists and is not managed by SubDeck)"; exit 0; fi
+  rm -rf "$DEST"; mkdir -p "$DEST" || exit 1
+  if [ "$TOOL" = cursor ]; then
+    cp -R "$HERE/.cursor-plugin" "$DEST/.cursor-plugin" && mkdir -p "$DEST/plugins/subdeck" \
+      && cp -R "$PL/skills-portable" "$PL/scripts" "$DEST/plugins/subdeck/" || exit 1
+  else
+    cp -R "$PL/.antigravity/." "$DEST/" && cp -R "$PL/scripts" "$DEST/scripts" || exit 1
+  fi
+  echo "$MARK" > "$DEST/.subdeck-managed"
+  echo "wrote $DEST"
+  echo
+  if [ "$TOOL" = cursor ]; then
+    echo "Restart Cursor or run 'Developer: Reload Window'; SubDeck appears under Customize. Skills, sub-agents and the rulebook rule are loaded; guard and logging hooks are not shipped for Cursor."
+  else
+    AGY="$(command -v agy 2>/dev/null || true)"
+    if [ -n "$AGY" ]; then "$AGY" plugin install "$DEST" || echo "agy plugin install failed; run it yourself: agy plugin install \"$DEST\""
+    else echo "Antigravity CLI (agy) not found. Install the plugin with: agy plugin install \"$DEST\""; fi
+    echo "Guard and logging hooks are not shipped for Antigravity. Gemini CLI users: gemini extensions install https://github.com/$REPO"
+  fi
+  exit 0
+fi
+
+# OpenCode: local JS plugin + commands under the OpenCode config dir, scripts in a private copy of the plugin directory.
+if [ "$TOOL" = opencode ]; then
+  PL="$HERE/plugins/subdeck"
+  OC="${OPENCODE_CONFIG_HOME:-$HOME/.config/opencode}"
+  COPY="${SUBDECK_PLUGIN_COPY:-$HOME/.subdeck/plugin}"
+  if [ "$UNINSTALL" = 1 ]; then
+    if [ -f "$COPY/.subdeck-managed" ]; then
+      rm -f "$OC/plugins/subdeck.js" "$OC/commands/subdeck-status.md" "$OC/commands/subdeck-settings.md" "$OC/commands/subdeck-desk.md"
+      rm -rf "$COPY"; echo "removed OpenCode plugin, commands and $COPY"
+    else echo "nothing to remove (no SubDeck copy at $COPY)"; fi
+    echo "If you added SubDeck to the \"instructions\" array in opencode.json, remove that entry yourself."
+    exit 0
+  fi
+  [ -f "$PL/opencode/subdeck.js" ] || { echo "missing $PL/opencode/subdeck.js (run from a SubDeck clone)" >&2; exit 1; }
+  if [ -e "$COPY" ] && [ ! -f "$COPY/.subdeck-managed" ]; then echo "skip $COPY (exists and is not managed by SubDeck)"; exit 0; fi
+  if [ ! -f "$COPY/.subdeck-managed" ] && { [ -e "$OC/plugins/subdeck.js" ] || [ -e "$OC/commands/subdeck-status.md" ]; }; then echo "skip: $OC already has a subdeck plugin or command that SubDeck did not write"; exit 0; fi
+  mkdir -p "$OC/plugins" "$OC/commands" "$(dirname "$COPY")" || exit 1
+  rm -rf "$COPY"; cp -R "$PL" "$COPY" || exit 1
+  rm -rf "$COPY/tests"
+  echo "$MARK" > "$COPY/.subdeck-managed"
+  cp "$PL/opencode/subdeck.js" "$OC/plugins/subdeck.js" && cp "$PL"/opencode/commands/*.md "$OC/commands/" || exit 1
+  echo "wrote $OC/plugins/subdeck.js, three commands in $OC/commands, and $COPY"
+  echo
+  echo "Rulebook: add this to $OC/opencode.json yourself (the installer never edits settings files):"
+  echo "  {\"instructions\": [\"$COPY/skills/orchestrator/SKILL.md\"]}"
+  echo "Needs bash (Git Bash on Windows). Restart OpenCode. Commands: /subdeck-status, /subdeck-settings, /subdeck-desk."
+  exit 0
+fi
 
 if [ "$TOOL" = codex ] || [ "$TOOL" = copilot ]; then
   if [ "$TOOL" = codex ]; then BASE="${CODEX_HOME:-$HOME/.codex}"; EXT=toml; else BASE="${COPILOT_HOME:-$HOME/.copilot}"; EXT=agent.md; fi

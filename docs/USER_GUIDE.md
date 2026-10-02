@@ -40,31 +40,42 @@ or `claude plugin marketplace add <path-to-SubDeck>` followed by `claude plugin 
 
 Add `.subdeck/` to your project's `.gitignore`; the hooks write agent events there.
 
-**Other tools (GitHub Copilot CLI, Codex).** One command each installs the plugin from the same repository:
+**Other tools (GitHub Copilot CLI, Codex, Cursor, Antigravity, Gemini CLI, OpenCode).** One command each installs the plugin from the same repository:
 
 ```
 copilot plugin marketplace add emiirhandemirci/SubDeck && copilot plugin install subdeck@subdeck
 codex plugin marketplace add emiirhandemirci/SubDeck && codex plugin add subdeck@subdeck
 ```
 
+Cursor, Antigravity and Gemini CLI use files generated from the same sources (`plugins/subdeck/scripts/build-portable.sh`; a test fails if they drift):
+
+- **Cursor.** `./install.sh --tool cursor` (Windows PowerShell: `.install.ps1 -Tool cursor`) copies a self-contained plugin (`.cursor-plugin/`, the portable skills and the scripts they call) to `~/.cursor/plugins/local/subdeck` (respecting `CURSOR_HOME`); restart Cursor or run "Developer: Reload Window" and SubDeck shows up under Customize. Alternatively import this repository from Customize (the repository root is the plugin root, `.cursor-plugin/plugin.json`). Cursor has no install command line. Remove with `--uninstall`.
+- **Antigravity (`agy`).** `./install.sh --tool antigravity` assembles the plugin (`plugin.json`, skills, seven agents, a rule, scripts) in `~/.subdeck/antigravity-plugin` (override with `SUBDECK_ANTIGRAVITY_DIR`) and runs `agy plugin install` on it when `agy` is on the PATH; otherwise it prints that command, so it also works offline. The sources are `plugins/subdeck/.antigravity/` (the scripts are added by the installer). Remove with `--uninstall` and `agy plugin uninstall subdeck`.
+- **Gemini CLI (legacy, replaced by Antigravity for many users).** `gemini extensions install https://github.com/emiirhandemirci/SubDeck` (or `gemini extensions link <clone>` for a local copy) reads `gemini-extension.json` and `GEMINI.md` at the repository root; `GEMINI.md` imports the orchestrator rulebook. No agents, hooks or skills are registered for Gemini CLI; the three user skills are plain files you can ask the model to follow.
+- **OpenCode (experimental).** `./install.sh --tool opencode` (Windows PowerShell: `.install.ps1 -Tool opencode`). A small JS plugin runs the SubDeck guard, event log and notifications; three commands (`/subdeck-status`, `/subdeck-settings`, `/subdeck-desk`) and a rulebook pointer are added. It copies `subdeck.js` to `~/.config/opencode/plugins/` (respecting `OPENCODE_CONFIG_HOME`), the commands to `~/.config/opencode/commands/` and the plugin scripts to `~/.subdeck/plugin`. Add the printed line to `opencode.json` yourself, e.g. `{"instructions": ["<home>/.subdeck/plugin/skills/orchestrator/SKILL.md"]}`; the installer never edits settings files. Needs bash (Git Bash on Windows). Not published to npm: local install only, fully offline. Limits: the plugin cannot raise an approval prompt, so a guard "ask" becomes a deny with a reason; it is loaded from the plugins folder because the OpenCode docs show only npm names under `"plugin"` in `opencode.json`; exact tool argument names and the permission event payload are unverified. Remove with `--uninstall` (removes only the files above).
+
 Codex plugins cannot bundle sub-agent definitions, so run the installer from a clone as well: `./install.sh --tool codex` (Windows PowerShell: `.\install.ps1 -Tool codex`). It writes the seven agents to `~/.codex/agents/*.toml` (respecting `CODEX_HOME`). Copilot loads skills, agents and hooks from the plugin itself; `./install.sh --tool copilot` is only a fallback that copies the agents to `~/.copilot/agents/*.agent.md` if `/agent` does not list them after the plugin install, and `--hooks` additionally writes `~/.copilot/hooks/subdeck.json` (use it only if the plugin's hooks do not fire; both together would run twice, and that file points at your clone, so keep the clone). Files the installer wrote carry a "managed by SubDeck" marker; re-running updates them, a file of the same name that is not ours is never overwritten, and `--uninstall` / `-Uninstall` removes only ours. Codex asks you to review and trust the plugin hooks the first time. Remove the plugin with `copilot plugin uninstall subdeck@subdeck` or `codex plugin remove subdeck@subdeck`.
 
 What works and what degrades there (built from the official documentation of both tools; a live check on real installs is still pending):
 
-| Part | Claude Code | Copilot CLI | Codex |
-|---|---|---|---|
-| Skills (desk, status, settings, orchestrator) | slash commands `/subdeck:...` | portable skills (generated copies) | portable skills (generated copies) |
-| Rulebook auto-loaded | SessionStart hook | SessionStart hook | SessionStart hook |
-| Agents | bundled in the plugin | bundled in the plugin (`install.sh --tool copilot` as fallback) | `install.sh --tool codex` |
-| Agent model | `sonnet` / `opus` / current | tool default (no model pinned) | tool default; `worker-opus` asks for high reasoning effort |
-| Guard (blocks `git add -A`, force push, secret files, ...) | yes | yes, plugin hooks | yes; an "ask" rule becomes a deny that tells the model to ask you |
-| Agent event log (feeds `status` and Desk) | yes | yes | yes |
-| Notifications (off by default) | waiting, done, agent | waiting, done, agent | waiting, done, agent |
-| Status line | optional | no | no |
+| Part | Claude Code | Copilot CLI | Codex | Cursor | Antigravity |
+|---|---|---|---|---|---|
+| Skills (desk, status, settings, orchestrator) | slash commands `/subdeck:...` | portable skills (generated copies) | portable skills (generated copies) | portable skills | portable skills |
+| Rulebook auto-loaded | SessionStart hook | SessionStart hook | SessionStart hook | always-on rule | rule file |
+| Agents | bundled in the plugin | bundled in the plugin (`install.sh --tool copilot` as fallback) | `install.sh --tool codex` | plugin agents (model inherited) | plugin agents (model inherited) |
+| Agent model | `sonnet` / `opus` / current | tool default (no model pinned) | tool default; `worker-opus` asks for high reasoning effort | inherited | inherited |
+| Guard (blocks `git add -A`, force push, secret files, ...) | yes | yes, plugin hooks | yes; an "ask" rule becomes a deny that tells the model to ask you | no | no |
+| Agent event log (feeds `status` and Desk) | yes | yes | yes | no | no |
+| Notifications (off by default) | waiting, done, agent | waiting, done, agent | waiting, done, agent | no | no |
+| Status line | optional | no | no | no | no |
 
-The Claude Code skills stay as they are. Codex and Copilot use generated copies in `plugins/subdeck/skills-portable/` (made by `plugins/subdeck/scripts/build-portable.sh`; a test fails if they drift): no command injection and no `CLAUDE_PLUGIN_ROOT`; the skill tells the model to run the script that sits two directories above the skill's own folder and print the output verbatim. Slash commands such as `/subdeck:status` are Claude Code only; elsewhere ask for the skill by name ("run the status skill").
+Cursor and Antigravity: skills (portable copies), the seven agents (read-only agents are marked read-only; the model is inherited), and an always-on rule that points at the orchestrator skill. No guard, event log or notifications: their hook payloads differ from what the SubDeck scripts parse, so nothing is shipped rather than something unverified (hooks, `status` and Desk's agent view for those tools are not available through SubDeck). Antigravity agent model tiers (`flash`/`pro`) are not pinned.
 
-Desk is tool-neutral: `node desk/server.mjs` from a clone shows the sessions of every supported tool. More tools are coming.
+The Claude Code skills stay as they are. Codex, Copilot, Cursor and Antigravity use generated copies in `plugins/subdeck/skills-portable/` (made by `plugins/subdeck/scripts/build-portable.sh`; a test fails if they drift): no command injection and no `CLAUDE_PLUGIN_ROOT`; the skill tells the model to run the script that sits two directories above the skill's own folder and print the output verbatim. Slash commands such as `/subdeck:status` are Claude Code only; elsewhere ask for the skill by name ("run the status skill").
+
+Desk is tool-neutral: `node desk/server.mjs` from a clone shows the sessions of every supported tool.
+
+Schema details used (verified against the vendors' pages, 2026-10-02; none of it live-tested): Cursor `.cursor-plugin/plugin.json` needs only `name`, components are found in default folders or custom paths in the manifest (cursor.com/docs/plugins; the exact manifest keys `skills`, `agents`, `rules` as custom paths follow that statement but were not shown in an example); Antigravity `plugin.json` needs `name`, components are discovered by folder (`skills/`, `agents/`, `rules/`) and the install source is a local path (antigravity.google/docs/plugins, /docs/subagents); Gemini `gemini-extension.json` and `contextFileName` (geminicli.com/docs/extensions/reference/). The `@file` import inside `GEMINI.md` and the staging location of Antigravity (two official pages list different folders) are not confirmed.
 
 ### Offline install (no internet)
 
