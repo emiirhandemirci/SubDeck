@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0
+
+- **Desk Settings tab and theme:** edit every `/subdeck:settings` key in the browser (selects, switches, list chips, scope All projects / This project, confirmation before turning a guard off). New System / Light / Dark switch and visual polish.
+- **Desk layout:** the page fills the window, each pane scrolls independently with thin themed scrollbars, and scroll positions survive re-renders.
+- **Failure reasons:** a failed Claude Code agent shows why (API error, quota, timeout, permission, tests failed, tool error, stuck).
+- **Agent commits:** commits an agent made show in Changed files ("via commit") with an on-demand read-only `git show --stat`.
+- **Resumed agents:** a sub-agent resumed after a Stop is shown as running again in Desk and `/subdeck:status`.
+- **State outside the repository:** events, notification log, status-line cache and project settings live in `~/.subdeck/projects/<name>-<hash>/`; nothing is written into your project, so no `.gitignore` entry is needed. A legacy `<project>/.subdeck/` is still read, never written. `SUBDECK_STATE_DIR` moves the root.
+- **Settings:** a short grouped table, `/subdeck:settings help`, a `json` output for tools, validated `set` (any invalid key or value changes nothing, exit 2), `protect=` replaces the list, new `context=<tokens>` key.
+- **Push guard (breaking default):** `push` now has the modes `ask|branches|off`; the default `branches` asks only for protected branches (`protect-branches`, default `main,master,release/*`), tags, `--all`/`--mirror` and merge/rebase/reset on a protected branch. Force push is always denied. The old default asked for every push.
+- **Notifications:** defaults are `waiting,done`; `agent` and `idle` are opt-in; repeated notifications for one session within 10 seconds collapse into one; sub-agent stops without a type or transcript are ignored.
+- **No nested managers:** all plugin agents disable the Agent tool and carry a "you are not the manager" rule. The rulebook gains contract-first coupling rules, Produces/Consumes and integration verification.
+- **More tools:** install support for Cursor, Antigravity, Gemini CLI and OpenCode (generated manifests, `install.sh --tool cursor|antigravity|opencode`, a dependency-free OpenCode plugin).
+
 ## 0.5.2
 
 - **Protected paths:** `/subdeck:settings set protect=CLAUDE.md,.github/workflows/**,*.lock` adds a guard rule (`protected-paths`, default ask) for Write/Edit/MultiEdit/apply_patch and obvious shell writes and deletes. A project list replaces the user list. Still a guard rail, not a sandbox.

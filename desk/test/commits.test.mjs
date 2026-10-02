@@ -17,7 +17,7 @@ const res = (ts, id, content, isError = false) => ({ type: 'user', timestamp: ts
 
 let gitOk = true;
 try { execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch { gitOk = false; }
-const git = (cwd, ...a) => execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', ...a], { cwd, encoding: 'utf8' });
+const git = (cwd, ...a) => execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...a], { cwd, encoding: 'utf8' });
 
 function makeRepo() {
   const dir = tmpDir('desk-git-');

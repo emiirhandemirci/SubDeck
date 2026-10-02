@@ -2,7 +2,7 @@
 
 ## 1. What SubDeck is
 
-SubDeck is a manager + sub-agents toolkit for Claude Code: rules, agents and skills that let one session delegate work to worker, researcher and verifier agents. `/subdeck:status` shows the live agent table in the terminal, `/subdeck:settings` changes the settings. SubDeck Desk is a local web dashboard that shows the agents of Claude Code, Cursor and several other tools, like the Claude Code "Agent map" but outside the IDE.
+SubDeck is a manager + sub-agents toolkit for Claude Code: rules, agents and skills that let one session delegate work to worker, researcher and verifier agents. Only the manager launches agents: the plugin agents have the Agent tool disabled and are told they are not the manager, so a sub-agent cannot start further agents. `/subdeck:status` shows the live agent table in the terminal, `/subdeck:settings` changes the settings. SubDeck Desk is a local web dashboard that shows the agents of Claude Code, Cursor and several other tools, like the Claude Code "Agent map" but outside the IDE.
 
 ## 2. Requirements
 
@@ -49,10 +49,10 @@ codex plugin marketplace add emiirhandemirci/SubDeck && codex plugin add subdeck
 
 Cursor, Antigravity and Gemini CLI use files generated from the same sources (`plugins/subdeck/scripts/build-portable.sh`; a test fails if they drift):
 
-- **Cursor.** `./install.sh --tool cursor` (Windows PowerShell: `.install.ps1 -Tool cursor`) copies a self-contained plugin (`.cursor-plugin/`, the portable skills and the scripts they call) to `~/.cursor/plugins/local/subdeck` (respecting `CURSOR_HOME`); restart Cursor or run "Developer: Reload Window" and SubDeck shows up under Customize. Alternatively import this repository from Customize (the repository root is the plugin root, `.cursor-plugin/plugin.json`). Cursor has no install command line. Remove with `--uninstall`.
+- **Cursor.** `./install.sh --tool cursor` (Windows PowerShell: `.\install.ps1 -Tool cursor`) copies a self-contained plugin (`.cursor-plugin/`, the portable skills and the scripts they call) to `~/.cursor/plugins/local/subdeck` (respecting `CURSOR_HOME`); restart Cursor or run "Developer: Reload Window" and SubDeck shows up under Customize. Alternatively import this repository from Customize (the repository root is the plugin root, `.cursor-plugin/plugin.json`). Cursor has no install command line. Remove with `--uninstall`.
 - **Antigravity (`agy`).** `./install.sh --tool antigravity` assembles the plugin (`plugin.json`, skills, seven agents, a rule, scripts) in `~/.subdeck/antigravity-plugin` (override with `SUBDECK_ANTIGRAVITY_DIR`) and runs `agy plugin install` on it when `agy` is on the PATH; otherwise it prints that command, so it also works offline. The sources are `plugins/subdeck/.antigravity/` (the scripts are added by the installer). Remove with `--uninstall` and `agy plugin uninstall subdeck`.
 - **Gemini CLI (legacy, replaced by Antigravity for many users).** `gemini extensions install https://github.com/emiirhandemirci/SubDeck` (or `gemini extensions link <clone>` for a local copy) reads `gemini-extension.json` and `GEMINI.md` at the repository root; `GEMINI.md` imports the orchestrator rulebook. No agents, hooks or skills are registered for Gemini CLI; the three user skills are plain files you can ask the model to follow.
-- **OpenCode (experimental).** `./install.sh --tool opencode` (Windows PowerShell: `.install.ps1 -Tool opencode`). A small JS plugin runs the SubDeck guard, event log and notifications; three commands (`/subdeck-status`, `/subdeck-settings`, `/subdeck-desk`) and a rulebook pointer are added. It copies `subdeck.js` to `~/.config/opencode/plugins/` (respecting `OPENCODE_CONFIG_HOME`), the commands to `~/.config/opencode/commands/` and the plugin scripts to `~/.subdeck/plugin`. Add the printed line to `opencode.json` yourself, e.g. `{"instructions": ["<home>/.subdeck/plugin/skills/orchestrator/SKILL.md"]}`; the installer never edits settings files. Needs bash (Git Bash on Windows). Not published to npm: local install only, fully offline. Limits: the plugin cannot raise an approval prompt, so a guard "ask" becomes a deny with a reason; it is loaded from the plugins folder because the OpenCode docs show only npm names under `"plugin"` in `opencode.json`; exact tool argument names and the permission event payload are unverified. Remove with `--uninstall` (removes only the files above).
+- **OpenCode.** `./install.sh --tool opencode` (Windows PowerShell: `.\install.ps1 -Tool opencode`). A small JS plugin runs the SubDeck guard, event log and notifications; three commands (`/subdeck-status`, `/subdeck-settings`, `/subdeck-desk`) and a rulebook pointer are added. It copies `subdeck.js` to `~/.config/opencode/plugins/` (respecting `OPENCODE_CONFIG_HOME`), the commands to `~/.config/opencode/commands/` and the plugin scripts to `~/.subdeck/plugin`. Add the printed line to `opencode.json` yourself, e.g. `{"instructions": ["<home>/.subdeck/plugin/skills/orchestrator/SKILL.md"]}`; the installer never edits settings files. Needs bash (Git Bash on Windows). Not published to npm: local install only, fully offline. Limits: the plugin cannot raise an approval prompt, so a guard "ask" becomes a deny with a reason; it is loaded from the plugins folder because the OpenCode docs show only npm names under `"plugin"` in `opencode.json`; exact tool argument names and the permission event payload are unverified. Remove with `--uninstall` (removes only the files above).
 
 Codex plugins cannot bundle sub-agent definitions, so run the installer from a clone as well: `./install.sh --tool codex` (Windows PowerShell: `.\install.ps1 -Tool codex`). It writes the seven agents to `~/.codex/agents/*.toml` (respecting `CODEX_HOME`). Copilot loads skills, agents and hooks from the plugin itself; `./install.sh --tool copilot` is only a fallback that copies the agents to `~/.copilot/agents/*.agent.md` if `/agent` does not list them after the plugin install, and `--hooks` additionally writes `~/.copilot/hooks/subdeck.json` (use it only if the plugin's hooks do not fire; both together would run twice, and that file points at your clone, so keep the clone). Files the installer wrote carry a "managed by SubDeck" marker; re-running updates them, a file of the same name that is not ours is never overwritten, and `--uninstall` / `-Uninstall` removes only ours. Codex asks you to review and trust the plugin hooks the first time. Remove the plugin with `copilot plugin uninstall subdeck@subdeck` or `codex plugin remove subdeck@subdeck`.
 
@@ -66,7 +66,7 @@ What works and what degrades there (built from the official documentation of bot
 | Agent model | `sonnet` / `opus` / current | tool default (no model pinned) | tool default; `worker-opus` asks for high reasoning effort | inherited | inherited |
 | Guard (blocks `git add -A`, force push, secret files, ...) | yes | yes, plugin hooks | yes; an "ask" rule becomes a deny that tells the model to ask you | no | no |
 | Agent event log (feeds `status` and Desk) | yes | yes | yes | no | no |
-| Notifications (off by default) | waiting, done, agent | waiting, done, agent | waiting, done, agent | no | no |
+| Notifications (off by default) | waiting, done (agent, idle opt-in) | same | same | no | no |
 | Status line | optional | no | no | no | no |
 
 Cursor and Antigravity: skills (portable copies), the seven agents (read-only agents are marked read-only; the model is inherited), and an always-on rule that points at the orchestrator skill. No guard, event log or notifications: their hook payloads differ from what the SubDeck scripts parse, so nothing is shipped rather than something unverified (hooks, `status` and Desk's agent view for those tools are not available through SubDeck). Antigravity agent model tiers (`flash`/`pro`) are not pinned.
@@ -83,7 +83,7 @@ For a machine with no internet and no GitHub access (for example an intranet PC 
 
 On a machine with internet and a clone of SubDeck:
 
-1. `./make-offline-bundle.sh` (add `--ref v0.5.2` for a tag or commit). It writes `dist/SubDeck-<version>-offline.zip` from tracked files only, plus the installers, `INSTALL.cmd` and `OFFLINE-README.txt`, and prints the SHA-256. Copy the zip to the USB stick; compare the hash on the other side if you like (`Get-FileHash` / `sha256sum`).
+1. `./make-offline-bundle.sh` (add `--ref v0.6.0` for a tag or commit). It writes `dist/SubDeck-<version>-offline.zip` from tracked files only, plus the installers, `INSTALL.cmd` and `OFFLINE-README.txt`, and prints the SHA-256. Copy the zip to the USB stick; compare the hash on the other side if you like (`Get-FileHash` / `sha256sum`).
 
 On the offline machine (needs Claude Code, Git for Windows, and Node.js 22.13+ only for Desk):
 
@@ -100,7 +100,7 @@ Update: build a newer bundle, unzip it and run the installer again. Remove: `.\i
 | `/subdeck:desk` | Starts Desk (or prints its URL if it is already running). | `/subdeck:desk` |
 | `/subdeck:desk stop` | Stops Desk. `status` prints the URL or says it is not running. | `/subdeck:desk stop` |
 | `/subdeck:status` | Prints the live table of running and recently finished sub-agents, including the real model id (MODEL column; on narrow terminals ACTIVITY is dropped first, then MODEL). `--all` shows more. | `/subdeck:status --all` |
-| `/subdeck:settings` | One table of every setting (model policy, notifications, guard rules, status line). `set key=value ...` changes them, `reset` restores defaults, `--project` writes to this project only. | `/subdeck:settings set notify=on worker=opus` |
+| `/subdeck:settings` | A short grouped table of the settings (model policy, notifications, push and guard rules, context, status line). `help` lists every key with its values, `set key=value ...` changes them, `reset` restores defaults, `--project` writes to this project only. | `/subdeck:settings set notify=on worker=opus` |
 
 That is the whole user-facing surface: three commands. The manager rulebook (delegation, task template, git rules, the pre-push checklist and approval gate) loads automatically and can also be opened with `/subdeck:orchestrator`. You launch agents and ask for pushes by talking to the manager.
 
@@ -131,7 +131,7 @@ Desk serves on `http://127.0.0.1:4917` by default (it falls back to 4918-4936 if
 
 | Tool | "Running" means |
 |---|---|
-| Claude Code | A hook saw an agent start with no stop, or the transcript changed in the last 2 minutes. |
+| Claude Code | A hook saw an agent start with no stop, or the transcript changed in the last 2 minutes. A resumed sub-agent counts as running again: a later start, or transcript records newer than its stop. |
 | Cursor | The composer is generating, or its data changed in the last 2 minutes. |
 | Codex | A turn is open in the rollout file and it was updated in the last 5 minutes. |
 | Copilot | CLI: an open turn while the session's lock file belongs to a live process. VS Code Chat: recent file activity. |
@@ -145,6 +145,10 @@ Desk serves on `http://127.0.0.1:4917` by default (it falls back to 4918-4936 if
 - **Agent map** (middle): sessions and their sub-agents as a tree.
 - **Detail** (right): the selected session or agent.
 
+The page fills the window and each pane scrolls on its own, so the header and the other panes stay put; scroll positions are kept when the data refreshes.
+
+**Settings tab and theme.** The **Settings** tab (next to Sessions) edits the same settings as `/subdeck:settings`: selects, switches, list chips and number boxes, with a tag showing where each value comes from (default, user, project) and a scope switch for All projects or This project. Turning the push gate or a guard rule off asks for confirmation first. The status line row is read-only (change it from Claude Code). The header has a System / Light / Dark switch; the choice is remembered in the browser.
+
 **State colours.**
 
 | State | Colour | Meaning |
@@ -153,14 +157,14 @@ Desk serves on `http://127.0.0.1:4917` by default (it falls back to 4918-4936 if
 | 🟠 waiting | orange | Blocked on you: a permission prompt, a question or a plan approval. Waiting sessions sort first, and the header shows how many are waiting in total. |
 | 🟡 idle | amber | Last activity within 30 minutes. |
 | ⚪ finished | grey | Older, or the agent explicitly completed. |
-| 🔴 failed | red | Explicit failure or an API error. |
+| 🔴 failed | red | Explicit failure or an API error. A failed Claude Code agent shows a short reason badge (API error, quota, timeout, permission, tests failed, tool error, stuck); the detail is in its tooltip. |
 | ⚪❔ stale | grey with `?` | A start was seen but no stop, and the file has been untouched for 5 minutes. State is uncertain. |
 
 Each agent also shows where its state came from. "Estimated from file activity" means there was no hook or explicit status, so Desk guessed from how recently the session file changed. "From lock file" (Copilot CLI) means the session's lock file is held by a live process.
 
 **Waiting list.** The header "N waiting" badge is a button. It opens a compact list of every waiting session and agent across all projects and tools: tool, project, title, what it waits for (permission, question or plan approval, when the data says which) and for how long. Click an entry to jump to it; Esc closes the list. It shows titles and metadata only, never prompt content.
 
-**Changed files (Claude Code).** The agent detail has a collapsed "Changed files" section built from the agent's Write, Edit, MultiEdit and NotebookEdit calls (failed calls are dropped). Click a file for a red/green diff of each edit; a Write shows its full new content. When two or more agents of the same session changed the same file, it is badged "also changed by <agent>" and listed in a conflict strip at the top of the detail, so you can spot overlapping work early. Files changed through shell commands (`sed -i`, redirections, scripts) are not listed. Secret-looking files (`.env`, keys, credentials) are listed but their contents are withheld, and `--no-content` turns the feature off.
+**Changed files (Claude Code).** The agent detail has a collapsed "Changed files" section built from the agent's Write, Edit, MultiEdit and NotebookEdit calls (failed calls are dropped). Click a file for a red/green diff of each edit; a Write shows its full new content. Commits the agent made with `git commit` also show up: files named in its `git commit -- <paths>` appear marked "via commit", and a Commits list shows each commit; click one for its `git show --stat` (file names and counts only, read-only, on demand). When two or more agents of the same session changed the same file, it is badged "also changed by <agent>" and listed in a conflict strip at the top of the detail, so you can spot overlapping work early. Files changed through shell commands (`sed -i`, redirections, scripts) are not listed. Secret-looking files (`.env`, keys, credentials) are listed but their contents are withheld, and `--no-content` turns the feature off.
 
 **Sandboxes and tests.** `SUBDECK_HOME` sets the single data root Desk reads (default: `USERPROFILE` on Windows, `HOME` elsewhere). With it set, Desk reads only below that folder and ignores the ambient `APPDATA`, `LOCALAPPDATA` and `XDG_*` variables.
 
@@ -211,6 +215,8 @@ Change it:
 
 - Roles: `worker`, `escalation`, `researcher`, `verifier`, `explore`. `mode` is `auto` (default), `named` or `current`.
 - Values: `sonnet`, `opus`, `haiku`, `fable`, `inherit` (use the session's model), or a full model id such as `claude-sonnet-5-5`. Other ids are accepted as free text for non-Claude backends.
+- `context=<tokens>` sets the context window Desk uses for models whose size it cannot know (`0` = automatic).
+- `/subdeck:settings help` lists every key with its allowed values and examples. A `set` with any invalid key or value changes nothing and exits with code 2.
 - Files: `~/.subdeck/config.json` (all projects) and `~/.subdeck/projects/<name>-<hash>/config.json` (this project, wins; a legacy `<project>/.subdeck/config.json` is still read below it). Both are local; do not commit them.
 - Aliases follow the latest model, so `sonnet` upgrades automatically. A full id pins a version. To remap an alias, set `ANTHROPIC_DEFAULT_SONNET_MODEL` (and `_OPUS_`, `_HAIKU_`) in your Claude Code settings `env`.
 - The real model id used by an agent shows in Desk and `/subdeck:status`.
@@ -232,12 +238,12 @@ Note: the agent prompts were tuned on Claude. Behaviour on other models is untes
 
 ## 8. Settings: notifications
 
-Notifications are off by default and silent (no sound). When you switch them on, SubDeck shows a local desktop notification when Claude needs your input (permission prompts, questions, idle), when the manager finishes its turn, and when a sub-agent finishes. Nothing leaves your machine; the notification shows only the project folder name and a short reason, never prompt content.
+Notifications are off by default and silent (no sound). When you switch them on, SubDeck shows a local desktop notification when Claude needs your input (permission prompts, questions) and when the manager finishes its turn. Two more kinds are opt-in: `agent` (a sub-agent finished) and `idle` (the idle reminder). Several notifications for one session within 10 seconds collapse into one, keeping the most important kind (waiting, then done, then agent, then idle). `SUBDECK_NOTIFY_COLLAPSE=<seconds>` changes the window, `0` turns the collapse off; sub-agent stops without a type or transcript are ignored. Nothing leaves your machine; the notification shows only the project folder name and a short reason, never prompt content.
 
 ```
 /subdeck:settings                          # show settings
 /subdeck:settings set notify=on             # or notify=off; also a toggle in Desk
-/subdeck:settings set notify.events=waiting,done,agent
+/subdeck:settings set notify.events=waiting,done,agent,idle   # default: waiting,done
 ```
 
 Add `--project` to write the project config instead of the user config (project wins). Set the environment variable `SUBDECK_NOTIFY=0` to silence everything. Config: `{"notify":{"enabled":true,"events":["waiting","done"]}}` in `~/.subdeck/config.json` or the project config in `~/.subdeck/projects/<name>-<hash>/config.json`. Windows uses a toast (balloon fallback), macOS `osascript`, Linux `notify-send` if installed. On Windows, Focus Assist / Do Not Disturb can hide toasts; if nothing shows, check those settings.
@@ -250,7 +256,7 @@ SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds a
 |---|---|---|
 | `git-add-all` | deny | `git add -A/--all/-u/.`, `git commit -a` |
 | `force-push` | deny | `git push --force`, `-f`, `--force-with-lease`, `+refspec` |
-| `push` | ask | any other `git push` |
+| `push` | branches | `git push`; mode `branches` asks only for protected branches and tags (see below), `ask` asks for every push, `off` allows them |
 | `history-rewrite` | ask | `git reset --hard`, `rebase`, `filter-branch/filter-repo`, `clean -f` |
 | `rm-rf-danger` | deny | recursive delete of `/`, a drive root, `~`/`$HOME`, the project root or their parents |
 | `secret-files` | ask | Write/Edit of `.env*` (not `.env.example`), `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `credentials*.json` |
@@ -259,9 +265,11 @@ SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds a
 - `/subdeck:settings` shows the effective rules.
 - `/subdeck:settings set push=off attribution=deny [--project]`, `guard=on` or `guard=off`, and `reset [--project]` change them. They write the `guard` key of `~/.subdeck/config.json` or the project config in `~/.subdeck/projects/<name>-<hash>/config.json`; the project file wins.
 - `SUBDECK_GUARD=0` disables the guard for a session.
-- In auto mode, "ask" acts as "deny": an auto-mode agent can never push with the default rules.
+- In auto mode, "ask" acts as "deny": with the default `branches` mode an auto-mode agent can push to a feature branch, but never to a protected branch or a tag, and never force-push.
 - Rule ids that SubDeck does not recognise (for example from a newer version) are kept when `set` rewrites your config, and `show` lists them as "unknown (ignored)". They have no effect; `set <unknown-id>=...` is rejected. `reset` removes the whole `guard` key.
 - It is a guard rail, not a sandbox. Aliases, scripts and other interpreters can get around it.
+
+**Push modes and protected branches.** `/subdeck:settings set push=ask|branches|off`. The default, `branches`, lets pushes to feature branches through and asks for: a push to a protected branch (explicit refspec, `HEAD`, `src:dst`, a delete), any tag push (`--tags`, `--follow-tags`, `refs/tags/...`), `--all` / `--mirror`, and a `merge`, `rebase` or `reset` while the current branch is protected. `ask` asks for every push; `off` allows every push. Force pushes are always denied, in every mode. Protected branches default to `main`, `master`, `release/*`; change them with `/subdeck:settings set protect-branches=main,develop,release/*` (globs with `*` and `?`, matched against the branch name; a project list replaces the user list). An asked push still needs your explicit yes in the conversation. `git pull` into a protected branch is not covered.
 
 **Protected paths.** Name files or globs your agents must not change without asking: `/subdeck:settings set protect=CLAUDE.md,.github/workflows/**,migrations/**,*.lock` (add `--project` for this repository only; `unprotect=<glob>` removes one). The guard then asks before Write/Edit/MultiEdit/apply_patch on those paths and before obvious shell writes or deletes (`>`, `>>`, `rm`, `mv`, `sed -i`, `git rm`, `git checkout -- <path>`). Globs are relative to the project root, case-insensitive on Windows; a glob without `/` matches the name at any depth, `**` crosses folders. Change the mode with `protected-paths=deny|ask|off`. The list lives in `guard.protectedPaths` in `~/.subdeck/config.json` or the project config in `~/.subdeck/projects/<name>-<hash>/config.json` (project wins). This is a guard rail, not a sandbox: shell globs and variables, other interpreters (python, node, perl), editors and scripts can still change protected files.
 

@@ -7,7 +7,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-emiirhandemirci-181717?logo=github&logoColor=white)](https://github.com/emiirhandemirci)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Emirhan_Demirci-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/emirhan-demirci-/)
 
-![version](https://img.shields.io/badge/version-0.5.2-6366f1)
+![version](https://img.shields.io/badge/version-0.6.0-6366f1)
 ![node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white)
 ![plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757)
 ![deps](https://img.shields.io/badge/dependencies-zero-22c55e)
@@ -30,10 +30,10 @@ SubDeck is a Claude Code plugin marketplace for running a **manager session with
 | Claude Code | `claude plugin marketplace add emiirhandemirci/SubDeck && claude plugin install subdeck@subdeck` |
 | GitHub Copilot CLI | `copilot plugin marketplace add emiirhandemirci/SubDeck && copilot plugin install subdeck@subdeck` |
 | Codex | `codex plugin marketplace add emiirhandemirci/SubDeck && codex plugin add subdeck@subdeck` |
-| Cursor | `./install.sh --tool cursor` (Windows: `.install.ps1 -Tool cursor`), or in Cursor: Customize, import this repository |
+| Cursor | `./install.sh --tool cursor` (Windows: `.\install.ps1 -Tool cursor`), or in Cursor: Customize, import this repository |
 | Antigravity | `./install.sh --tool antigravity` (runs `agy plugin install` on the assembled plugin), or `agy plugin install <path-to-the-assembled-plugin>` |
 | Gemini CLI (legacy) | `gemini extensions install https://github.com/emiirhandemirci/SubDeck` |
-| OpenCode (experimental) | `./install.sh --tool opencode` (Windows: `.install.ps1 -Tool opencode`); local install, works offline, not on npm |
+| OpenCode | `./install.sh --tool opencode` (Windows: `.\install.ps1 -Tool opencode`); local install, works offline, not on npm |
 
 Copilot gets skills, agents and hooks from the plugin itself; Codex plugins cannot bundle agents, so for Codex also run `./install.sh --tool codex` from a clone (`.\install.ps1 -Tool codex` on Windows PowerShell). `./install.sh --tool copilot` is a fallback if Copilot does not pick up the plugin's agents (add `--hooks` only if its hooks do not fire). `--uninstall` removes only the files the installer wrote. Cursor and Antigravity get the skills, the seven sub-agents and the rulebook but no guard or logging hooks; the Gemini CLI extension only loads the rulebook (`GEMINI.md`). OpenCode gets a small JS plugin (guard, event log, notifications), three commands and a rulebook pointer; it needs bash. Copilot, Codex, Cursor, Antigravity, Gemini and OpenCode support is built from the official docs and not yet live-tested; see [what works per tool](docs/USER_GUIDE.md#3-install).
 
@@ -69,6 +69,15 @@ Restart the tool, then try `/subdeck:status` or `/subdeck:desk` (Claude Code).
 - **Waiting list:** click the "N waiting" badge in Desk for every session blocked on you, with what it waits for and how long.
 - **Changed files:** per-agent files with red/green diffs and "also changed by" badges when two agents touch the same file (Claude Code).
 - **Protected paths:** `/subdeck:settings set protect=CLAUDE.md,*.lock` makes the guard ask before agents edit or delete those files.
+- **Desk Settings tab and theme:** edit every setting in the browser (with confirmation before turning a guard off) and switch System / Light / Dark.
+- **Independent pane scrolling:** the Desk page fills the window and each pane scrolls on its own.
+- **Failure reasons:** a failed Claude Code agent shows why (API error, quota, timeout, permission, tests failed, tool error, stuck).
+- **Agent commits in Changed files:** commits an agent made are listed with their `git show --stat`, on demand.
+- **Resumed agents stay running:** a sub-agent that is resumed after a stop is shown as running again.
+- **Branch-aware push guard:** `push=branches` (default) asks only for protected branches, tags and merges into them; force push is always denied. Notifications default to waiting and done; agent and idle are opt-in.
+- **Settings help and `context`:** `/subdeck:settings help` lists every key; `context=<tokens>` sets the window for models Desk cannot size.
+- **State outside the repo:** events, notification log and project settings live in `~/.subdeck/projects/`, never in your project.
+- **No nested managers:** plugin agents cannot launch agents.
 - **Sandbox-friendly Desk:** `SUBDECK_HOME` sets the single data root Desk reads.
 
 ## SubDeck Desk
@@ -135,7 +144,7 @@ SubDeck keeps its per-project records outside your project, in `~/.subdeck/proje
 |---|---|
 | `/subdeck:desk` | Starts (or prints the URL of) Desk; `stop` stops it. |
 | `/subdeck:status` | Live agent table with the real model id per agent (`--all` includes finished agents). |
-| `/subdeck:settings` | One table of all settings (model policy, notifications, guard rules, status line); `set key=value`, `reset`, `--project`. |
+| `/subdeck:settings` | Short table of all settings (model policy, notifications, push and guard rules, context, status line); `help`, `set key=value`, `reset`, `--project`. |
 
 These three are the whole command surface. Launching agents and pushing go through the manager, which follows the rulebook (`/subdeck:orchestrator` opens it by hand). Coming from 0.4? `task` and `pr` are now manager rules; `models`, `notify`, `guard` and `statusline` are keys of `/subdeck:settings`. See the [User Guide](docs/USER_GUIDE.md#4-commands).
 
@@ -178,7 +187,7 @@ What SubDeck does not do:
 
 ## Status
 
-v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 adds notifications, guard rules and the Desk context-usage bar. Roadmap and decision records live in `internal/design.md` and `internal/decisions/` (private, maintainers only).
+v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 added notifications, guard rules and the Desk context-usage bar; v0.5 cut the commands to three; v0.6 adds the Desk Settings tab, the branch-aware push guard and state outside the repository. Roadmap and decision records live in `internal/design.md` and `internal/decisions/` (private, maintainers only).
 
 ## License
 
