@@ -100,7 +100,7 @@ flowchart LR
   classDef src fill:#1e293b,stroke:#64748b,color:#e2e8f0
   classDef core fill:#312e81,stroke:#818cf8,color:#eef2ff
   classDef out fill:#14532d,stroke:#4ade80,color:#f0fdf4
-  H["Claude Code hooks"]:::src --> E[".subdeck/events.jsonl"]:::core
+  H["Claude Code hooks"]:::src --> E["~/.subdeck/projects/KEY/events.jsonl"]:::core
   E --> S["/subdeck:status"]:::out
   E --> C
   T["Claude Code transcripts"]:::src --> C["Desk core"]:::core
@@ -126,8 +126,10 @@ flowchart LR
 ## Quick start
 
 1. Install the plugin (see below).
-2. In your project, copy `plugins/subdeck/templates/CLAUDE.local.md.template` to `CLAUDE.local.md` (private, git-ignored) and fill in the placeholders. Add `.subdeck/` to `.gitignore`.
+2. In your project, copy `plugins/subdeck/templates/CLAUDE.local.md.template` to `CLAUDE.local.md` (private, git-ignored) and fill in the placeholders.
 3. Start Claude Code and run `/subdeck:desk` to open the dashboard. The manager rulebook loads on its own when a session delegates.
+
+SubDeck keeps its per-project records outside your project, in `~/.subdeck/projects/<name>-<hash>/` (events, notification log, status-line cache, project settings). Nothing is written into your repository, so no `.gitignore` entry is needed. `SUBDECK_STATE_DIR` moves that root; `SUBDECK_HOME` moves `~/.subdeck`. Older versions wrote `<project>/.subdeck/`; SubDeck still reads it (its project settings apply below the new ones) but never writes or deletes it. When you no longer need it: `rm -rf <project>/.subdeck`.
 
 | Command | What it does |
 |---|---|
@@ -157,7 +159,7 @@ Check the manifests with `claude plugin validate .` and `claude plugin validate 
 <summary><b>Components and requirements</b></summary>
 
 - Agents: `worker-sonnet` (default), `worker-opus` (critical work only), `researcher` (read-only), `verifier` (no commits), plus `*-current` variants that inherit the session model.
-- Hooks: `SubagentStart` / `SubagentStop` write events to `<project>/.subdeck/`; `Stop` / `Notification` send desktop notifications; `PreToolUse` runs the guard.
+- Hooks: `SubagentStart` / `SubagentStop` write events to `~/.subdeck/projects/<name>-<hash>/`; `Stop` / `Notification` send desktop notifications; `PreToolUse` runs the guard.
 - Scripts: event logger, `status.sh` (bash + awk), `run-hook.cmd` (Windows/POSIX launcher). Templates: `CLAUDE.local.md.template`, `decision.md.template`.
 - Requirements: Bash and awk (Git Bash on Windows), Claude Code with plugin support, git. Desk needs Node 22.13 or newer.
 </details>

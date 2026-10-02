@@ -38,7 +38,7 @@ claude --plugin-dir <path-to-SubDeck>/plugins/subdeck
 
 or `claude plugin marketplace add <path-to-SubDeck>` followed by `claude plugin install subdeck@subdeck`.
 
-Add `.subdeck/` to your project's `.gitignore`; the hooks write agent events there.
+SubDeck keeps its per-project records outside your project, in `~/.subdeck/projects/<name>-<hash>/` (events, notification log, status-line cache, project settings). Nothing is written into your repository, so no `.gitignore` entry is needed. `SUBDECK_STATE_DIR` moves that root; `SUBDECK_HOME` moves `~/.subdeck`. Older versions wrote `<project>/.subdeck/`; SubDeck still reads it (its project settings apply below the new ones) but never writes or deletes it. When you no longer need it: `rm -rf <project>/.subdeck`.
 
 **Other tools (GitHub Copilot CLI, Codex, Cursor, Antigravity, Gemini CLI, OpenCode).** One command each installs the plugin from the same repository:
 
@@ -211,7 +211,7 @@ Change it:
 
 - Roles: `worker`, `escalation`, `researcher`, `verifier`, `explore`. `mode` is `auto` (default), `named` or `current`.
 - Values: `sonnet`, `opus`, `haiku`, `fable`, `inherit` (use the session's model), or a full model id such as `claude-sonnet-5-5`. Other ids are accepted as free text for non-Claude backends.
-- Files: `~/.subdeck/config.json` (all projects) and `<project>/.subdeck/config.json` (this project, wins). Both are local; do not commit them.
+- Files: `~/.subdeck/config.json` (all projects) and `~/.subdeck/projects/<name>-<hash>/config.json` (this project, wins; a legacy `<project>/.subdeck/config.json` is still read below it). Both are local; do not commit them.
 - Aliases follow the latest model, so `sonnet` upgrades automatically. A full id pins a version. To remap an alias, set `ANTHROPIC_DEFAULT_SONNET_MODEL` (and `_OPUS_`, `_HAIKU_`) in your Claude Code settings `env`.
 - The real model id used by an agent shows in Desk and `/subdeck:status`.
 - Invalid keys or values are rejected and nothing is written. If `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is set (or an organization `availableModels` list applies), Claude Code overrides the policy and `/subdeck:settings` prints a warning.
@@ -240,7 +240,7 @@ Notifications are off by default and silent (no sound). When you switch them on,
 /subdeck:settings set notify.events=waiting,done,agent
 ```
 
-Add `--project` to write the project config instead of the user config (project wins). Set the environment variable `SUBDECK_NOTIFY=0` to silence everything. Config: `{"notify":{"enabled":true,"events":["waiting","done"]}}` in `~/.subdeck/config.json` or `<project>/.subdeck/config.json`. Windows uses a toast (balloon fallback), macOS `osascript`, Linux `notify-send` if installed. On Windows, Focus Assist / Do Not Disturb can hide toasts; if nothing shows, check those settings.
+Add `--project` to write the project config instead of the user config (project wins). Set the environment variable `SUBDECK_NOTIFY=0` to silence everything. Config: `{"notify":{"enabled":true,"events":["waiting","done"]}}` in `~/.subdeck/config.json` or the project config in `~/.subdeck/projects/<name>-<hash>/config.json`. Windows uses a toast (balloon fallback), macOS `osascript`, Linux `notify-send` if installed. On Windows, Focus Assist / Do Not Disturb can hide toasts; if nothing shows, check those settings.
 
 ## 9. Settings: guard rules
 
@@ -257,13 +257,13 @@ SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds a
 | `attribution` | off | `git commit` messages containing `Co-Authored-By` or "Generated with" |
 
 - `/subdeck:settings` shows the effective rules.
-- `/subdeck:settings set push=off attribution=deny [--project]`, `guard=on` or `guard=off`, and `reset [--project]` change them. They write the `guard` key of `~/.subdeck/config.json` or `<project>/.subdeck/config.json`; the project file wins.
+- `/subdeck:settings set push=off attribution=deny [--project]`, `guard=on` or `guard=off`, and `reset [--project]` change them. They write the `guard` key of `~/.subdeck/config.json` or the project config in `~/.subdeck/projects/<name>-<hash>/config.json`; the project file wins.
 - `SUBDECK_GUARD=0` disables the guard for a session.
 - In auto mode, "ask" acts as "deny": an auto-mode agent can never push with the default rules.
 - Rule ids that SubDeck does not recognise (for example from a newer version) are kept when `set` rewrites your config, and `show` lists them as "unknown (ignored)". They have no effect; `set <unknown-id>=...` is rejected. `reset` removes the whole `guard` key.
 - It is a guard rail, not a sandbox. Aliases, scripts and other interpreters can get around it.
 
-**Protected paths.** Name files or globs your agents must not change without asking: `/subdeck:settings set protect=CLAUDE.md,.github/workflows/**,migrations/**,*.lock` (add `--project` for this repository only; `unprotect=<glob>` removes one). The guard then asks before Write/Edit/MultiEdit/apply_patch on those paths and before obvious shell writes or deletes (`>`, `>>`, `rm`, `mv`, `sed -i`, `git rm`, `git checkout -- <path>`). Globs are relative to the project root, case-insensitive on Windows; a glob without `/` matches the name at any depth, `**` crosses folders. Change the mode with `protected-paths=deny|ask|off`. The list lives in `guard.protectedPaths` in `~/.subdeck/config.json` or `<project>/.subdeck/config.json` (project wins). This is a guard rail, not a sandbox: shell globs and variables, other interpreters (python, node, perl), editors and scripts can still change protected files.
+**Protected paths.** Name files or globs your agents must not change without asking: `/subdeck:settings set protect=CLAUDE.md,.github/workflows/**,migrations/**,*.lock` (add `--project` for this repository only; `unprotect=<glob>` removes one). The guard then asks before Write/Edit/MultiEdit/apply_patch on those paths and before obvious shell writes or deletes (`>`, `>>`, `rm`, `mv`, `sed -i`, `git rm`, `git checkout -- <path>`). Globs are relative to the project root, case-insensitive on Windows; a glob without `/` matches the name at any depth, `**` crosses folders. Change the mode with `protected-paths=deny|ask|off`. The list lives in `guard.protectedPaths` in `~/.subdeck/config.json` or the project config in `~/.subdeck/projects/<name>-<hash>/config.json` (project wins). This is a guard rail, not a sandbox: shell globs and variables, other interpreters (python, node, perl), editors and scripts can still change protected files.
 
 ## 10. Settings: status line
 
