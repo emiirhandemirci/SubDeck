@@ -19,6 +19,10 @@
 
 SubDeck is a Claude Code plugin marketplace for running a **manager session with sub-agents**. The manager delegates to worker, researcher and verifier agents and reads short reports. You get a live, IDE-independent view of what every agent is doing. Everything is deterministic (hooks, bash, awk); the model is never called just to produce status.
 
+<p align="center">
+  <img src="docs/assets/how-it-works.webp" alt="One prompt to the manager starts three sub-agents (worker, researcher, verifier) in parallel, and they show up live in SubDeck Desk" width="800">
+</p>
+
 ## Install
 
 | Tool | Install |
