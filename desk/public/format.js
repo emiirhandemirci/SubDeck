@@ -165,10 +165,11 @@ export function contextWindow(model, ctx) {
 export function usageLevel(pct) { return pct > 85 ? 'high' : pct >= 60 ? 'mid' : 'low'; }
 
 /** null when there is no usage data; else { tokens, window, pct, level, text }. pct/window/level are null for unknown models. */
-export function contextUsage(session) {
+export function contextUsage(session, fallbackWindow = null) {
   const ctx = session && session.tokens ? session.tokens.context : null;
   if (ctx === null || ctx === undefined || !Number.isFinite(ctx)) return null;
-  const window = contextWindow(session.model, ctx);
+  const fb = Number.isInteger(fallbackWindow) && fallbackWindow > 0 ? fallbackWindow : null;   // context.window setting: only for models whose window is unknown
+  const window = contextWindow(session.model, ctx) || fb;
   if (!window) return { tokens: ctx, window: null, pct: null, level: null, text: `${formatTokens(ctx)} tokens` };
   const pct = Math.min(100, Math.round((ctx / window) * 100));
   return { tokens: ctx, window, pct, level: usageLevel(ctx / window * 100),

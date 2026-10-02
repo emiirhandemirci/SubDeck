@@ -94,7 +94,7 @@ test('invalid JSON config is refused and left untouched', async () => {
 
 test('no other path is writable; other methods stay 405', async () => {
   const { api } = mk();
-  for (const url of ['/api/settings', '/api/settings/models', '/api/sources']) assert.equal((await call(api, { method: 'POST', url, headers: good, body: { enabled: true } })).status, 405, url);
+  for (const url of ['/api/settings/models', '/api/settings/', '/api/settings.json', '/api/sources']) assert.equal((await call(api, { method: 'POST', url, headers: good, body: { enabled: true } })).status, 405, url);
   assert.equal((await call(api, { method: 'PUT', headers: good, body: { enabled: true } })).status, 405);
   assert.equal((await call(api, { method: 'DELETE', headers: good })).status, 405);
 });

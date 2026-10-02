@@ -1,6 +1,7 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
 import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff } from './format.js';
+import { initSettings } from './settings.js';
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -11,15 +12,27 @@ const S = {
   sources: [], server: null, home: null, projects: [], project: null, sessions: [], detail: null,
   selectedProject: store.get('project', null), selectedSession: null,
   filter: store.get('filter', ''), onlyActive: store.get('onlyActive', false), showTemp: store.get('showTemp', false),
-  notify: null, notifyOverrides: [], lastHeartbeat: 0, lastRunning: null, lastWaiting: null,
+  ctxWindow: null, prevState: new Map(), notify: null, notifyOverrides: [], lastHeartbeat: 0, lastRunning: null, lastWaiting: null,
   content: null, contentFor: null, contentKey: null, open: { prompt: false, tools: false, report: true, changes: false },
   changes: null, changesFor: null, changesKey: null, fileOpen: null, fileData: null, commitOpen: null, commitData: null,
 };
 
+let settingsUi = null;
 const T = x => tildifyText(x, S.home); // display-only home-directory replacement for free text
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined && text !== null) e.textContent = String(text); return e; }
 async function getJSON(url) { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); }
+function emptyState(title, hint) { const d = el('div', 'empty'); d.append(el('strong', 'empty-title', title), el('span', 'empty-hint', hint)); return d; }
 function dot(state) { const d = el('span', `dot ${state}`); d.setAttribute('aria-hidden', 'true'); return d; }
+const FAIL_LABEL = { test: 'tests failed', permission: 'permission', api: 'API error', quota: 'quota', timeout: 'timeout', tool: 'tool error', stuck: 'stuck', unknown: 'failed' };
+function failureBadge(s) {
+  const f = s && s.state === 'failed' ? s.failure : null;
+  if (!f || typeof f !== 'object') return null;
+  const kind = typeof f.kind === 'string' && FAIL_LABEL[f.kind] ? f.kind : 'unknown';
+  const b = el('span', `tag fail fail-${kind}`, FAIL_LABEL[kind]);
+  const detail = typeof f.detail === 'string' && f.detail ? `: ${T(f.detail)}` : '';
+  b.title = `Failure (${kind})${detail}`;
+  return b;
+}
 function stateWord(state) { return el('span', `state-word chip ${state}`, STATE_LABEL[state] || state); }
 // Waiting count: server-side per-project counts when available, else what the selected project's tree shows.
 function updateWaiting() {
@@ -253,8 +266,12 @@ function sessionLine(s, cls) {
   line.tabIndex = s.id === S.selectedSession ? 0 : -1;
   line.setAttribute('aria-selected', String(s.id === S.selectedSession));
   line.append(dot(s.state), el('span', 'title', T(s.title)), stateWord(s.state));
+  const fb = failureBadge(s); if (fb) line.append(fb);
+  const was = S.prevState.get(s.id);
+  if (was !== undefined && was !== s.state) line.classList.add('changed');   // one short pulse; the animation ends by itself
+  S.prevState.set(s.id, s.state);
   if (s.agentType && cls === 'agent') line.append(el('span', 'tag mono', s.agentType));
-  const u = contextUsage(s);
+  const u = contextUsage(s, S.ctxWindow);
   line.append(el('span', 'meta-line muted', u ? `${formatDuration(s.durationMs)} · ${u.pct === null ? u.text : `${formatTokens(u.tokens)} · ${u.pct}%`}` : formatDuration(s.durationMs)));
   if (u && u.pct !== null) line.append(usageBar(u));
   if (s.archived) line.append(el('span', 'tag', 'archived'));
@@ -267,8 +284,8 @@ function renderMapInner() {
   const box = $('map');
   const scroll = box.scrollTop;
   box.replaceChildren();
-  if (!S.selectedProject || !S.project) { box.append(el('p', 'empty', 'Select a project')); return; }
-  if (!S.sessions.length) { box.append(el('p', 'empty', 'No sessions in this project.')); return; }
+  if (!S.selectedProject || !S.project) { box.append(emptyState('Select a project', 'Pick a project on the left to see its sessions and agents.')); return; }
+  if (!S.sessions.length) { box.append(emptyState('No sessions in this project', 'Sessions appear here as soon as an agent starts working in it.')); return; }
   const ph = el('div', 'proj-head');
   ph.append(el('span', 'name', S.project.name));
   const pht = projectTokens(S.project); if (pht) ph.append(pht);
@@ -297,10 +314,11 @@ function renderMapInner() {
 }
 
 async function loadProject() {
-  if (!S.selectedProject) { S.project = null; S.sessions = []; renderMap(); return; }
+  if (!S.selectedProject) { S.project = null; S.sessions = []; renderMap(); if (settingsUi) settingsUi.projectChanged(); return; }
   try {
     const d = await getJSON(`/api/projects/${encodeURIComponent(S.selectedProject)}`);
     S.project = d.project; S.sessions = d.sessions;
+    if (settingsUi) settingsUi.projectChanged();
   } catch { S.project = null; S.sessions = []; }
   renderMap();
 }
@@ -531,7 +549,7 @@ function renderDetail() {
   const box = $('detail');
   box.replaceChildren();
   const s = S.detail;
-  if (!s) { box.append(el('p', 'empty', 'Select a session or agent')); return; }
+  if (!s) { box.append(emptyState('Select a session or agent', 'Details, tools and changed files show up here.')); return; }
   box.append(el('h3', null, T(s.title)));
   const sub = el('p', 'muted subline');
   sub.append(el('span', `chip ${s.state}`, STATE_LABEL[s.state]));
@@ -540,7 +558,7 @@ function renderDetail() {
   if (s.parent) sub.append(el('span', null, `Spawned by ${T(s.parent.title)}`));
   const subDur = el('span', null, formatDuration(s.durationMs)); subDur.id = 'headDuration';
   sub.append(subDur);
-  const su = contextUsage(s); if (su) sub.append(el('span', null, su.text));
+  const su = contextUsage(s, S.ctxWindow); if (su) sub.append(el('span', null, su.text));
   box.append(sub);
   const conf = el('div', 'conflicts'); conf.id = 'conflicts'; conf.hidden = true;
   box.append(conf);
@@ -553,12 +571,13 @@ function renderDetail() {
   row('Model', s.model);
   const st = el('span'); st.append(dot(s.state), document.createTextNode(` ${STATE_LABEL[s.state]} (${SOURCE_LABEL[s.stateSource]})`));
   row('State', st);
+  const fd = failureBadge(s); if (fd) row('Failure', fd);
   row('Started', when(s.createdAt));
   if (s.runStartedAt) row('Latest run started', when(s.runStartedAt));
   row('Updated', when(s.updatedAt));
   row('Ended', when(s.endedAt));
   const dur = el('span', null, formatDuration(s.durationMs)); dur.id = 'detailDuration'; row('Duration', dur);
-  const du = contextUsage(s);
+  const du = contextUsage(s, S.ctxWindow);
   if (du) { const w = el('span'); w.append(document.createTextNode(`${du.text} context`)); if (du.pct !== null) { const b = usageBar(du); b.classList.add('block'); w.append(b); } row('Tokens', w); }
   else row('Tokens', '-');
   const la = s.lastActivity;
@@ -656,6 +675,9 @@ function connect() {
   es.onerror = () => { S.lastHeartbeat = 0; };
 }
 
+settingsUi = initSettings({ $, el, store, getJSON,
+  getProject: () => (S.project ? { id: S.project.id, name: S.project.name } : null),
+  onWindow: n => { S.ctxWindow = n; renderMap(); if (S.detail) renderDetail(); } });
 renderMap();
 loadNotify();
 connect();

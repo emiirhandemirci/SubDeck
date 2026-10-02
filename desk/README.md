@@ -1,6 +1,6 @@
 # SubDeck Desk
 
-A local, read-only web dashboard that shows what your AI coding agents are doing: projects, sessions, sub-agents, state, and token usage. It reads the session data that Claude Code, Cursor, Codex, Copilot, Gemini CLI, Cline/Roo and OpenCode already write on your machine. No dependencies, no build step.
+A local web dashboard that shows what your AI coding agents are doing: projects, sessions, sub-agents, state, and token usage. It reads the session data that Claude Code, Cursor, Codex, Copilot, Gemini CLI, Cline/Roo and OpenCode already write on your machine. It never writes to your tools' data; the one write path is the Settings tab, which runs the plugin's `settings.sh`. No dependencies, no build step.
 
 ## Run
 
@@ -49,6 +49,16 @@ Changed files (Claude Code): the agent detail has a collapsed "Changed files" se
 ## Context usage
 
 Each session and agent row shows a thin context bar: the last known context tokens divided by the model's context window. The window comes from the model id: 1M for a `[1m]` marker, Fable/Mythos, Sonnet 5 and later, Opus 4.7 and later, or an observed context above 200k; 200k for Haiku and for Sonnet/Opus 4.5 and earlier. When the window is unknown (Opus or Sonnet 4.6, whose `[1m]` suffix is stripped from transcripts, bare aliases such as `opus`, unrecognised Claude ids) and for other tools' models, only the token count is shown, with no percentage. Colours: under 60% neutral, 60 to 85% amber, above 85% red; the percentage is always printed and the bar is a `role=meter` with a text equivalent. Projects show the summed tokens of their sessions and agents (`tokenTotal` in `/api/projects`: reported total, else latest context, per session). These are token counts, not cost. Sessions from tools without usage data show nothing.
+
+When the window is unknown, the `context` setting (`context.window`, tokens; 0 = auto) is used as the fallback so those rows get a percentage too. A known window always wins.
+
+## Settings and theme
+
+The **Settings** tab (next to Sessions in the header) edits the same settings as `/subdeck:settings`: models, notifications, push gate and protected branches, guard rules, protected paths and the context window. Controls follow the setting type: a select for an enum, a switch for on/off, removable chips plus an input for a list, a number box for an integer. A tag shows where each value comes from (default, user, project). The scope switch chooses **All projects** (the user config) or **This project** (the project selected on the Sessions tab). The status line row is read-only: change it from Claude Code with `/subdeck:settings`. Turning a guard rule or the push gate **off** asks for confirmation in an in-page dialog first.
+
+Desk never writes config files itself. `GET /api/settings[?project=<id>]` runs `settings.sh json` and returns its JSON; `POST /api/settings` with `{"set": {"<key>": "<value>"}, "project": "<id>"|null}` runs `settings.sh set` and returns `{"ok": true}`, or settings.sh's one-line error (HTTP 422). Projects are addressed by Desk project id, never by path. The POST has the same protection as the notification bell: Host check, Origin check, the per-start token header (`X-SubDeck-Token`), and an `application/json` content type; keys must be plain names (no flags) and `statusline` is refused. `settings.sh` is found relative to this checkout (`plugins/subdeck/scripts/`) and run with bash (Git Bash on Windows; `SUBDECK_BASH` overrides the binary). It can take several seconds on some systems, so reads are cached for 30 seconds, writes clear the cache and run one at a time, and the page updates optimistically.
+
+The header has a **System / Light / Dark** switch (also a select in the Settings tab). The choice is remembered in the browser (`localStorage`, failures ignored) and applied as `data-theme` on the root element before first paint; System follows the OS. Both palettes keep text at WCAG AA contrast (checked by `desk/test/theme.test.mjs`), and `prefers-reduced-motion` turns every animation and transition off. A failed session or agent shows a small badge (tests failed, permission, API error, quota, timeout, tool error, stuck) with the short detail as a tooltip when the adapter supplies a `failure` object.
 
 ## Tests
 

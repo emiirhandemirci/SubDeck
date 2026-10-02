@@ -8,6 +8,7 @@
   <title>SubDeck Desk</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
+  <script src="/theme.js"></script>
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -16,8 +17,13 @@
       <svg class="logo" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="currentColor"/><rect x="5" y="6" width="14" height="3" rx="1.5" fill="#fff"/><rect x="5" y="11" width="10" height="3" rx="1.5" fill="#fff" opacity=".85"/><rect x="5" y="16" width="6" height="3" rx="1.5" fill="#fff" opacity=".7"/></svg>
       <h1>SubDeck <span class="brand-sub">Desk</span></h1>
     </div>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button id="tabSessions" class="tab" type="button" role="tab" aria-selected="true">Sessions</button>
+      <button id="tabSettings" class="tab" type="button" role="tab" aria-selected="false">Settings</button>
+    </nav>
     <div id="sources" class="sources" aria-label="Sources"></div>
     <div class="status">
+      <div id="themeSwitch" class="segs" role="group" aria-label="Theme"></div>
       <button id="bell" class="bell" type="button" role="switch" aria-checked="false" title="Desktop notifications: off" hidden></button>
       <button id="waitingCount" class="live waiting waiting-chip" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="waitingPanel" hidden></button>
       <div id="waitingPanel" class="waiting-panel" role="dialog" aria-label="Waiting for you" hidden></div>
@@ -25,7 +31,7 @@
       <span id="lastScan" class="muted"></span>
     </div>
   </header>
-  <main class="panes">
+  <main id="panesView" class="panes">
     <section class="pane" aria-labelledby="h-projects">
       <h2 id="h-projects">Projects</h2>
       <div class="controls">
@@ -46,5 +52,17 @@
       <div id="detail"><p class="empty">Select a session or agent</p></div>
     </section>
   </main>
+  <main id="settingsView" class="settings" hidden aria-labelledby="h-settings">
+    <div class="settings-head">
+      <h2 id="h-settings">Settings</h2>
+      <div id="scopeSwitch" class="segs" role="group" aria-label="Scope"></div>
+    </div>
+    <div id="settingsBody"></div>
+  </main>
+  <dialog id="confirmDlg" class="dlg" aria-labelledby="confirmTitle">
+    <h3 id="confirmTitle">Lower protection?</h3>
+    <p id="confirmText"></p>
+    <div class="dlg-actions"><button id="confirmNo" type="button">Cancel</button><button id="confirmYes" type="button" class="danger">Turn off</button></div>
+  </dialog>
 </body>
 </html>

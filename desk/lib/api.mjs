@@ -4,6 +4,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import fsSync from 'node:fs';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { readNotifyEnabled, writeNotifyEnabled } from './notify-settings.mjs';
 import { projectKey, relativeTo, isSecretPath, stateDirs } from './paths.mjs';
 import { showCommit, HASH_RE } from './git.mjs';
@@ -14,11 +17,45 @@ const STATIC = {
   '/format.js': ['format.js', 'text/javascript; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
+  '/theme.js': ['theme.js', 'text/javascript; charset=utf-8'],
+  '/settings.js': ['settings.js', 'text/javascript; charset=utf-8'],
 };
 const CSP = "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:";
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
-export function createApi({ core, getPort, startedAt, days, version, publicDir, now = Date.now, maxStreams = 32, contentEnabled = true, adapters = [], env = null, configFile = null, gitShow = null, token = crypto.randomBytes(24).toString('hex') }) {
+// ---- settings: Desk never writes config files; it runs settings.sh (json / set) ----
+const SETTINGS_SH = fileURLToPath(new URL('../../plugins/subdeck/scripts/settings.sh', import.meta.url));
+function findBash() {
+  if (process.env.SUBDECK_BASH) return process.env.SUBDECK_BASH;
+  if (process.platform === 'win32') {
+    for (const b of [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')]) {
+      if (!b) continue;
+      const f = path.join(b, 'Git', 'bin', 'bash.exe');
+      if (fsSync.existsSync(f)) return f;
+    }
+  }
+  return 'bash';
+}
+/** Runs `bash settings.sh <args>`; never through a shell. Resolves { code, stdout, stderr }; never rejects. */
+export function runSettingsSh(args, { home = null, script = SETTINGS_SH, timeoutMs = 60000 } = {}) {
+  return new Promise(resolve => {
+    const env = { ...process.env };
+    if (home) { env.HOME = home; env.USERPROFILE = home; }
+    let out = '', err = '', done = false, timer = null;
+    const end = r => { if (!done) { done = true; clearTimeout(timer); resolve(r); } };
+    let child;
+    try { child = spawn(findBash(), [script.replace(/\\/g, '/'), ...args], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); }
+    catch (e) { return resolve({ code: 127, stdout: '', stderr: String(e && e.message) }); }
+    timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } end({ code: 124, stdout: out, stderr: 'settings.sh timed out' }); }, timeoutMs);
+    child.stdout.on('data', c => { if (out.length < 1e6) out += c; });
+    child.stderr.on('data', c => { if (err.length < 1e5) err += c; });
+    child.on('error', e => end({ code: 127, stdout: '', stderr: String(e && e.message) }));
+    child.on('close', code => end({ code: code === null ? 1 : code, stdout: out, stderr: err }));
+  });
+}
+const SETTING_KEY_RE = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/;
+
+export function createApi({ core, getPort, startedAt, days, version, publicDir, now = Date.now, maxStreams = 32, contentEnabled = true, adapters = [], env = null, configFile = null, gitShow = null, settingsRun = null, token = crypto.randomBytes(24).toString('hex') }) {
   const streams = new Set();
   const iso = () => new Date(now()).toISOString();
 
@@ -129,6 +166,79 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     return w.ok ? json(res, 200, { enabled: w.enabled }) : json(res, 500, { error: w.error });
   }
 
+  // Shared guard for every browser write: Origin, per-start token, JSON content type, bounded JSON object body. Returns the body, or null after answering.
+  async function guardedBody(req, res) {
+    if (!originOk(req.headers.origin)) { json(res, 403, { error: 'forbidden origin' }); return null; }
+    if (!tokenOk(req.headers[TOKEN_HEADER])) { json(res, 403, { error: 'missing or wrong token' }); return null; }
+    if (!/^application\/json\s*(;|$)/i.test(String(req.headers['content-type'] || ''))) { json(res, 415, { error: 'content-type must be application/json' }); return null; }
+    let body;
+    try { body = JSON.parse(await readBody(req, 8192)); } catch { json(res, 400, { error: 'invalid body' }); return null; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) { json(res, 400, { error: 'invalid body' }); return null; }
+    return body;
+  }
+  const runSettings = settingsRun || (args => runSettingsSh(args, { home: env && env.home }));
+  // A project is addressed by its Desk project id and mapped to the path Desk already knows; no client-supplied paths.
+  function projectArgs(id) {
+    if (id === null || id === undefined || id === '') return { args: [] };
+    const p = typeof id === 'string' ? (core.snapshot().projects || []).find(x => x.id === id) : null;
+    return p && p.path ? { args: ['--project', p.path] } : { error: 'unknown project' };
+  }
+  const settingsCache = new Map(), settingsInflight = new Map(); let settingsGen = 0, setChain = Promise.resolve();
+  const SETTINGS_TTL_MS = 30000;
+  const firstLine = (t, d) => (String(t).trim().split('\n')[0] || d).replace(/\r/g, '').slice(0, 300);
+
+  async function settings(req, res, url) {
+    if (req.method === 'GET') {
+      const pa = projectArgs(url.searchParams.get('project'));
+      if (pa.error) return json(res, 404, { error: pa.error });
+      const gen0 = settingsGen;
+      // settings.sh can take several seconds on some systems: one run per scope at a time, answers cached briefly, cleared by every write.
+      const key = pa.args[1] || '';
+      const hit = settingsCache.get(key);
+      if (hit && now() - hit.at < SETTINGS_TTL_MS) return json(res, 200, hit.data);
+      let run = settingsInflight.get(key);
+      if (!run) {
+        run = (async () => {
+          const r = await runSettings(['json', ...pa.args]);
+          if (r.code !== 0) return { status: 502, error: firstLine(r.stderr, 'settings.sh failed') };
+          let d;
+          try { d = JSON.parse(r.stdout); } catch { return { status: 502, error: 'settings.sh returned invalid JSON' }; }
+          if (!d || !Array.isArray(d.settings)) return { status: 502, error: 'settings.sh returned an unexpected shape' };
+          return { status: 200, data: d };
+        })().finally(() => settingsInflight.delete(key));
+        settingsInflight.set(key, run);
+      }
+      const out = await run;
+      if (out.status !== 200) return json(res, out.status, { error: out.error });
+      if (settingsGen === gen0) settingsCache.set(key, { at: now(), data: out.data });
+      return json(res, 200, out.data);
+    }
+    const body = await guardedBody(req, res);
+    if (!body) return;
+    const set = body.set;
+    if (!set || typeof set !== 'object' || Array.isArray(set) || Object.keys(body).some(k => k !== 'set' && k !== 'project')) return json(res, 400, { error: 'body must be {"set": {key: value}, "project": id|null}' });
+    const keys = Object.keys(set);
+    if (!keys.length || keys.length > 20) return json(res, 400, { error: 'set needs 1-20 keys' });
+    const pairs = [];
+    for (const k of keys) {
+      const v = set[k];
+      if (!SETTING_KEY_RE.test(k) || k === 'statusline') return json(res, 400, { error: `key not writable from Desk: ${k.slice(0, 40)}` });
+      const val = typeof v === 'number' && Number.isInteger(v) ? String(v) : v;
+      if (typeof val !== 'string' || val.length > 500 || /[\0\r\n]/.test(val)) return json(res, 400, { error: `invalid value for ${k}` });
+      pairs.push(`${k}=${val}`);
+    }
+    const pa = projectArgs(body.project);
+    if (pa.error) return json(res, 404, { error: pa.error });
+    const prev = setChain;   // writes run one at a time
+    let release; setChain = new Promise(r => { release = r; });
+    await prev;
+    let r;
+    try { r = await runSettings(['set', ...pairs, ...pa.args]); } finally { release(); }
+    settingsGen++; settingsCache.clear();
+    if (r.code !== 0) return json(res, 422, { error: firstLine(r.stderr, 'settings.sh rejected the change') });
+    return json(res, 200, { ok: true });
+  }
+
   async function serveStatic(req, res, entry) {
     const [file, type] = entry;
     let data;
@@ -215,6 +325,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       if (!hostOk(req.headers && req.headers.host)) return json(res, 403, { error: 'forbidden host' });
       const url = new URL(req.url, 'http://127.0.0.1');
       const p = url.pathname;
+      if (p === '/api/settings' && (req.method === 'GET' || req.method === 'POST')) return await settings(req, res, url);
       if (p === '/api/settings/notify' && (req.method === 'GET' || req.method === 'POST')) return await notifySettings(req, res);
       if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method not allowed' });
       if (STATIC[p]) return await serveStatic(req, res, STATIC[p]);
