@@ -35,6 +35,7 @@ More tools are coming. Copilot gets skills, agents and hooks from the plugin its
 
 - Claude Code alternatives: run `./install.sh` (macOS, Linux, Git Bash) / `.\install.ps1` (Windows) from a clone; both also update, and `--uninstall` / `-Uninstall` removes. Inside Claude Code: `/plugin marketplace add emiirhandemirci/SubDeck`, then `/plugin install subdeck@subdeck`.
 - Update (Claude Code): `claude plugin marketplace update subdeck && claude plugin update subdeck@subdeck`.
+- No internet on the target machine: build a USB bundle with `./make-offline-bundle.sh`; see [Offline install](docs/USER_GUIDE.md#offline-install-no-internet).
 
 Restart the tool, then try `/subdeck:status` or `/subdeck:desk` (Claude Code).
 

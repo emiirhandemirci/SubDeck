@@ -66,6 +66,22 @@ The Claude Code skills stay as they are. Codex and Copilot use generated copies 
 
 Desk is tool-neutral: `node desk/server.mjs` from a clone shows the sessions of every supported tool. More tools are coming.
 
+### Offline install (no internet)
+
+For a machine with no internet and no GitHub access (for example an intranet PC running Claude Code against a non-Claude backend such as GLM). Transfer is by USB; nothing is downloaded at any step.
+
+On a machine with internet and a clone of SubDeck:
+
+1. `./make-offline-bundle.sh` (add `--ref v0.5.1` for a tag or commit). It writes `dist/SubDeck-<version>-offline.zip` from tracked files only, plus the installers, `INSTALL.cmd` and `OFFLINE-README.txt`, and prints the SHA-256. Copy the zip to the USB stick; compare the hash on the other side if you like (`Get-FileHash` / `sha256sum`).
+
+On the offline machine (needs Claude Code, Git for Windows, and Node.js 22.13+ only for Desk):
+
+2. Unzip anywhere and double-click `INSTALL.cmd`, or run `.\install-offline.ps1` in PowerShell (`./install-offline.sh` in Git Bash, macOS, Linux). On a non-Claude backend add `-ModeCurrent` (`--mode-current`) so sub-agents use the session's model; the installer recommends it when `ANTHROPIC_BASE_URL` points to a non-Anthropic host.
+3. The installer copies the plugin to `%USERPROFILE%\.subdeck\offline\SubDeck` (`-Target` / `--target` changes it; only an older copy of ours, marked by `.subdeck-offline-install`, is ever replaced), then runs `claude plugin marketplace add <that folder>` and `claude plugin install subdeck@subdeck` (or the `update` forms when already installed). A local-directory marketplace is read in place, so Claude Code does not fetch anything.
+4. Restart Claude Code, run `/subdeck:status`, then `/subdeck:desk`. Smoke test in a throwaway folder: "Use a worker to create hello.txt containing hello, then verify it."
+
+Update: build a newer bundle, unzip it and run the installer again. Remove: `.\install-offline.ps1 -Uninstall` (`--uninstall`) removes the plugin, the marketplace entry and our copy. Desk is found through the marketplace folder Claude Code records, or the default offline target.
+
 ## 4. Commands
 
 | Command | What it does | Example |

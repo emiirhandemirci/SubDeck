@@ -60,5 +60,23 @@ HOME="$FAKEH" USERPROFILE="$FAKEH" bash "$CACHE/scripts/desk.sh" stop >/dev/null
 OUT="$(HOME="$HOME/empty" USERPROFILE="$HOME/empty" SUBDECK_DESK_DIR= bash "$CACHE/scripts/desk.sh" start)"
 has "$OUT" 'not found.*marketplaces/subdeck/desk' "not-found message lists tried locations"
 
+# local-directory marketplace: Desk found through the path Claude Code records in known_marketplaces.json
+LOCALM="$(mktemp -d)"; cp -r "$DESK" "$LOCALM/desk"
+LH="$(mktemp -d)"; mkdir -p "$LH/.claude/plugins"
+printf '{\n  "other": {"source": {"source": "github", "repo": "x/y"}, "installLocation": "/nope/other"},\n  "subdeck": {\n    "source": {"source": "directory", "path": "%s"},\n    "installLocation": "%s",\n    "lastUpdated": "2026-01-01T00:00:00Z"\n  }\n}\n' "$LOCALM" "$LOCALM" > "$LH/.claude/plugins/known_marketplaces.json"
+OUT="$(HOME="$LH" USERPROFILE="$LH" SUBDECK_DESK_DIR= bash "$CACHE/scripts/desk.sh" start)"
+has "$OUT" '^SubDeck Desk: http' "local-directory marketplace: Desk found via known_marketplaces.json"
+HOME="$LH" USERPROFILE="$LH" bash "$CACHE/scripts/desk.sh" stop >/dev/null
+# only "path" recorded (no installLocation)
+printf '{"subdeck":{"source":{"source":"directory","path":"%s"}}}' "$LOCALM" > "$LH/.claude/plugins/known_marketplaces.json"
+OUT="$(HOME="$LH" USERPROFILE="$LH" SUBDECK_DESK_DIR= bash "$CACHE/scripts/desk.sh" start)"
+has "$OUT" '^SubDeck Desk: http' "minified record with only source.path"
+HOME="$LH" USERPROFILE="$LH" bash "$CACHE/scripts/desk.sh" stop >/dev/null
+# offline installer target
+OH="$(mktemp -d)"; mkdir -p "$OH/.subdeck/offline/SubDeck"; cp -r "$DESK" "$OH/.subdeck/offline/SubDeck/desk"
+OUT="$(HOME="$OH" USERPROFILE="$OH" SUBDECK_DESK_DIR= bash "$CACHE/scripts/desk.sh" start)"
+has "$OUT" '^SubDeck Desk: http' "offline target ~/.subdeck/offline/SubDeck/desk found"
+HOME="$OH" USERPROFILE="$OH" bash "$CACHE/scripts/desk.sh" stop >/dev/null
+
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -12,3 +12,5 @@ node_modules/
 
 # private maintainer notes (separate private repo, working copy kept locally)
 internal/
+# offline bundle output (make-offline-bundle.sh)
+dist/

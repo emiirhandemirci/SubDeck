@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # SubDeck Desk launcher: bash plugins/subdeck/scripts/desk.sh [start|stop|status]   (always exits 0)
 # Desk location: $SUBDECK_DESK_DIR (the desk/ folder of a SubDeck checkout), else <repo>/desk relative to this script,
-# else the marketplace clone <claude config dir>/plugins/marketplaces/subdeck/desk (installed from GitHub).
+# else the marketplace clone <claude config dir>/plugins/marketplaces/subdeck/desk (installed from GitHub),
+# else the folder Claude Code records for a local-directory marketplace (known_marketplaces.json),
+# else the offline installer target ~/.subdeck/offline/SubDeck/desk.
 # Runtime file: ~/.subdeck/desk.json {pid, port, startedAt, version}; log: ~/.subdeck/desk.log
 
 CMD="${1:-start}"
@@ -13,10 +15,31 @@ TIP='Tip: in VS Code or Cursor run "Simple Browser: Show" and paste the URL to o
 
 CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 MKT_DESK="$CFG/plugins/marketplaces/subdeck/desk"
+# mkt_dirs: paths recorded for the "subdeck" marketplace in known_marketplaces.json (installLocation, path);
+# for a local-directory marketplace these point at the folder it was added from.
+mkt_dirs() {
+  local f="$CFG/plugins/known_marketplaces.json" blk k v
+  [ -f "$f" ] || return 0
+  blk="$(tr '\n\r' '  ' < "$f" | awk '{ i = match($0, /"subdeck"[ \t]*:[ \t]*\{/); if (i) print substr($0, i + RLENGTH) }')"
+  for k in installLocation path; do
+    v="$(printf '%s' "$blk" | grep -o "\"$k\"[ 	]*:[ 	]*\"[^\"]*\"" | head -1 | sed 's/^[^:]*:[ 	]*"//; s/"$//')"
+    [ -n "$v" ] || continue
+    v="${v//\\\\/\\}"
+    if is_windows; then v="$(cygpath -u "$v" 2>/dev/null || printf '%s' "$v")"; fi
+    printf '%s\n' "$v"
+  done
+}
 find_desk() {
+  local d
   if [ -n "${SUBDECK_DESK_DIR:-}" ] && [ -f "$SUBDECK_DESK_DIR/server.mjs" ]; then printf '%s' "$SUBDECK_DESK_DIR"; return; fi
   if [ -f "$HERE/../../../desk/server.mjs" ]; then (cd "$HERE/../../../desk" && pwd); return; fi
   if [ -f "$MKT_DESK/server.mjs" ]; then printf '%s' "$MKT_DESK"; return; fi
+  while IFS= read -r d; do
+    if [ -n "$d" ] && [ -f "$d/desk/server.mjs" ]; then printf '%s' "$d/desk"; return; fi
+  done <<EOL
+$(mkt_dirs)
+EOL
+  if [ -f "$HOME/.subdeck/offline/SubDeck/desk/server.mjs" ]; then printf '%s' "$HOME/.subdeck/offline/SubDeck/desk"; return; fi
   printf ''
 }
 is_windows() { case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return 1 ;; esac; }
