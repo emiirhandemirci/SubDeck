@@ -356,6 +356,28 @@ has "$OUT" '^typedxxx .* worker-sonnet' "phantom: typed Stop-only row is kept"
 has "$(bash "$STATUS" --counts "$PH")" '^running=0 waiting=0 failed=0 idle=0 finished=2 stale=0$' "phantom: counts exclude phantoms"
 rm -rf "$PH" "$TH"
 
+# resume: a Stop only ends the run when nothing newer happened (later Start hook, or a transcript record newer than the Stop)
+PZ="$(mktemp -d)"; TZ2="$(mktemp -d)"; mkdir -p "$PZ/.subdeck" "$TZ2/s1/subagents"
+SZ="$TZ2/s1/subagents"
+rec() { printf '{"type":"%s","timestamp":"%s","message":{"role":"%s","content":"x"}}\n' "$1" "$2" "$1"; }
+{ rec user 2026-01-05T10:00:00Z; rec assistant 2026-01-05T10:05:00Z; } > "$SZ/agent-rs1xxxxx.jsonl"   # records after the Stop
+{ rec user 2026-01-05T10:00:00Z; rec assistant 2026-01-05T10:02:29Z; } > "$SZ/agent-rs2xxxxx.jsonl"   # later Start hook only
+{ rec user 2026-01-05T10:00:00Z; rec assistant 2026-01-05T10:02:29Z; } > "$SZ/agent-rs3xxxxx.jsonl"   # plain stop
+{ rec user 2026-01-05T10:00:00Z; rec assistant 2026-01-05T10:05:09Z; } > "$SZ/agent-rs4xxxxx.jsonl"   # stop, resume, stop again
+{
+  for id in rs1xxxxx rs2xxxxx rs3xxxxx rs4xxxxx; do ev 2026-01-05T10:00:00Z SubagentStart $id worker-sonnet "$TZ2/s1.jsonl"; ev 2026-01-05T10:02:30Z SubagentStop $id worker-sonnet "$TZ2/s1.jsonl" 'ok'; done
+  ev 2026-01-05T10:03:00Z SubagentStart rs2xxxxx worker-sonnet "$TZ2/s1.jsonl"
+  ev 2026-01-05T10:05:10Z SubagentStop rs4xxxxx worker-sonnet "$TZ2/s1.jsonl" 'ok again'
+} > "$PZ/.subdeck/events.jsonl"
+OUT="$(bash "$STATUS" --all "$PZ")"
+has "$OUT" '^rs1xxxxx .* running ' "resume: records newer than the Stop -> running"
+has "$OUT" '^rs2xxxxx .* running ' "resume: later Start hook -> running"
+has "$OUT" '^rs3xxxxx .* done ' "resume: plain Stop stays done"
+has "$OUT" '^rs4xxxxx .* done ' "resume: stop -> resume -> stop is done"
+cmp_counts "$PZ" "resume fixture"
+has "$(bash "$STATUS" --counts "$PZ")" '^running=2 waiting=0 failed=0 idle=0 finished=2 stale=0$' "resume: counts"
+rm -rf "$PZ" "$TZ2"
+
 rm -rf "$P" "$P2" "$P3" "$P4" "$T"
 echo "SUMMARY: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

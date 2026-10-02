@@ -95,7 +95,7 @@ fold() {
     p = field(line, "transcript_path"); if (p != "") path[id] = norm(p)
     p = field(line, "agent_transcript_path"); if (p != "") apath[id] = norm(p)
     p = field(line, "session_id"); if (p != "") ses[id] = p
-    if (ev == "SubagentStart") { hadstart[id] = 1; if (!(id in st) || e < st[id]) st[id] = e }
+    if (ev == "SubagentStart") { hadstart[id] = 1; if (!(id in st) || e < st[id]) st[id] = e; if (e > lastst[id]) lastst[id] = e }
     else {
       stop[id] = e
       # last_assistant_message lives inside the payload
@@ -113,6 +113,17 @@ fold() {
     n = m0
     if (n == 0) exit
     for (i = 1; i <= n; i++) { id = order[i]; if (!(id in st)) st[id] = (id in stop) ? stop[id] : 0 }
+    # a Stop only ends the run when nothing newer happened: a later Start, or a transcript record newer than the Stop
+    # (the agent was resumed, e.g. by SendMessage), means it runs again
+    k = 0
+    for (i = 1; i <= n; i++) {
+      id = order[i]; if (!(id in stop)) continue
+      if (lastst[id] > stop[id]) { delete stop[id]; continue }
+      f = agentpath(id)
+      if (f != "") { rlist[++k] = f; rid[k] = id }
+      if (k == 100) { rflush(rlist, rid, k); k = 0 }
+    }
+    rflush(rlist, rid, k)
     nd = 0
     for (i = 1; i <= n; i++) { id = order[i]; if (id in stop) done[++nd] = id }
     from = (all == 1 || nd <= 10) ? 1 : nd - 9
@@ -124,6 +135,23 @@ fold() {
     for (i = 1; i <= ns; i++) { id = sel[i]; k = sess(id); if (!(k in gseen)) { gseen[k] = 1; gorder[++ng] = k } }
     for (g = 1; g <= ng; g++)
       for (i = 1; i <= ns; i++) { id = sel[i]; if (sess(id) == gorder[g]) row(id, (id in fail) ? "failed" : ((id in stop) ? "done" : "running"), gorder[g]) }
+  }
+  # last record time of each listed transcript (one tail call per batch); newer than its Stop + 2s means resumed
+  function rflush(list, ids, cnt,   cmd, i, l, cur, q, byf, ts) {
+    if (cnt == 0) return
+    cmd = "tail -n 1"
+    for (i = 1; i <= cnt; i++) { q = list[i]; byf[q] = ids[i]; gsub(/\047/, "\047\047\047", q); cmd = cmd " \047" q "\047" }
+    if (cnt == 1) cmd = cmd " /dev/null"
+    cmd = cmd " 2>/dev/null"
+    cur = ""
+    while ((cmd | getline l) > 0) {
+      if (substr(l, 1, 4) == "==> " && l ~ / <==\r?$/) { cur = substr(l, 5, length(l) - 8); sub(/\r$/, "", cur); continue }
+      if (cur == "" || !(cur in byf)) continue
+      ts = epoch(field(l, "timestamp"))
+      if (ts > stop[byf[cur]] + 2) delete stop[byf[cur]]
+      cur = ""
+    }
+    close(cmd)
   }
   function tfile(f,   r, l) { if (f == "") return 0; r = (getline l < f); if (r >= 0) { close(f); return 1 } return 0 }
   function norm(p) { gsub(/\\\\/, "/", p); gsub(/\\/, "/", p); return p }

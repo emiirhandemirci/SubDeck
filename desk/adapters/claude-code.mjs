@@ -72,9 +72,13 @@ const isToolResultUser = c => Array.isArray(c) && c.some(b => b && b.type === 't
 
 /** fromStart: the records begin at the top of the file, so the first user record opens run 1. */
 export function summarizeRecords(records, { fromStart = true } = {}) {
-  const out = { tokens: null, model: null, customTitle: null, aiTitle: null, lastActivity: null, runStartedAt: null, ended: null, pending: null };
+  const out = { tokens: null, model: null, customTitle: null, aiTitle: null, lastActivity: null, runStartedAt: null, ended: null, pending: null, stamps: [] };
   let prevEnded = fromStart;   // true: the next prompt-like user record starts a new run
   for (const r of records) {
+    if (r.type === 'user' || r.type === 'assistant' || (r.type === 'attachment' && r.attachment && r.attachment.type === 'queued_command')) {
+      const sa = toIso(r.timestamp);
+      if (sa) out.stamps.push(sa);   // timestamps only; used to see whether work continued after a Stop hook
+    }
     if (r.type === 'user' && r.message && typeof r.message === 'object') out.pending = null;   // any answer or new prompt clears a pending question
     else if (r.type === 'assistant' && r.message && typeof r.message === 'object') {
       const c = r.message.content;
@@ -102,6 +106,7 @@ export function summarizeRecords(records, { fromStart = true } = {}) {
       if (a) out.lastActivity = a;
     }
   }
+  if (out.stamps.length > 400) out.stamps = out.stamps.slice(-400);
   out.failure = classifyFailure(records);   // only served when the session state is failed (core drops it otherwise)
   return out;
 }
@@ -280,8 +285,8 @@ export async function readHooks(projectPath, cache, env) {
     bad += c.bad;
     for (const n of c.notes) if (!notifs.get(n.key) || n.ts > notifs.get(n.key)) { notifs.set(n.key, n.ts); notifTypes.set(n.key, n.type); }
     for (const e of c.events) {
-      const a = agents.get(e.agentId) || { start: null, stop: null, agentType: null, sessionId: null, transcriptPath: null };
-      if (e.event === 'SubagentStart') a.start = earlier(a.start, e.ts);
+      const a = agents.get(e.agentId) || { start: null, lastStart: null, stop: null, agentType: null, sessionId: null, transcriptPath: null };
+      if (e.event === 'SubagentStart') { a.start = earlier(a.start, e.ts); if (!a.lastStart || Date.parse(e.ts) > Date.parse(a.lastStart)) a.lastStart = e.ts; }
       else if (!a.stop || Date.parse(e.ts) > Date.parse(a.stop)) a.stop = e.ts;
       a.agentType = a.agentType || e.agentType;
       a.sessionId = a.sessionId || e.sessionId;
@@ -316,6 +321,18 @@ export function waitingBasis(pending, notifIso, mtimeMs, mtimeIso, notifType = n
   // the Notification fires after the tool_use was written and before any answer; a later transcript write means the prompt was resolved
   if (Number.isFinite(t) && mtimeMs < t + 2000) return { kind: 'waiting', at: notifIso, stateSource: 'hook', fallbackAt: mtimeIso, ...(NOTIF_KIND[notifType] ? { waitingKind: NOTIF_KIND[notifType] } : {}) };
   return null;
+}
+
+const RESUME_MARGIN_MS = 2000;   // hook timestamps have whole-second resolution
+
+/** A Stop only ends the run when nothing newer happened: a later Start hook or newer transcript records mean the agent was resumed (e.g. SendMessage). Returns the resume start (ISO) or null. */
+export function resumedAfterStop(hook, stamps) {
+  if (!hook || !hook.stop) return null;
+  const stop = Date.parse(hook.stop);
+  let best = null;
+  for (const t of stamps || []) if (Date.parse(t) > stop + RESUME_MARGIN_MS) { best = t; break; }
+  if (hook.lastStart && Date.parse(hook.lastStart) > stop) best = best ? earlier(best, hook.lastStart) : hook.lastStart;
+  return best;
 }
 
 function subBasis(hook, mtimeIso, done, wait) {
@@ -543,10 +560,15 @@ async function scan(env, { cache }) {
     const seen = new Set();
     for (const s of g.subs) {
       seen.add(s.agentId);
-      const hook = hooks.get(s.agentId);
+      const rawHook = hooks.get(s.agentId);
+      const resumed = resumedAfterStop(rawHook, s.tr.stamps);
+      const hook = resumed ? { ...rawHook, stop: null } : rawHook;
       const smt = msToIso(s.st.mtimeMs);
-      const done = latestCompletion(s.tr, g.completions.get(s.agentId));
-      const runStartedAt = (hook && hook.stop) ? null : ((done && done.runStartedAt) || s.tr.runStartedAt || null);
+      let notif = g.completions.get(s.agentId);
+      if (resumed && notif && Date.parse(notif.at) < Date.parse(resumed)) notif = null;   // belongs to the run before the resume
+      let done = latestCompletion(s.tr, notif);
+      if (resumed && done && Date.parse(done.at) < Date.parse(resumed)) done = null;   // that end belongs to the run before the resume
+      const runStartedAt = (hook && hook.stop) ? null : (resumed && !(done && done.state)) ? resumed : ((done && done.runStartedAt) || (resumed) || s.tr.runStartedAt || null);
       sessions.push({ ...base, nativeId: s.agentId, parentNativeId: g.uuid, depth: 1, ...subTitle(s.meta, s.agentId),
         agentType: (s.meta && s.meta.agentType) || (hook && hook.agentType) || null,
         model: s.tr.model || (s.meta && s.meta.model) || null,
