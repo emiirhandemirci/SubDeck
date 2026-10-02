@@ -6,6 +6,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { readNotifyEnabled, writeNotifyEnabled } from './notify-settings.mjs';
 import { projectKey, relativeTo, isSecretPath } from './paths.mjs';
+import { showCommit, HASH_RE } from './git.mjs';
 
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
@@ -17,7 +18,7 @@ const STATIC = {
 const CSP = "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:";
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
-export function createApi({ core, getPort, startedAt, days, version, publicDir, now = Date.now, maxStreams = 32, contentEnabled = true, adapters = [], env = null, configFile = null, token = crypto.randomBytes(24).toString('hex') }) {
+export function createApi({ core, getPort, startedAt, days, version, publicDir, now = Date.now, maxStreams = 32, contentEnabled = true, adapters = [], env = null, configFile = null, gitShow = null, token = crypto.randomBytes(24).toString('hex') }) {
   const streams = new Set();
   const iso = () => new Date(now()).toISOString();
 
@@ -138,7 +139,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
   const platform = () => (env && env.platform) || process.platform;
   const overlaps = (a, b) => !!(a.firstAt && b.firstAt && Date.parse(a.firstAt) <= Date.parse(b.lastAt) && Date.parse(b.firstAt) <= Date.parse(a.lastAt));
 
-  async function changes(res, snap, id, one, filePath) {
+  async function changes(res, snap, id, one, filePath, commitHash) {
     if (!contentEnabled) return json(res, 404, { error: 'content disabled' });
     const s = snap.sessions.find(x => x.id === id);
     if (!s) return json(res, 404, { error: 'not found' });
@@ -146,6 +147,16 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     if (!a || typeof a.changes !== 'function') return json(res, 501, { error: 'changed files not available for this tool' });
     const proj = snap.projects.find(x => x.id === s.projectId);
     const rel = fp => (proj && proj.path ? relativeTo(fp, proj.path, platform()) : null);
+    if (one === 'commit') {
+      // only hashes found in this agent's own transcript can be queried; never an arbitrary ref
+      const h = typeof commitHash === 'string' ? commitHash.toLowerCase() : '';
+      if (!HASH_RE.test(h)) return json(res, 400, { error: 'hash required' });
+      const list = typeof a.commits === 'function' ? await a.commits(env, s) : null;
+      const c = (list || []).find(x => x.hash.toLowerCase() === h);
+      if (!c) return json(res, 404, { error: 'not found' });
+      const g = await (gitShow || showCommit)(proj && proj.path, c.hash);
+      return json(res, 200, g.ok ? { ...g, found: c.hash } : { ok: false, reason: g.reason, hash: c.hash });
+    }
     if (one) {
       if (typeof filePath !== 'string' || !filePath || filePath.length > 1024 || filePath.includes('\0')) return json(res, 400, { error: 'path required' });
       if (isSecretPath(filePath)) return json(res, 200, { path: filePath, rel: rel(filePath), edits: [], total: 0, truncated: false, withheld: true });
@@ -168,6 +179,22 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
         byKey.get(k).by.push({ id: t.id, title: t.title, firstAt: f.firstAt, lastAt: f.lastAt });
       }
     }
+    // commits made through the agent's Bash `git commit` calls; files seen only there are marked via commit
+    const cl = (typeof a.commits === 'function' ? await a.commits(env, s) : null) || [];
+    const absOf = p => (path.win32.isAbsolute(p) || path.posix.isAbsolute(p) || !(proj && proj.path) ? p : path.join(proj.path, p));
+    const known = new Set(own.files.map(f => projectKey(f.path, platform())));
+    const viaFiles = new Map();
+    const commits = cl.map(c => {
+      const files = c.paths.filter(p => !/[*?[]|^:/.test(p)).map(p => absOf(p));
+      for (const p of files) {
+        const k = projectKey(p, platform());
+        if (known.has(k)) continue;
+        let v = viaFiles.get(k);
+        if (!v) { v = { path: p, rel: rel(p), count: 0, firstAt: c.at, lastAt: c.at, kinds: ['commit'], via: 'commit', secret: isSecretPath(p), alsoBy: [], commits: [] }; viaFiles.set(k, v); }
+        v.lastAt = c.at; v.commits.push(c.hash);
+      }
+      return { hash: c.hash, subject: c.subject, at: c.at, files: c.paths.map(p => { const a = absOf(p); return rel(a) || p; }) };
+    });
     const files = own.files.map(f => {
       const others = (byKey.get(projectKey(f.path, platform())) || { by: [] }).by.filter(x => x.id !== s.id);
       const me = own.files.find(x => x.path === f.path);
@@ -176,7 +203,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     const conflicts = [...byKey.values()].filter(c => c.by.length >= 2 && (s.id === rootId || c.by.some(x => x.id === s.id)))
       .map(c => ({ path: c.path, rel: rel(c.path), agents: c.by.map(x => ({ id: x.id, title: x.title })),
         parallel: c.by.some((x, i) => c.by.some((y, j) => j > i && overlaps(x, y))) }));
-    return json(res, 200, { generatedAt: iso(), files, conflicts, agentsChecked: tree.length });
+    return json(res, 200, { generatedAt: iso(), files: [...files, ...viaFiles.values()], commits, conflicts, agentsChecked: tree.length });
   }
 
   async function handle(req, res) {
@@ -207,8 +234,8 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
         const data = await a.timeline(env, s);   // read on demand; never stored
         return data ? json(res, 200, data) : json(res, 404, { error: 'not found' });
       }
-      m = /^\/api\/sessions\/([A-Za-z0-9._-]+)\/changes(\/file)?$/.exec(p);
-      if (m) return await changes(res, snap, m[1], !!m[2], url.searchParams.get('path'));
+      m = /^\/api\/sessions\/([A-Za-z0-9._-]+)\/changes(?:\/(file|commit))?$/.exec(p);
+      if (m) return await changes(res, snap, m[1], m[2] || false, url.searchParams.get('path'), url.searchParams.get('hash'));
       return json(res, 404, { error: 'not found' });
     } catch (e) {
       process.stderr.write(`api error: ${String(e && e.message).split('\n')[0]}\n`);

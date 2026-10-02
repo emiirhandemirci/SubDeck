@@ -579,4 +579,78 @@ export default {
     const file = session && session.refs && session.refs.file;
     return file ? readChangeFile(file, env, filePath) : null;
   },
+  async commits(env, session) {
+    const file = session && session.refs && session.refs.file;
+    return file ? readCommitList(file) : null;
+  },
 };
+
+// ---- agent commits: Bash `git commit` calls and their results (hash + subject; the pathspec after `--` gives the paths) ----
+export const COMMITS_MAX = 100;
+const resultText = c => (typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => (x && typeof x.text === 'string' ? x.text : '')).join('\n') : '');
+
+/** Splits a shell command into words and operators (outside quotes); quoted text stays inside one word. */
+function shellWords(command) {
+  const out = []; let cur = '', q = null, had = false, quoted = false;
+  const push = () => { if (had) out.push({ w: cur, quoted }); cur = ''; had = false; quoted = false; };
+  const chars = Array.from(String(command));
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (q) { if (ch === q) q = null; else cur += ch; continue; }
+    if (ch === '"' || ch === "'") { q = ch; had = true; quoted = true; continue; }
+    if (ch === ';' || ch === '&' || ch === '|' || ch === '\n' || ch === '>' || ch === '<') { push(); out.push({ op: true }); continue; }
+    if (ch === '#' && !had) { while (i < chars.length && chars[i] !== '\n') i++; continue; }
+    if (/\s/.test(ch)) { push(); continue; }
+    cur += ch; had = true;
+  }
+  push();
+  return out;
+}
+
+/** Paths after a lone `--` in the last `git ... commit` of a command. [] when there is no pathspec. */
+export function pathspecOf(command) {
+  const words = shellWords(command);
+  const segs = []; let seg = [];
+  for (const x of words) { if (x.op) { segs.push(seg); seg = []; } else seg.push(x); }
+  segs.push(seg);
+  for (let i = segs.length - 1; i >= 0; i--) {
+    const sg = segs[i];
+    if (!sg.length || sg[0].w !== 'git' || !sg.some(x => !x.quoted && x.w === 'commit')) continue;
+    const d = sg.findIndex(x => !x.quoted && x.w === '--');
+    return d < 0 ? [] : sg.slice(d + 1).map(x => x.w).filter(x => x && !x.startsWith('-')).slice(0, 200);
+  }
+  return [];
+}
+
+/** Commits made by one transcript: [{hash, subject, at, paths}] in order. Only calls whose result shows a commit line count. */
+export async function readCommitList(file) {
+  let fh;
+  try { fh = await fs.open(file, 'r'); } catch { return null; }
+  const calls = new Map();   // tool_use id -> { at, paths }
+  const commits = [];
+  try {
+    const rl = readline.createInterface({ input: fh.createReadStream({ encoding: 'utf8' }), crlfDelay: Infinity });
+    for await (const line of rl) {
+      const isUse = line.includes('git') && line.includes('commit') && line.includes('"tool_use"');
+      if (!isUse && !line.includes('"tool_result"')) continue;
+      let r; try { r = JSON.parse(line); } catch { continue; }
+      if (!r || typeof r !== 'object' || !r.message || !Array.isArray(r.message.content)) continue;
+      if (r.type === 'assistant') {
+        for (const b of r.message.content) {
+          if (!b || b.type !== 'tool_use' || b.name !== 'Bash' || !b.input || typeof b.input.command !== 'string' || typeof b.id !== 'string') continue;
+          if (!/\bgit\b[^\n]*\bcommit\b/.test(b.input.command)) continue;
+          calls.set(b.id, { at: toIso(r.timestamp), paths: pathspecOf(b.input.command) });
+        }
+      } else if (r.type === 'user') {
+        for (const b of r.message.content) {
+          if (!b || b.type !== 'tool_result' || b.is_error === true || !calls.has(b.tool_use_id)) continue;
+          const m = /^\[[^\]\n]*\s([0-9a-f]{7,40})\][ \t]*(.*)$/m.exec(resultText(b.content));
+          if (!m) continue;
+          const c = calls.get(b.tool_use_id);
+          commits.push({ hash: m[1], subject: capText(m[2], 300).text, at: c.at, paths: c.paths });
+        }
+      }
+    }
+  } finally { await fh.close(); }
+  return commits.slice(-COMMITS_MAX);
+}

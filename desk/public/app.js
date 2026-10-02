@@ -13,7 +13,7 @@ const S = {
   filter: store.get('filter', ''), onlyActive: store.get('onlyActive', false), showTemp: store.get('showTemp', false),
   notify: null, notifyOverrides: [], lastHeartbeat: 0, lastRunning: null, lastWaiting: null,
   content: null, contentFor: null, contentKey: null, open: { prompt: false, tools: false, report: true, changes: false },
-  changes: null, changesFor: null, changesKey: null, fileOpen: null, fileData: null,
+  changes: null, changesFor: null, changesKey: null, fileOpen: null, fileData: null, commitOpen: null, commitData: null,
 };
 
 const T = x => tildifyText(x, S.home); // display-only home-directory replacement for free text
@@ -345,7 +345,7 @@ async function loadChanges(force) {
   const key = `${s.id}|${s.updatedAt}`;
   if (!force && S.changesKey === key) return;
   S.changesKey = key;
-  if (S.changesFor !== s.id) { S.changes = null; S.changesFor = s.id; S.fileOpen = null; S.fileData = null; renderChanges(); }
+  if (S.changesFor !== s.id) { S.changes = null; S.changesFor = s.id; S.fileOpen = null; S.fileData = null; S.commitOpen = null; S.commitData = null; renderChanges(); }
   let c;
   try { c = await getJSON(`/api/sessions/${encodeURIComponent(s.id)}/changes`); }
   catch (e) { c = { error: /: (d+)$/.exec(e.message)?.[1] === '501' ? 'Changed files are not available for this tool.' : 'Changed files are not available.' }; }
@@ -386,6 +386,9 @@ function diffView(d) {
   else wrap.append(el('div', 'dh', 'Old and new text of each edit; line numbers are not available.'));
   return wrap;
 }
+function toggleVia(f) {
+  S.fileOpen = S.fileOpen === f.path ? null : f.path; S.fileData = null; renderChanges();
+}
 async function toggleFile(f, li) {
   if (S.fileOpen === f.path) { S.fileOpen = null; S.fileData = null; renderChanges(); return; }
   S.fileOpen = f.path; S.fileData = { loading: true }; renderChanges();
@@ -395,6 +398,26 @@ async function toggleFile(f, li) {
   catch { d = { error: 'Could not load this diff.' }; }
   if (S.selectedSession !== id || S.fileOpen !== f.path) return;
   S.fileData = d; renderChanges();
+}
+async function toggleCommit(c) {
+  if (S.commitOpen === c.hash) { S.commitOpen = null; S.commitData = null; renderChanges(); return; }
+  S.commitOpen = c.hash; S.commitData = { loading: true }; renderChanges();
+  const id = S.selectedSession;
+  let d;
+  try { d = await getJSON(`/api/sessions/${encodeURIComponent(id)}/changes/commit?hash=${encodeURIComponent(c.hash)}`); }
+  catch { d = { ok: false, reason: 'Could not load this commit.' }; }
+  if (S.selectedSession !== id || S.commitOpen !== c.hash) return;
+  S.commitData = d; renderChanges();
+}
+function commitView(d) {
+  const wrap = el('div', 'diff');
+  wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', 'Commit details');
+  if (!d.ok) { wrap.append(el('div', 'dh', T(d.reason) || 'Commit details are not available.')); return wrap; }
+  wrap.append(el('div', 'dh', `${T(d.hash).slice(0, 12)} · ${T(d.author)} · ${T(d.date)}`), el('div', 'dl ctx', T(d.subject)));
+  if (d.body) wrap.append(el('pre', 'commit-body', T(d.body)));
+  wrap.append(el('pre', 'commit-stat', T(d.stat)));
+  wrap.append(el('div', 'dh', d.truncated ? 'Output cut at the size limit. File names and change counts only; no diff.' : 'git show --stat: file names and change counts only; no diff.'));
+  return wrap;
 }
 function renderChanges() {
   const box = $('changes');
@@ -406,17 +429,20 @@ function renderChanges() {
     const w = el('div');
     if (!c) { w.append(el('p', 'muted', 'Loading changed files…')); return w; }
     if (c.error) { w.append(el('p', 'muted', c.error)); return w; }
+    const commits = c.commits || [];
     if (!files.length) w.append(el('p', 'muted', 'No file edits recorded by this agent.'));
     const ul = el('ul', 'files');
     for (const f of files) {
       const li = el('li');
       const b = el('button', 'file'); b.type = 'button'; b.setAttribute('aria-expanded', String(S.fileOpen === f.path));
       const code = el('code', null, shownPath(f)); code.title = tildify(f.path, S.home);
-      b.append(code, el('span', 'muted', `${f.count} edit${f.count === 1 ? '' : 's'}`));
+      b.append(code, f.via === 'commit' ? el('span', 'tag via', 'via commit') : el('span', 'muted', `${f.count} edit${f.count === 1 ? '' : 's'}`));
       for (const o of f.alsoBy || []) b.append(el('span', 'tag conflict', `also changed by ${T(o.title)}`));
-      b.addEventListener('click', () => toggleFile(f, li));
+      b.addEventListener('click', () => (f.via === 'commit' ? toggleVia(f) : toggleFile(f, li)));
       li.append(b);
-      if (S.fileOpen === f.path) {
+      if (f.via === 'commit') {
+        if (S.fileOpen === f.path) li.append(el('p', 'muted', `No file-edit tool call touched this file; it appears in commit${f.commits.length === 1 ? '' : 's'} ${f.commits.map(h => T(h).slice(0, 10)).join(', ')} (see Commits below).`));
+      } else if (S.fileOpen === f.path) {
         const d = S.fileData;
         if (!d || d.loading) li.append(el('p', 'muted', 'Loading diff…'));
         else if (d.error) li.append(el('p', 'muted', d.error));
@@ -424,7 +450,26 @@ function renderChanges() {
       }
       ul.append(li);
     }
-    w.append(ul, el('p', 'muted', 'Listed from file-edit tool calls (Write, Edit, MultiEdit, NotebookEdit); edits made through shell commands are not listed.'));
+    w.append(ul, el('p', 'muted', 'Listed from file-edit tool calls (Write, Edit, MultiEdit, NotebookEdit). Files marked "via commit" were only seen in git commit commands of this agent.'));
+    w.append(el('h4', 'subhead', `Commits (${commits.length})`));
+    if (!commits.length) w.append(el('p', 'muted', 'No git commits made by this agent were found in its transcript.'));
+    const cl = el('ul', 'files commits');
+    for (const k of commits) {
+      const li = el('li');
+      const b = el('button', 'file'); b.type = 'button'; b.setAttribute('aria-expanded', String(S.commitOpen === k.hash));
+      const code = el('code', null, T(k.hash).slice(0, 10));
+      b.append(code, el('span', null, T(k.subject)), el('span', 'muted', `${k.files.length} path${k.files.length === 1 ? '' : 's'} · ${formatToolTime(k.at)}`));
+      b.addEventListener('click', () => toggleCommit(k));
+      li.append(b);
+      if (S.commitOpen === k.hash) {
+        if (k.files.length) { const fl = el('p', 'muted'); fl.append(document.createTextNode('Paths in the commit command: '), el('code', null, k.files.map(T).join(', '))); li.append(fl); }
+        const d = S.commitData;
+        if (!d || d.loading) li.append(el('p', 'muted', 'Loading commit…'));
+        else li.append(commitView(d));
+      }
+      cl.append(li);
+    }
+    w.append(cl);
     return w;
   }));
 }
