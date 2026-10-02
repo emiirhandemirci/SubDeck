@@ -15,6 +15,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/settings.sh" $ARGUMENTS "${CLAUDE_PROJECT_DI
 
 User request: `$ARGUMENTS`
 
+Protected files: `protect=<glob>[,<glob>]` / `unprotect=<glob>[,<glob>]` name files or globs agents must not edit or delete without approval (guard rule `protected-paths`, default ask; e.g. `protect=CLAUDE.md,.github/workflows/**,migrations/**,*.lock`). Add `--project` to store it for this project only; a project list replaces the user list.
+
 ## Status line (only if the request contains `statusline=on` or `statusline=off`)
 
 The script never edits `~/.claude/settings.json`; you do, and only after an explicit yes. The status line is a

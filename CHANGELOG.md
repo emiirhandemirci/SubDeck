@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.2
+
+- **Protected paths:** `/subdeck:settings set protect=CLAUDE.md,.github/workflows/**,*.lock` adds a guard rule (`protected-paths`, default ask) for Write/Edit/MultiEdit/apply_patch and obvious shell writes and deletes. A project list replaces the user list. Still a guard rail, not a sandbox.
+- **Desk waiting list:** the "N waiting" badge opens a list of every session blocked on you, with what it waits for and how long (`GET /api/waiting`).
+- **Desk changed files:** per-agent "Changed files" with red/green diffs, "also changed by" badges and a conflict strip when agents of one session touch the same file (Claude Code; shell edits are not listed).
+- **`SUBDECK_HOME`:** one data root for Desk; with it set, Desk ignores `APPDATA`, `LOCALAPPDATA` and `XDG_*`. Useful for tests and sandboxes.
+- **Offline installer:** `make-offline-bundle.sh` builds a zip with `install-offline.ps1` / `install-offline.sh`; Desk finds a locally installed marketplace.
+- **Rulebook and agents:** verifiers must show that an acceptance check can fail and run static checks on touched files and report a fingerprint; workers end reports with a `Stop:` reason; approval of one thing is not approval of another.
+- **Fixes:** quoting in the multi-tool settings helpers, a stray blank line in this changelog.
+- **Docs:** new README "Limits" section, an animated "how it works" overview, updated promo video.
+
 ## 0.5.1
 
 Copilot and Codex support. Built from the official docs; both still need a live test.

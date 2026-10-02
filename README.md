@@ -7,7 +7,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-emiirhandemirci-181717?logo=github&logoColor=white)](https://github.com/emiirhandemirci)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Emirhan_Demirci-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/emirhan-demirci-/)
 
-![version](https://img.shields.io/badge/version-0.5.1-6366f1)
+![version](https://img.shields.io/badge/version-0.5.2-6366f1)
 ![node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white)
 ![plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757)
 ![deps](https://img.shields.io/badge/dependencies-zero-22c55e)
@@ -61,6 +61,11 @@ Restart the tool, then try `/subdeck:status` or `/subdeck:desk` (Claude Code).
     <td valign="top">🪶<br><b>Zero dependencies</b><br>Bash and awk for the plugin, plain Node for Desk. No jq, no npm install.</td>
   </tr>
 </table>
+
+- **Waiting list:** click the "N waiting" badge in Desk for every session blocked on you, with what it waits for and how long.
+- **Changed files:** per-agent files with red/green diffs and "also changed by" badges when two agents touch the same file (Claude Code).
+- **Protected paths:** `/subdeck:settings set protect=CLAUDE.md,*.lock` makes the guard ask before agents edit or delete those files.
+- **Sandbox-friendly Desk:** `SUBDECK_HOME` sets the single data root Desk reads.
 
 ## SubDeck Desk
 
@@ -152,6 +157,18 @@ Check the manifests with `claude plugin validate .` and `claude plugin validate 
 - Scripts: event logger, `status.sh` (bash + awk), `run-hook.cmd` (Windows/POSIX launcher). Templates: `CLAUDE.local.md.template`, `decision.md.template`.
 - Requirements: Bash and awk (Git Bash on Windows), Claude Code with plugin support, git. Desk needs Node 22.13 or newer.
 </details>
+
+## Limits
+
+What SubDeck does not do:
+
+- **No sandbox.** The guard is a rail, not a wall: aliases, shell globs and variables, other interpreters and scripts can get around it.
+- **Copilot CLI and Codex are not live-tested.** Support is built from the official docs; see [what works per tool](docs/USER_GUIDE.md#3-install).
+- **Desk reads local files only** and may estimate a state ("running", "idle") from file activity when a tool has no hooks.
+- **"Changed files" misses shell edits.** Only Write, Edit, MultiEdit and NotebookEdit calls are listed, not files written by shell commands.
+- **Weak or local models may narrate instead of launching agents.** The manager rulebook assumes a model that follows tool-use instructions.
+- **The status line is Claude Code only.**
+- **No cost or quota tracking.** Desk shows tokens and context fill, not money or plan limits.
 
 ## Status
 

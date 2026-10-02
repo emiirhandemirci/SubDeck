@@ -72,7 +72,7 @@ For a machine with no internet and no GitHub access (for example an intranet PC 
 
 On a machine with internet and a clone of SubDeck:
 
-1. `./make-offline-bundle.sh` (add `--ref v0.5.1` for a tag or commit). It writes `dist/SubDeck-<version>-offline.zip` from tracked files only, plus the installers, `INSTALL.cmd` and `OFFLINE-README.txt`, and prints the SHA-256. Copy the zip to the USB stick; compare the hash on the other side if you like (`Get-FileHash` / `sha256sum`).
+1. `./make-offline-bundle.sh` (add `--ref v0.5.2` for a tag or commit). It writes `dist/SubDeck-<version>-offline.zip` from tracked files only, plus the installers, `INSTALL.cmd` and `OFFLINE-README.txt`, and prints the SHA-256. Copy the zip to the USB stick; compare the hash on the other side if you like (`Get-FileHash` / `sha256sum`).
 
 On the offline machine (needs Claude Code, Git for Windows, and Node.js 22.13+ only for Desk):
 
@@ -146,6 +146,12 @@ Desk serves on `http://127.0.0.1:4917` by default (it falls back to 4918-4936 if
 | ⚪❔ stale | grey with `?` | A start was seen but no stop, and the file has been untouched for 5 minutes. State is uncertain. |
 
 Each agent also shows where its state came from. "Estimated from file activity" means there was no hook or explicit status, so Desk guessed from how recently the session file changed. "From lock file" (Copilot CLI) means the session's lock file is held by a live process.
+
+**Waiting list.** The header "N waiting" badge is a button. It opens a compact list of every waiting session and agent across all projects and tools: tool, project, title, what it waits for (permission, question or plan approval, when the data says which) and for how long. Click an entry to jump to it; Esc closes the list. It shows titles and metadata only, never prompt content.
+
+**Changed files (Claude Code).** The agent detail has a collapsed "Changed files" section built from the agent's Write, Edit, MultiEdit and NotebookEdit calls (failed calls are dropped). Click a file for a red/green diff of each edit; a Write shows its full new content. When two or more agents of the same session changed the same file, it is badged "also changed by <agent>" and listed in a conflict strip at the top of the detail, so you can spot overlapping work early. Files changed through shell commands (`sed -i`, redirections, scripts) are not listed. Secret-looking files (`.env`, keys, credentials) are listed but their contents are withheld, and `--no-content` turns the feature off.
+
+**Sandboxes and tests.** `SUBDECK_HOME` sets the single data root Desk reads (default: `USERPROFILE` on Windows, `HOME` elsewhere). With it set, Desk reads only below that folder and ignores the ambient `APPDATA`, `LOCALAPPDATA` and `XDG_*` variables.
 
 **Agent content.** Click an agent to open it. The detail pane has three sections: **Prompt** (what it was asked), **Tool calls** (tool name and target), and **Final report** (its last message).
 
@@ -245,6 +251,8 @@ SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds a
 - In auto mode, "ask" acts as "deny": an auto-mode agent can never push with the default rules.
 - Rule ids that SubDeck does not recognise (for example from a newer version) are kept when `set` rewrites your config, and `show` lists them as "unknown (ignored)". They have no effect; `set <unknown-id>=...` is rejected. `reset` removes the whole `guard` key.
 - It is a guard rail, not a sandbox. Aliases, scripts and other interpreters can get around it.
+
+**Protected paths.** Name files or globs your agents must not change without asking: `/subdeck:settings set protect=CLAUDE.md,.github/workflows/**,migrations/**,*.lock` (add `--project` for this repository only; `unprotect=<glob>` removes one). The guard then asks before Write/Edit/MultiEdit/apply_patch on those paths and before obvious shell writes or deletes (`>`, `>>`, `rm`, `mv`, `sed -i`, `git rm`, `git checkout -- <path>`). Globs are relative to the project root, case-insensitive on Windows; a glob without `/` matches the name at any depth, `**` crosses folders. Change the mode with `protected-paths=deny|ask|off`. The list lives in `guard.protectedPaths` in `~/.subdeck/config.json` or `<project>/.subdeck/config.json` (project wins). This is a guard rail, not a sandbox: shell globs and variables, other interpreters (python, node, perl), editors and scripts can still change protected files.
 
 ## 10. Settings: status line
 
