@@ -1,7 +1,7 @@
 ---
 name: settings
-description: Show or change all SubDeck settings in one place (model policy, notifications, guard rules, status line). Deterministic script output, no analysis.
-argument-hint: "[set key=value ... [--project] | reset [--project]]"
+description: Show or change SubDeck settings in one place (models, notifications, push, guard, protected files, context, status line). Deterministic script output, no analysis.
+argument-hint: "[help | set key=value ... [--project] | reset [--project]]"
 disable-model-invocation: true
 allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/settings.sh" *), Read, Edit
 ---
@@ -15,7 +15,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/settings.sh" $ARGUMENTS "${CLAUDE_PROJECT_DI
 
 User request: `$ARGUMENTS`
 
-Protected files: `protect=<glob>[,<glob>]` / `unprotect=<glob>[,<glob>]` name files or globs agents must not edit or delete without approval (guard rule `protected-paths`, default ask; e.g. `protect=CLAUDE.md,.github/workflows/**,migrations/**,*.lock`). Add `--project` to store it for this project only; a project list replaces the user list.
+Protected files: `protect=<glob>[,<glob>]` sets the list of files or globs agents must not edit or delete without approval (guard rule `protected-paths`, default ask; e.g. `protect=CLAUDE.md,.github/workflows/**,migrations/**,*.lock`); it replaces the list, `unprotect=<glob>` removes entries. Add `--project` to store a setting for this project only; a project value replaces the user value. `context=<tokens>` sets the context window for models whose size is unknown (0 = auto). `help` lists every key with its options.
 
 ## Status line (only if the request contains `statusline=on` or `statusline=off`)
 
