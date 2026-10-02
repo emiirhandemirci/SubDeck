@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "bash": "cat \"$PLUGIN_ROOT/hooks/copilot-session-start.json\"",
+        "powershell": "Get-Content -Raw \"$env:PLUGIN_ROOT/hooks/copilot-session-start.json\"",
+        "timeoutSec": 5
+      }
+    ],
+    "SubagentStart": [
+      {
+        "type": "command",
+        "bash": "bash \"$PLUGIN_ROOT/scripts/run-hook.cmd\" log-event SubagentStart",
+        "powershell": "& \"$env:PLUGIN_ROOT/scripts/run-hook.cmd\" log-event SubagentStart",
+        "env": { "SUBDECK_TOOL": "copilot" },
+        "timeoutSec": 10
+      }
+    ],
+    "SubagentStop": [
+      {
+        "type": "command",
+        "bash": "bash \"$PLUGIN_ROOT/scripts/run-hook.cmd\" log-event SubagentStop",
+        "powershell": "& \"$env:PLUGIN_ROOT/scripts/run-hook.cmd\" log-event SubagentStop",
+        "env": { "SUBDECK_TOOL": "copilot" },
+        "timeoutSec": 10
+      },
+      {
+        "type": "command",
+        "bash": "bash \"$PLUGIN_ROOT/scripts/run-hook.cmd\" notify hook agent",
+        "powershell": "& \"$env:PLUGIN_ROOT/scripts/run-hook.cmd\" notify hook agent",
+        "env": { "SUBDECK_TOOL": "copilot" },
+        "timeoutSec": 10
+      }
+    ],
+    "permissionRequest": [
+      {
+        "type": "command",
+        "bash": "bash \"$PLUGIN_ROOT/scripts/run-hook.cmd\" notify hook waiting",
+        "powershell": "& \"$env:PLUGIN_ROOT/scripts/run-hook.cmd\" notify hook waiting",
+        "env": { "SUBDECK_TOOL": "copilot" },
+        "timeoutSec": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "bash": "bash \"$PLUGIN_ROOT/scripts/run-hook.cmd\" notify hook done",
+        "powershell": "& \"$env:PLUGIN_ROOT/scripts/run-hook.cmd\" notify hook done",
+        "env": { "SUBDECK_TOOL": "copilot" },
+        "timeoutSec": 10
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit",
+        "type": "command",
+        "bash": "bash \"$PLUGIN_ROOT/scripts/run-hook.cmd\" guard",
+        "powershell": "& \"$env:PLUGIN_ROOT/scripts/run-hook.cmd\" guard",
+        "env": { "SUBDECK_TOOL": "copilot" },
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

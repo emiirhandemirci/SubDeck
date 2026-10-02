@@ -47,22 +47,22 @@ copilot plugin marketplace add emiirhandemirci/SubDeck && copilot plugin install
 codex plugin marketplace add emiirhandemirci/SubDeck && codex plugin add subdeck@subdeck
 ```
 
-Neither tool loads sub-agent definitions from a plugin, so run the fallback installer from a clone as well: `./install.sh --tool copilot` / `./install.sh --tool codex` (Windows PowerShell: `.\install.ps1 -Tool copilot` / `-Tool codex`). It writes the seven agents to `~/.copilot/agents/*.agent.md` or `~/.codex/agents/*.toml` (respecting `COPILOT_HOME` / `CODEX_HOME`), and for Copilot also `~/.copilot/hooks/subdeck.json`, which points at the scripts of your clone, so keep the clone in place (`--no-hooks` skips that file). Files it wrote carry a "managed by SubDeck" marker; re-running updates them, a file of the same name that is not ours is never overwritten, and `--uninstall` / `-Uninstall` removes only ours. Codex asks you to review and trust the plugin hooks the first time. Remove the plugin itself with `copilot plugin uninstall subdeck@subdeck` or `codex plugin remove subdeck@subdeck`.
+Codex plugins cannot bundle sub-agent definitions, so run the installer from a clone as well: `./install.sh --tool codex` (Windows PowerShell: `.\install.ps1 -Tool codex`). It writes the seven agents to `~/.codex/agents/*.toml` (respecting `CODEX_HOME`). Copilot loads skills, agents and hooks from the plugin itself; `./install.sh --tool copilot` is only a fallback that copies the agents to `~/.copilot/agents/*.agent.md` if `/agent` does not list them after the plugin install, and `--hooks` additionally writes `~/.copilot/hooks/subdeck.json` (use it only if the plugin's hooks do not fire; both together would run twice, and that file points at your clone, so keep the clone). Files the installer wrote carry a "managed by SubDeck" marker; re-running updates them, a file of the same name that is not ours is never overwritten, and `--uninstall` / `-Uninstall` removes only ours. Codex asks you to review and trust the plugin hooks the first time. Remove the plugin with `copilot plugin uninstall subdeck@subdeck` or `codex plugin remove subdeck@subdeck`.
 
 What works and what degrades there (built from the official documentation of both tools; a live check on real installs is still pending):
 
 | Part | Claude Code | Copilot CLI | Codex |
 |---|---|---|---|
-| Skills (desk, status, settings, orchestrator) | slash commands `/subdeck:...` | plugin skills (see limitation) | plugin skills (see limitation) |
+| Skills (desk, status, settings, orchestrator) | slash commands `/subdeck:...` | portable skills (generated copies) | portable skills (generated copies) |
 | Rulebook auto-loaded | SessionStart hook | SessionStart hook | SessionStart hook |
-| Agents | bundled in the plugin | `install.sh --tool copilot` | `install.sh --tool codex` |
+| Agents | bundled in the plugin | bundled in the plugin (`install.sh --tool copilot` as fallback) | `install.sh --tool codex` |
 | Agent model | `sonnet` / `opus` / current | tool default (no model pinned) | tool default; `worker-opus` asks for high reasoning effort |
-| Guard (blocks `git add -A`, force push, secret files, ...) | yes | yes, via the hooks file | yes; an "ask" rule becomes a deny that tells the model to ask you |
+| Guard (blocks `git add -A`, force push, secret files, ...) | yes | yes, plugin hooks | yes; an "ask" rule becomes a deny that tells the model to ask you |
 | Agent event log (feeds `status` and Desk) | yes | yes | yes |
 | Notifications (off by default) | waiting, done, agent | waiting, done, agent | waiting, done, agent |
 | Status line | optional | no | no |
 
-Limitation: the skill texts still use Claude Code's command-injection syntax and `CLAUDE_PLUGIN_ROOT`, so in Copilot and Codex the desk, status and settings skills may not run their script by themselves yet; run the scripts directly (`bash <clone>/plugins/subdeck/scripts/status.sh`, `settings.sh`, `desk.sh`) or ask the model to.
+The Claude Code skills stay as they are. Codex and Copilot use generated copies in `plugins/subdeck/skills-portable/` (made by `plugins/subdeck/scripts/build-portable.sh`; a test fails if they drift): no command injection and no `CLAUDE_PLUGIN_ROOT`; the skill tells the model to run the script that sits two directories above the skill's own folder and print the output verbatim. Slash commands such as `/subdeck:status` are Claude Code only; elsewhere ask for the skill by name ("run the status skill").
 
 Desk is tool-neutral: `node desk/server.mjs` from a clone shows the sessions of every supported tool. More tools are coming.
 

@@ -19,8 +19,8 @@ if command -v node >/dev/null 2>&1; then
   jt "$CP" 'j.name==="subdeck" && j.version && j.description && j.skills && j.hooks && j.interface && j.interface.displayName'; chk "codex plugin.json parses with required keys" $?
   CV="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).version)' "$PL/.claude-plugin/plugin.json")"
   jt "$CP" "j.version===\"$CV\""; chk "codex plugin.json version equals the Claude plugin version ($CV)" $?
-  [ -d "$PL/skills" ] && [ -f "$PL/hooks/codex-hooks.json" ]; chk "codex plugin.json paths exist" $?
-  jt "$CP" 'j.skills==="./plugins/subdeck/skills/" && j.hooks==="./plugins/subdeck/hooks/codex-hooks.json"'; chk "codex plugin.json paths are root-relative" $?
+  [ -d "$PL/skills-portable" ] && [ -f "$PL/hooks/codex-hooks.json" ]; chk "codex plugin.json paths exist" $?
+  jt "$CP" 'j.skills==="./plugins/subdeck/skills-portable/" && j.hooks==="./plugins/subdeck/hooks/codex-hooks.json"'; chk "codex plugin.json paths are root-relative" $?
   MP="$ROOT/.agents/plugins/marketplace.json"
   jt "$MP" 'j.name==="subdeck" && Array.isArray(j.plugins) && j.plugins.length===1'; chk "codex marketplace.json parses, name subdeck" $?
   jt "$MP" 'j.plugins[0].name==="subdeck" && j.plugins[0].source.source==="local" && /^\.\//.test(j.plugins[0].source.path) && j.plugins[0].policy.installation==="AVAILABLE" && j.plugins[0].policy.authentication && j.plugins[0].category'; chk "codex marketplace plugin entry has required keys" $?
@@ -97,13 +97,14 @@ A1="$PH/agents/researcher.agent.md"
 head -1 "$A1" | grep -qx -- '---' && grep -qx 'name: researcher' "$A1" && grep -q '^description: "' "$A1" && grep -qx 'tools: \["read", "search"\]' "$A1" && ok "copilot agent: frontmatter name, description, read-only tools" || bad "copilot agent frontmatter"
 grep -q '^model:' "$PH/agents/worker-sonnet.agent.md" && bad "copilot agent must drop Claude model" || ok "copilot agent: no model key"
 HF="$PH/hooks/subdeck.json"
-[ -f "$HF" ] && ! grep -q __ROOT__ "$HF" && grep -q "plugins/subdeck/scripts/run-hook.cmd" "$HF" && ok "copilot hooks file written with the clone path" || bad "copilot hooks file"
+[ ! -e "$HF" ] && ok "copilot: no user hooks file by default (the plugin ships the hooks)" || bad "copilot default hooks file"
+cmp -s "$A1" "$PL/.github/agents/researcher.agent.md" && ok "copilot agent is the generated plugin copy" || bad "copilot agent differs from generated copy"
+COPILOT_HOME="$PH" bash "$IS" --tool copilot --hooks > /dev/null 2>&1
+[ -f "$HF" ] && ! grep -q __ROOT__ "$HF" && grep -q "plugins/subdeck/scripts/run-hook.cmd" "$HF" && ok "copilot --hooks writes the hooks file with the clone path" || bad "copilot hooks file"
 if command -v node >/dev/null 2>&1; then node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$HF"; chk "copilot hooks file is valid JSON" $?; fi
 grep -q 'managed by SubDeck' "$A1" && ok "copilot agent carries the marker" || bad "copilot marker"
 COPILOT_HOME="$PH" bash "$IS" --tool copilot --uninstall > /dev/null 2>&1
 [ -z "$(find "$PH" -type f 2>/dev/null)" ] && ok "copilot uninstall removes agents and hooks file" || bad "copilot uninstall residue"
-COPILOT_HOME="$PH" bash "$IS" --tool copilot --no-hooks > /dev/null 2>&1
-[ ! -e "$HF" ] && [ -f "$A1" ] && ok "copilot --no-hooks skips the hooks file" || bad "copilot --no-hooks"
 bash "$IS" --tool nope > "$T/out" 2>&1; [ $? = 2 ] && ok "unknown tool exits 2" || bad "unknown tool rc"
 bash "$IS" --bogus > "$T/out" 2>&1; [ $? = 2 ] && ok "unknown flag exits 2" || bad "unknown flag rc"
 

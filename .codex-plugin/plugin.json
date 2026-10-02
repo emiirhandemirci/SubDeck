@@ -7,7 +7,7 @@
   "repository": "https://github.com/emiirhandemirci/SubDeck",
   "license": "MIT",
   "keywords": ["sub-agents", "orchestration", "dashboard", "guard"],
-  "skills": "./plugins/subdeck/skills/",
+  "skills": "./plugins/subdeck/skills-portable/",
   "hooks": "./plugins/subdeck/hooks/codex-hooks.json",
   "interface": {
     "displayName": "SubDeck",

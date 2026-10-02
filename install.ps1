@@ -1,14 +1,14 @@
-# SubDeck installer / updater. Usage: .\install.ps1 [-Tool claude|codex|copilot] [-Uninstall] [-NoHooks]
+# SubDeck installer / updater. Usage: .\install.ps1 [-Tool claude|codex|copilot] [-Uninstall] [-Hooks]
 #   claude (default): talks to the claude CLI only.
 #   codex:   writes the agents as Codex custom-agent TOML to $env:CODEX_HOME or ~\.codex\agents
 #   copilot: writes the agents as <name>.agent.md to $env:COPILOT_HOME or ~\.copilot\agents plus
-#            hooks\subdeck.json pointing at this clone's scripts (-NoHooks skips the hooks file).
+#            hooks\subdeck.json pointing at this clone's scripts (-Hooks adds the hooks file, only if the plugin's own hooks do not fire).
 # Written files carry a "managed by SubDeck" marker; -Uninstall removes only those and an existing
 # foreign file of the same name is never overwritten. Never edits settings files.
 param(
   [ValidateSet('claude', 'codex', 'copilot')][string]$Tool = 'claude',
   [switch]$Uninstall,
-  [switch]$NoHooks
+  [switch]$Hooks
 )
 $Repo = 'emiirhandemirci/SubDeck'
 $Mkt = 'subdeck'
@@ -78,6 +78,11 @@ if ($Tool -ne 'claude') {
     $readOnly = ($tools -ne '') -and ($tools -notmatch 'Bash|Write|Edit')
     $out = Join-Path $adir "$a.$ext"
     if (-not (Test-Owned $out)) { Write-Host "skip $out (not managed by SubDeck)"; continue }
+    if ($Tool -eq 'copilot') {
+      $gen = Join-Path $PSScriptRoot "plugins/subdeck/.github/agents/$a.agent.md"
+      if (-not (Test-Path $gen)) { Write-Host "missing $gen (run plugins/subdeck/scripts/build-portable.sh)"; exit 1 }
+      Copy-Item $gen $out -Force; Write-Host "wrote $out"; continue
+    }
     $body = Get-Body $lines
     if ($Tool -eq 'codex') {
       if ($model -eq 'opus') { $effort = 'high' }
@@ -92,7 +97,7 @@ if ($Tool -ne 'claude') {
     }
     Write-Lf $out $o
   }
-  if ($Tool -eq 'copilot' -and -not $NoHooks) {
+  if ($Tool -eq 'copilot' -and $Hooks) {
     $root = (Join-Path $PSScriptRoot 'plugins\subdeck').Replace('\', '/')
     $hdir = Join-Path $base 'hooks'
     New-Item -ItemType Directory -Force -Path $hdir | Out-Null
@@ -110,8 +115,8 @@ if ($Tool -ne 'claude') {
     Write-Host "Now install the plugin (skills + hooks): codex plugin marketplace add $Repo; codex plugin add $Plugin"
     Write-Host 'Codex asks you to review and trust the hooks on first use. Restart Codex afterwards.'
   } else {
-    Write-Host "Now install the plugin (skills): copilot plugin marketplace add $Repo; copilot plugin install $Plugin"
-    Write-Host "The hooks file above runs the scripts of this clone; keep the clone in place. Restart Copilot afterwards."
+    Write-Host "Now install the plugin (skills, hooks, agents): copilot plugin marketplace add $Repo; copilot plugin install $Plugin"
+    Write-Host "Hooks come from the plugin; add -Hooks only if they do not fire (that file runs this clone's scripts, so keep the clone). Restart Copilot afterwards."
   }
   exit 0
 }
