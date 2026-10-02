@@ -39,13 +39,6 @@ done
 [ -n "$CMD" ] || CMD=show
 [ -n "$PROJECT" ] || PROJECT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
-# json in user scope must not see a project overlay: point the sub-scripts at an empty project and state dir
-TMPD=""
-cleanup() { [ -n "$TMPD" ] && rm -rf "$TMPD"; }
-trap cleanup EXIT
-if [ "$CMD" = json ] && [ -z "$SCOPE" ]; then
-  TMPD="$(mktemp -d)"; mkdir -p "$TMPD/p"; PROJECT="$TMPD/p"; export SUBDECK_STATE_DIR="$TMPD/state"
-fi
 
 M() { bash "$DIR/models.sh" "$@" "$PROJECT"; }
 N() { bash "$DIR/notify.sh" "$@" "$PROJECT"; }
@@ -84,23 +77,6 @@ rd_arr() { # file key -> comma-joined items of a top-level-unique string array; 
       print out
     }'
 }
-rd_ctx() { # file -> integer window or empty
-  [ -f "$1" ] || return 0
-  tr -d '\r\n' < "$1" | grep -o '"context"[[:space:]]*:[[:space:]]*{[^}]*}' | head -1 | grep -o '"window"[[:space:]]*:[[:space:]]*[0-9]\+' | head -1 | grep -o '[0-9]\+$'
-}
-# eff KIND KEY -> EV (value) and ES (source): project file, legacy project file, user file
-eff() {
-  EV=""; ES=""
-  local f s
-  for s in project legacy user; do
-    case "$s" in project) f="$PFILE" ;; legacy) f="$LFILE" ;; user) f="$UFILE" ;; esac
-    [ -n "$f" ] || continue
-    case "$1" in str) EV="$(rd_str "$f" "$2")" ;; arr) EV="$(rd_arr "$f" "$2")" ;; ctx) EV="$(rd_ctx "$f")" ;; esac
-    if [ -n "$EV" ]; then case "$s" in user) ES=user ;; *) ES=project ;; esac; return 0; fi
-  done
-  ES=default
-}
-
 ctx_members() { # file -> raw top-level members except "context"; return 1 when not a JSON object
   [ -f "$1" ] || return 0
   tr -d '\r' < "$1" | tr '\n' ' ' | awk '
@@ -146,16 +122,7 @@ ctx_write() { # file value|remove -> writes the context member, keeping every ot
   echo "error: could not write $f"; return 1
 }
 
-statusline_state() {
-  if [ -f "${HOME}/.claude/settings.json" ] && tr -d '\r' < "${HOME}/.claude/settings.json" | grep -q 'statusline\.sh'; then echo installed; else echo "not installed"; fi
-}
-
-guard_rules() { # every rule id the guard knows (falls back to the static list)
-  local r
-  r="$(G show 2>/dev/null | awk '$2 ~ /^[a-z]+$/ && $3 ~ /^(default|user|project)$/ { print $1 }')"
-  [ -n "$r" ] || r="$STATIC_RULES push"
-  printf '%s\n' "$r"
-}
+lower() { if declare -F sd_lower >/dev/null; then sd_lower "$1"; LOW="$SD_LOWER"; else LOW="$(printf %s "$1" | tr A-Z a-z)"; fi; }
 
 # ---------- key metadata ----------
 # meta KEY -> MG (group) MT (type) MO (space-separated options) MD (one-line meaning)
@@ -188,76 +155,116 @@ meta() {
 }
 
 # ---------- collect every setting into REC (US-separated records) ----------
+# One awk pass over the config files (user < legacy project < project); no sub-script is run for reads.
 REC=""
 rec() { meta "$1"; REC="$REC$1$US$2$US$3$US$MG$US$MT$US$MO$US$MD"$'\n'; }
-row_of() { # text key -> "value source" from a `key value source` table
-  printf '%s\n' "$1" | awk -v k="$2" '$1 == k && $3 ~ /^(default|user|project)$/ { print $2 " " $3; exit }'
+COLLECT_AWK='
+function jp(d,   i, p) { p = ""; for (i = 1; i <= d; i++) if (ty[i] == "o") p = p (p == "" ? "" : "/") kk[i]; return p }
+function val(role, d, s,   p) {
+  if (ty[d] == "a") { p = ap[d]; L[role, p] = (cnt[d]++ ? L[role, p] "," : "") s }
+  else S[role, jp(d)] = s
 }
+function parse(role, t,   n, i, c, d, s, lit, p) {
+  n = length(t); i = 1; d = 0
+  while (i <= n) {
+    c = substr(t, i, 1)
+    if (c == "{") { d++; ty[d] = "o"; ek[d] = 1; kk[d] = ""; i++ }
+    else if (c == "[") {
+      if (d > 0 && ty[d] == "o") { p = jp(d); d++; ty[d] = "a"; ap[d] = p; cnt[d] = 0; HL[role, p] = 1; L[role, p] = "" }
+      else { d++; ty[d] = "a"; ap[d] = "-"; cnt[d] = 0 }
+      i++
+    }
+    else if (c == "}" || c == "]") { d--; i++ }
+    else if (c == ",") { if (d > 0 && ty[d] == "o") ek[d] = 1; i++ }
+    else if (c == "\"") {
+      i++; s = ""
+      while (i <= n) { c = substr(t, i, 1); if (c == "\\") { s = s substr(t, i + 1, 1); i += 2 } else if (c == "\"") { i++; break } else { s = s c; i++ } }
+      if (d > 0 && ty[d] == "o" && ek[d]) { kk[d] = s; ek[d] = 0 } else if (d > 0) val(role, d, s)
+    }
+    else if (c ~ /[-0-9a-zA-Z]/) {
+      lit = ""
+      while (i <= n) { c = substr(t, i, 1); if (c ~ /[-0-9a-zA-Z.+]/) { lit = lit c; i++ } else break }
+      if (d > 0) val(role, d, lit)
+    }
+    else i++
+  }
+}
+function flush() { if (cur != "") parse(role_of(cur), buf); buf = ""; cur = "" }
+function role_of(f) { return (f == PF) ? "p" : (f == LF) ? "l" : "u" }
+function sv(path, ok,   i, r) {
+  EV = ""; ES = "default"
+  for (i = 1; i <= 3; i++) { r = substr("plu", i, 1)
+    if (((r, path) in S) && (ok == "" || (" " ok " ") ~ (" " S[r, path] " "))) { EV = S[r, path]; ES = (r == "u") ? "user" : "project"; return 1 } }
+  return 0
+}
+function lv(path,   i, r) {
+  EV = ""; ES = "default"
+  for (i = 1; i <= 3; i++) { r = substr("plu", i, 1)
+    if ((r, path) in HL) { EV = L[r, path]; ES = (r == "u") ? "user" : "project"; return 1 } }
+  return 0
+}
+function out(k, v, s) { printf "%s\037%s\037%s\n", k, v, s }
+FNR == 1 { flush(); cur = FILENAME }
+{ buf = buf " " $0 }
+END {
+  flush()
+  n = split("mode worker escalation researcher verifier explore", MK, " ")
+  split("auto sonnet opus sonnet sonnet sonnet", MD, " ")
+  for (i = 1; i <= n; i++) {
+    if (MK[i] == "mode") sv("modelPolicy/mode", "auto named current")
+    else if (sv("modelPolicy/" MK[i]) && EV !~ /^[A-Za-z0-9][A-Za-z0-9._:\/@-]*$/) { EV = ""; ES = "default" }
+    if (ES == "default") EV = MD[i]
+    out(MK[i], EV, ES)
+  }
+  if (sv("notify/enabled", "true false")) out("notify", (EV == "true") ? "on" : "off", ES); else out("notify", "off", "default")
+  if (lv("notify/events")) out("notify.events", EV, ES); else out("notify.events", "waiting,done", "default")
+  if (sv("guard/rules/push", "ask branches off")) out("push", EV, ES); else out("push", "branches", "default")
+  if (lv("guard/protectBranches")) out("protect-branches", EV, ES); else out("protect-branches", "main,master,release/*", "default")
+  if (sv("guard/enabled", "true false")) out("guard", (EV == "true") ? "on" : "off", ES); else out("guard", "on", "default")
+  n = split("git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths", RK, " ")
+  split("deny deny ask deny ask off ask", RD, " ")
+  for (i = 1; i <= n; i++) { if (sv("guard/rules/" RK[i], "deny ask off")) out(RK[i], EV, ES); else out(RK[i], RD[i], "default") }
+  if (lv("guard/protectedPaths")) out("protect", EV, ES); else out("protect", "", "default")
+  if (sv("context/window") && EV ~ /^[0-9]+$/) out("context", EV + 0, ES); else out("context", 0, "default")
+}'
 collect() {
-  local mo no go k r v s sl rules en ev pp pb
-  mo="$(M show 2>/dev/null)"; no="$(N show 2>/dev/null)"; go="$(G show 2>/dev/null)"
-  for k in $MODEL_KEYS; do
-    r="$(row_of "$mo" "$k")"; v="${r%% *}"; s="${r#* }"
-    [ -n "$r" ] || { v=""; s=default; }
-    rec "$k" "$v" "$s"
-  done
-  en="$(printf '%s\n' "$no" | awk '$1 == "enabled" && NF >= 3 { print ($2 == "true") ? "on" : "off", $3; exit }')"
-  [ -n "$en" ] || en="off default"
-  rec notify "${en%% *}" "${en#* }"
-  ev="$(printf '%s\n' "$no" | awk '$1 == "events" && NF >= 3 { print $2, $3; exit }')"
-  [ -n "$ev" ] || ev="waiting,done default"
-  rec notify.events "${ev%% *}" "${ev#* }"
-  r="$(row_of "$go" push)"
-  if [ -n "$r" ]; then rec push "${r%% *}" "${r#* }"
-  else eff str push; if [ -n "$EV" ]; then rec push "$EV" "$ES"; else rec push branches default; fi; fi
-  eff arr protectBranches
-  if [ -n "$EV" ]; then rec protect-branches "$EV" "$ES"; else rec protect-branches "main,master,release/*" default; fi
-  v="$(printf '%s\n' "$go" | awk '/^enabled:/ { print ($2 == "yes") ? "on" : "off"; exit }')"
-  s="$(printf '%s\n' "$go" | awk '/^enabled:/ { s = $3; gsub(/[()]/, "", s); print s; exit }')"
-  case "$s" in default|user|project) ;; *) s=default ;; esac
-  rec guard "${v:-on}" "$s"
-  rules="$(guard_rules)"
-  for k in $rules; do
-    [ "$k" = push ] && continue
-    r="$(row_of "$go" "$k")"; [ -n "$r" ] || continue
-    rec "$k" "${r%% *}" "${r#* }"
-  done
-  pp="$(printf '%s\n' "$go" | awk '/^protectedPaths/ {
-      s = "default"; if ($0 ~ /^protectedPaths \(user\)/) s = "user"; else if ($0 ~ /^protectedPaths \(project\)/) s = "project"
-      v = $0; sub(/^protectedPaths[^:]*: /, "", v); if (v == "(none)") v = ""; print s "|" v; exit }')"
-  rec protect "${pp#*|}" "${pp%%|*}"
-  eff ctx window
-  rec context "${EV:-0}" "$ES"
-  sl="$(statusline_state)"
-  if [ "$sl" = installed ]; then rec statusline on user; else rec statusline off default; fi
+  local k v s files=() out sl="" c
+  [ -n "$SCOPE" ] || [ "$CMD" != json ] && { [ -n "$LFILE" ] && [ -f "$LFILE" ] && files+=("$LFILE"); [ -f "$PFILE" ] && files+=("$PFILE"); }
+  [ -f "$UFILE" ] && files=("$UFILE" ${files[@]+"${files[@]}"})
+  [ ${#files[@]} -gt 0 ] || files=(/dev/null)
+  out="$(awk -v PF="$PFILE" -v LF="$LFILE" "$COLLECT_AWK" "${files[@]}" 2>/dev/null)"
+  while IFS="$US" read -r k v s; do [ -n "$k" ] && rec "$k" "$v" "$s"; done <<< "$out"
+  if [ -f "${HOME}/.claude/settings.json" ]; then read -r -d '' c < "${HOME}/.claude/settings.json"; [[ "$c" == *statusline.sh* ]] && sl=on; fi
+  if [ "$sl" = on ]; then rec statusline on user; else rec statusline off default; fi
 }
 
-jesc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-jarr() { # items as arguments
-  local out="" i
-  for i in "$@"; do out="$out${out:+,}\"$(jesc "$i")\""; done
-  printf '[%s]' "$out"
+jesc() { JE="${1//\/\\}"; JE="${JE//\"/\\\"}"; }
+jarr() { # items as arguments -> JA
+  local i; JA=""
+  for i in "$@"; do jesc "$i"; JA="$JA${JA:+,}\"$JE\""; done
+  JA="[$JA]"
 }
-jcsv() { local a; [ -n "$1" ] || { printf '[]'; return; }; IFS=',' read -ra a <<< "$1"; jarr "${a[@]}"; }
+jcsv() { local a; if [ -z "$1" ]; then JA='[]'; else IFS=',' read -ra a <<< "$1"; jarr "${a[@]}"; fi; }
 
 json() {
   local first=1 k v s g t o d vj oj scope proj
-  if [ -n "$SCOPE" ]; then scope=project; proj="\"$(jesc "$PROJECT")\""; else scope=user; proj=null; fi
+  if [ -n "$SCOPE" ]; then scope=project; jesc "$PROJECT"; proj="\"$JE\""; else scope=user; proj=null; fi
   collect
   printf '{"version":1,"scope":"%s","project":%s,"settings":[' "$scope" "$proj"
   while IFS="$US" read -r k v s g t o d; do
     [ -n "$k" ] || continue
     case "$t" in
-      list) vj="$(jcsv "$v")" ;;
+      list) jcsv "$v"; vj="$JA" ;;
       int) vj="${v:-0}" ;;
-      *) vj="\"$(jesc "$v")\"" ;;
+      *) jesc "$v"; vj="\"$JE\"" ;;
     esac
     # shellcheck disable=SC2086
-    oj="$(jarr $o)"
+    jarr $o; oj="$JA"
+    jesc "$d"
     [ $first -eq 1 ] || printf ','
     first=0
     printf '{"key":"%s","value":%s,"source":"%s","group":"%s","type":"%s","options":%s,"description":"%s"}' \
-      "$k" "$vj" "$s" "$g" "$t" "$oj" "$(jesc "$d")"
+      "$k" "$vj" "$s" "$g" "$t" "$oj" "$JE"
   done <<< "$REC"
   printf ']}\n'
 }
@@ -333,15 +340,15 @@ case "$CMD" in
   json) json ;;
   set)
     [ ${#PAIRS[@]} -gt 0 ] || die "set needs key=value pairs, e.g. set notify=on worker=opus"
-    RULES=" $(guard_rules | tr '\n' ' ')"
+    RULES=" $STATIC_RULES push "; RE_MODEL="^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$"; RE_NUM="^[0-9]{1,9}$"
     MP=(); GP=(); NV=""; NE=""; GE=""; SL=""; PUSH=""; PB=""; PBSET=0; PRSET=0; PR=""; UP=""; CX=""
     for kv in "${PAIRS[@]}"; do
-      k="${kv%%=*}"; v="${kv#*=}"; lv="$(printf '%s' "$v" | tr 'A-Z' 'a-z')"
+      k="${kv%%=*}"; v="${kv#*=}"; lower "$v"; lv="$LOW"
       case "$k" in
         mode)
           case "$lv" in auto|named|current) MP+=("mode=$lv") ;; *) die "mode must be auto, named or current (got '$v')" ;; esac ;;
         worker|escalation|researcher|verifier|explore)
-          printf '%s' "$v" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$' || die "$k must be sonnet, opus, haiku, fable, inherit or a model id (got '$v')"
+          [[ $v =~ $RE_MODEL ]] || die "$k must be sonnet, opus, haiku, fable, inherit or a model id (got '$v')"
           MP+=("$k=$v") ;;
         notify)
           case "$lv" in on|true) NV=on ;; off|false) NV=off ;; *) die "notify must be on or off (got '$v')" ;; esac ;;
@@ -366,7 +373,7 @@ case "$CMD" in
           case "$v" in *\"*|*[[:cntrl:]]*) die "unprotect: invalid characters in '$v'" ;; esac
           UP="$UP${UP:+,}$v" ;;
         context)
-          printf '%s' "$v" | grep -Eq '^[0-9]{1,9}$' || die "context must be a whole number of tokens, 0 = auto (got '$v')"
+          [[ $v =~ $RE_NUM ]] || die "context must be a whole number of tokens, 0 = auto (got '$v')"
           CX=$((10#$v)) ;;
         statusline)
           case "$lv" in on|install) SL=on ;; off|remove) SL=off ;; *) die "statusline must be on or off (got '$v')" ;; esac ;;
@@ -378,8 +385,8 @@ case "$CMD" in
     done
     # a corrupt target file must not leave a half-applied set
     if [ -n "$CX" ] && ! ctx_members "$TARGET" >/dev/null; then die "$TARGET is not a valid JSON object; left untouched"; fi
-    OUT=""; ERRLINE=""; SNAPF=""
-    if [ -f "$TARGET" ]; then SNAPF="$(mktemp)"; cp "$TARGET" "$SNAPF"; fi   # restored if any routed write fails
+    OUT=""; ERRLINE=""; SNAP=""; SNAPSET=0
+    if [ -f "$TARGET" ]; then IFS= read -r -d "" SNAP < "$TARGET"; SNAPSET=1; fi   # restored if any routed write fails
     route() { # run a routed command, keep its first output line, remember the first error
       local l; l="$("$@" | head -1)"; [ -n "$l" ] && OUT="$OUT$l"$'\n'
       case "$l" in error*) [ -n "$ERRLINE" ] || ERRLINE="$l" ;; esac
@@ -401,10 +408,9 @@ case "$CMD" in
       if l="$(ctx_write "$TARGET" "$CX")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
     fi
     if [ -n "$ERRLINE" ]; then
-      if [ -n "$SNAPF" ]; then cp "$SNAPF" "$TARGET" 2>/dev/null; else rm -f "$TARGET" 2>/dev/null; fi
-      rm -f "$SNAPF"; die "${ERRLINE#error: } (nothing written)"
+      if [ $SNAPSET -eq 1 ]; then printf "%s" "$SNAP" > "$TARGET"; else rm -f "$TARGET" 2>/dev/null; fi
+      die "${ERRLINE#error: } (nothing written)"
     fi
-    rm -f "$SNAPF"
     printf '%s' "$OUT"
     [ -n "$SL" ] && echo "statusline=$SL: not written by this script; it needs your confirmation (handled by the skill)."
     echo; show ;;
