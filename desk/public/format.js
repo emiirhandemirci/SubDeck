@@ -177,8 +177,8 @@ export function contextUsage(session) {
 
 /** Simple line diff of two strings: [{ t: ' ' | '-' | '+', s }]. Common head/tail trimmed, LCS on the middle (bounded; very large middles fall back to remove-all, add-all). */
 export function lineDiff(a, b) {
-  const x = a === '' || a === null || a === undefined ? [] : String(a).split('\n');
-  const y = b === '' || b === null || b === undefined ? [] : String(b).split('\n');
+  const lines = v => { if (v === '' || v === null || v === undefined) return []; const l = String(v).split('\n'); if (l.length > 1 && l[l.length - 1] === '') l.pop(); return l; };
+  const x = lines(a), y = lines(b);
   let h = 0;
   while (h < x.length && h < y.length && x[h] === y[h]) h++;
   let t = 0;
