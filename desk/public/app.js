@@ -1,6 +1,6 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
-import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage } from './format.js';
+import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff } from './format.js';
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -12,7 +12,8 @@ const S = {
   selectedProject: store.get('project', null), selectedSession: null,
   filter: store.get('filter', ''), onlyActive: store.get('onlyActive', false), showTemp: store.get('showTemp', false),
   notify: null, notifyOverrides: [], lastHeartbeat: 0, lastRunning: null, lastWaiting: null,
-  content: null, contentFor: null, contentKey: null, open: { prompt: false, tools: false, report: true },
+  content: null, contentFor: null, contentKey: null, open: { prompt: false, tools: false, report: true, changes: false },
+  changes: null, changesFor: null, changesKey: null, fileOpen: null, fileData: null,
 };
 
 const T = x => tildifyText(x, S.home); // display-only home-directory replacement for free text
@@ -318,6 +319,7 @@ async function loadDetail() {
   try { S.detail = (await getJSON(`/api/sessions/${encodeURIComponent(S.selectedSession)}`)).session; } catch { S.detail = null; }
   renderDetail();
   loadContent();
+  loadChanges();
 }
 
 // Agent content is fetched on demand only (never part of lists or SSE); refetched when the selected agent's updatedAt changes.
@@ -334,6 +336,97 @@ async function loadContent(force) {
   if (S.selectedSession !== s.id) return;
   S.content = c;
   renderContent();
+}
+
+// ---------- changed files (from file-edit tool calls; fetched on demand per selected agent) ----------
+async function loadChanges(force) {
+  const s = S.detail;
+  if (!s) { S.changes = null; S.changesFor = null; S.changesKey = null; return; }
+  const key = `${s.id}|${s.updatedAt}`;
+  if (!force && S.changesKey === key) return;
+  S.changesKey = key;
+  if (S.changesFor !== s.id) { S.changes = null; S.changesFor = s.id; S.fileOpen = null; S.fileData = null; renderChanges(); }
+  let c;
+  try { c = await getJSON(`/api/sessions/${encodeURIComponent(s.id)}/changes`); }
+  catch (e) { c = { error: /: (d+)$/.exec(e.message)?.[1] === '501' ? 'Changed files are not available for this tool.' : 'Changed files are not available.' }; }
+  if (S.selectedSession !== s.id) return;
+  S.changes = c;
+  renderConflicts();
+  renderChanges();
+}
+function shownPath(f) { return f.rel || tildify(f.path, S.home); }
+function renderConflicts() {
+  const box = $('conflicts');
+  if (!box) return;
+  box.replaceChildren();
+  const list = S.changes && S.changes.conflicts ? S.changes.conflicts : [];
+  box.hidden = !list.length;
+  if (!list.length) return;
+  box.append(el('strong', null, `${list.length} file${list.length === 1 ? '' : 's'} changed by more than one agent`));
+  const ul = el('ul');
+  for (const c of list) {
+    const li = el('li');
+    const code = el('code', null, shownPath(c)); code.title = tildify(c.path, S.home);
+    li.append(code, document.createTextNode(` by ${c.agents.map(a => T(a.title)).join(', ')}${c.parallel ? ' (overlapping in time)' : ''}`));
+    ul.append(li);
+  }
+  box.append(ul);
+}
+function diffView(d) {
+  const wrap = el('div', 'diff');
+  wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', 'Diff of ' + shownPath(d));
+  if (d.withheld) { wrap.append(el('div', 'dh', 'Contents withheld: this looks like a secret file.')); return wrap; }
+  for (const e of d.edits) {
+    const kind = e.kind === 'write' ? 'Write (full new content)' : e.kind === 'notebook' ? `Notebook ${e.editMode}${e.cellId ? ' cell ' + e.cellId : ''} (new source)` : e.replaceAll ? 'Edit (replace all)' : 'Edit';
+    wrap.append(el('div', 'dh', `${kind} · ${formatToolTime(e.at)}`));
+    const lines = e.kind === 'edit' ? lineDiff(e.old, e.new) : lineDiff('', e.kind === 'write' ? e.content : e.new);
+    for (const l of lines) wrap.append(el('div', l.t === '+' ? 'dl add' : l.t === '-' ? 'dl del' : 'dl ctx', (l.t === ' ' ? '  ' : l.t + ' ') + T(l.s)));
+  }
+  if (d.truncated) wrap.append(el('div', 'dh', `Truncated: showing ${d.edits.length} of ${d.total} edits, long text cut. Line numbers are not available.`));
+  else wrap.append(el('div', 'dh', 'Old and new text of each edit; line numbers are not available.'));
+  return wrap;
+}
+async function toggleFile(f, li) {
+  if (S.fileOpen === f.path) { S.fileOpen = null; S.fileData = null; renderChanges(); return; }
+  S.fileOpen = f.path; S.fileData = { loading: true }; renderChanges();
+  const id = S.selectedSession;
+  let d;
+  try { d = await getJSON(`/api/sessions/${encodeURIComponent(id)}/changes/file?path=${encodeURIComponent(f.path)}`); }
+  catch { d = { error: 'Could not load this diff.' }; }
+  if (S.selectedSession !== id || S.fileOpen !== f.path) return;
+  S.fileData = d; renderChanges();
+}
+function renderChanges() {
+  const box = $('changes');
+  if (!box) return;
+  box.replaceChildren();
+  const c = S.changes;
+  const files = c && c.files ? c.files : [];
+  box.append(section('changes', 'Changed files', c && !c.error ? files.length : null, () => {
+    const w = el('div');
+    if (!c) { w.append(el('p', 'muted', 'Loading changed files…')); return w; }
+    if (c.error) { w.append(el('p', 'muted', c.error)); return w; }
+    if (!files.length) w.append(el('p', 'muted', 'No file edits recorded by this agent.'));
+    const ul = el('ul', 'files');
+    for (const f of files) {
+      const li = el('li');
+      const b = el('button', 'file'); b.type = 'button'; b.setAttribute('aria-expanded', String(S.fileOpen === f.path));
+      const code = el('code', null, shownPath(f)); code.title = tildify(f.path, S.home);
+      b.append(code, el('span', 'muted', `${f.count} edit${f.count === 1 ? '' : 's'}`));
+      for (const o of f.alsoBy || []) b.append(el('span', 'tag conflict', `also changed by ${T(o.title)}`));
+      b.addEventListener('click', () => toggleFile(f, li));
+      li.append(b);
+      if (S.fileOpen === f.path) {
+        const d = S.fileData;
+        if (!d || d.loading) li.append(el('p', 'muted', 'Loading diff…'));
+        else if (d.error) li.append(el('p', 'muted', d.error));
+        else li.append(diffView(d));
+      }
+      ul.append(li);
+    }
+    w.append(ul, el('p', 'muted', 'Listed from file-edit tool calls (Write, Edit, MultiEdit, NotebookEdit); edits made through shell commands are not listed.'));
+    return w;
+  }));
 }
 
 function section(name, title, count, build) {
@@ -404,6 +497,8 @@ function renderDetail() {
   sub.append(subDur);
   const su = contextUsage(s); if (su) sub.append(el('span', null, su.text));
   box.append(sub);
+  const conf = el('div', 'conflicts'); conf.id = 'conflicts'; conf.hidden = true;
+  box.append(conf);
   const dl = el('dl', 'kv');
   const row = (k, v) => { dl.append(el('dt', null, k)); const dd = el('dd'); if (v instanceof Node) dd.append(v); else dd.textContent = v ?? '-'; dl.append(dd); };
   const now = Date.now();
@@ -443,6 +538,10 @@ function renderDetail() {
   const content = el('div', 'content'); content.id = 'content';
   box.append(content);
   renderContent();
+  const ch = el('div', 'content'); ch.id = 'changes';
+  box.append(ch);
+  renderChanges();
+  renderConflicts();
   box.dataset.createdAt = s.createdAt || '';
 }
 

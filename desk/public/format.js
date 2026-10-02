@@ -174,3 +174,33 @@ export function contextUsage(session) {
   return { tokens: ctx, window, pct, level: usageLevel(ctx / window * 100),
     text: `${formatTokens(ctx)} of ${formatTokens(window)} tokens (${pct}%)` };
 }
+
+/** Simple line diff of two strings: [{ t: ' ' | '-' | '+', s }]. Common head/tail trimmed, LCS on the middle (bounded; very large middles fall back to remove-all, add-all). */
+export function lineDiff(a, b) {
+  const x = a === '' || a === null || a === undefined ? [] : String(a).split('\n');
+  const y = b === '' || b === null || b === undefined ? [] : String(b).split('\n');
+  let h = 0;
+  while (h < x.length && h < y.length && x[h] === y[h]) h++;
+  let t = 0;
+  while (t < x.length - h && t < y.length - h && x[x.length - 1 - t] === y[y.length - 1 - t]) t++;
+  const mx = x.slice(h, x.length - t), my = y.slice(h, y.length - t);
+  const out = x.slice(0, h).map(s => ({ t: ' ', s }));
+  if (mx.length * my.length > 250000) {
+    for (const s of mx) out.push({ t: '-', s });
+    for (const s of my) out.push({ t: '+', s });
+  } else {
+    const n = mx.length, m = my.length;
+    const L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = mx[i] === my[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (mx[i] === my[j]) { out.push({ t: ' ', s: mx[i] }); i++; j++; }
+      else if (L[i + 1][j] >= L[i][j + 1]) out.push({ t: '-', s: mx[i++] });
+      else out.push({ t: '+', s: my[j++] });
+    }
+    while (i < n) out.push({ t: '-', s: mx[i++] });
+    while (j < m) out.push({ t: '+', s: my[j++] });
+  }
+  for (const s of x.slice(x.length - t)) out.push({ t: ' ', s });
+  return out;
+}

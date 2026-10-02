@@ -94,3 +94,20 @@ export function isInside(p, dirs, platform) {
   }
   return false;
 }
+
+const SECRET_BASE = [/^\.env(\..*)?$/i, /^\.(npmrc|netrc|pypirc|git-credentials|htpasswd)$/i, /\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk)$/i,
+  /^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/i, /^(credentials?|secrets?)(\.[a-z0-9]+)?$/i, /^service-?account.*\.json$/i];
+
+/** True for files that commonly hold secrets (.env, keys, credentials); their contents are never served. */
+export function isSecretPath(p) {
+  const base = toSlash(p).split('/').filter(Boolean).pop() || '';
+  return SECRET_BASE.some(re => re.test(base));
+}
+
+/** Path of p relative to dir (forward slashes), or null when p is not inside dir. Compared with projectKey rules. */
+export function relativeTo(p, dir, platform) {
+  const a = normalizePath(p), b = normalizePath(dir);
+  if (!a || !b) return null;
+  const ka = platform === 'win32' ? a.toLowerCase() : a, kb = platform === 'win32' ? b.toLowerCase() : b;
+  return ka.startsWith(kb + '/') ? a.slice(b.length + 1) : null;
+}

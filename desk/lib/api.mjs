@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { readNotifyEnabled, writeNotifyEnabled } from './notify-settings.mjs';
+import { projectKey, relativeTo, isSecretPath } from './paths.mjs';
 
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
@@ -132,6 +133,52 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     res.end(req.method === 'HEAD' ? undefined : data);
   }
 
+  // ---- changed files: read on demand from the transcript, never stored; same switch as the content endpoint ----
+  const CHANGES_MAX_AGENTS = 40;
+  const platform = () => (env && env.platform) || process.platform;
+  const overlaps = (a, b) => !!(a.firstAt && b.firstAt && Date.parse(a.firstAt) <= Date.parse(b.lastAt) && Date.parse(b.firstAt) <= Date.parse(a.lastAt));
+
+  async function changes(res, snap, id, one, filePath) {
+    if (!contentEnabled) return json(res, 404, { error: 'content disabled' });
+    const s = snap.sessions.find(x => x.id === id);
+    if (!s) return json(res, 404, { error: 'not found' });
+    const a = adapters.find(x => x.tool === s.tool);
+    if (!a || typeof a.changes !== 'function') return json(res, 501, { error: 'changed files not available for this tool' });
+    const proj = snap.projects.find(x => x.id === s.projectId);
+    const rel = fp => (proj && proj.path ? relativeTo(fp, proj.path, platform()) : null);
+    if (one) {
+      if (typeof filePath !== 'string' || !filePath || filePath.length > 1024 || filePath.includes('\0')) return json(res, 400, { error: 'path required' });
+      if (isSecretPath(filePath)) return json(res, 200, { path: filePath, rel: rel(filePath), edits: [], total: 0, truncated: false, withheld: true });
+      const d = typeof a.changeFile === 'function' ? await a.changeFile(env, s, filePath) : null;   // only paths present in the transcript can match
+      return d ? json(res, 200, { ...d, rel: rel(d.path), withheld: false }) : json(res, 404, { error: 'not found' });
+    }
+    const own = await a.changes(env, s);
+    if (!own) return json(res, 404, { error: 'not found' });
+    // everyone in the session tree (the top session and its agents): who touched which file
+    const rootId = s.parentId || s.id;
+    const tree = snap.sessions.filter(x => x.tool === s.tool && (x.id === rootId || x.parentId === rootId)).slice(0, CHANGES_MAX_AGENTS);
+    if (!tree.some(x => x.id === s.id)) tree.push(s);
+    const byKey = new Map();   // normalized path -> [{ id, title, firstAt, lastAt }]
+    for (const t of tree) {
+      const l = t.id === s.id ? own : await a.changes(env, t);
+      if (!l) continue;
+      for (const f of l.files) {
+        const k = projectKey(f.path, platform());
+        if (!byKey.has(k)) byKey.set(k, { path: f.path, by: [] });
+        byKey.get(k).by.push({ id: t.id, title: t.title, firstAt: f.firstAt, lastAt: f.lastAt });
+      }
+    }
+    const files = own.files.map(f => {
+      const others = (byKey.get(projectKey(f.path, platform())) || { by: [] }).by.filter(x => x.id !== s.id);
+      const me = own.files.find(x => x.path === f.path);
+      return { ...f, rel: rel(f.path), secret: isSecretPath(f.path), alsoBy: others.map(x => ({ id: x.id, title: x.title, parallel: overlaps(f, x) })) };
+    });
+    const conflicts = [...byKey.values()].filter(c => c.by.length >= 2 && (s.id === rootId || c.by.some(x => x.id === s.id)))
+      .map(c => ({ path: c.path, rel: rel(c.path), agents: c.by.map(x => ({ id: x.id, title: x.title })),
+        parallel: c.by.some((x, i) => c.by.some((y, j) => j > i && overlaps(x, y))) }));
+    return json(res, 200, { generatedAt: iso(), files, conflicts, agentsChecked: tree.length });
+  }
+
   async function handle(req, res) {
     try {
       if (!hostOk(req.headers && req.headers.host)) return json(res, 403, { error: 'forbidden host' });
@@ -160,6 +207,8 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
         const data = await a.timeline(env, s);   // read on demand; never stored
         return data ? json(res, 200, data) : json(res, 404, { error: 'not found' });
       }
+      m = /^\/api\/sessions\/([A-Za-z0-9._-]+)\/changes(\/file)?$/.exec(p);
+      if (m) return await changes(res, snap, m[1], !!m[2], url.searchParams.get('path'));
       return json(res, 404, { error: 'not found' });
     } catch (e) {
       process.stderr.write(`api error: ${String(e && e.message).split('\n')[0]}\n`);

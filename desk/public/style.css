@@ -220,3 +220,22 @@ ol.calls code { border: 0; background: transparent; padding: 0; color: var(--tex
 
 .bell-note { font-weight: 400; font-size: 12px; color: var(--muted); }
 .bell.overridden { border-style: dashed; }
+
+/* ---------- changed files ---------- */
+.conflicts { margin: 10px 0; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--idle) 55%, var(--border)); background: color-mix(in srgb, var(--idle) 10%, transparent); border-radius: var(--r); font-size: 13px; }
+.conflicts strong { color: var(--idle); }
+.conflicts ul { margin: 4px 0 0; padding-left: 18px; }
+.conflicts code, ul.files code { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+ul.files { list-style: none; margin: 8px 0 4px; padding: 0; font-size: 13px; }
+ul.files > li { border-bottom: 1px solid var(--border); padding: 4px 0; }
+ul.files > li:last-child { border-bottom: 0; }
+button.file { all: unset; box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; width: 100%; cursor: pointer; padding: 3px 4px; border-radius: var(--r-sm); }
+button.file:hover { background: var(--hover); }
+button.file:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.tag.conflict { color: var(--idle); border-color: color-mix(in srgb, var(--idle) 55%, var(--border)); }
+.diff { margin: 6px 0 4px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); max-height: 420px; overflow: auto; font-family: var(--mono); font-size: 12px; line-height: 1.5; }
+.diff .dh { padding: 3px 8px; color: var(--muted); background: var(--raised); border-bottom: 1px solid var(--border); position: sticky; top: 0; }
+.diff .dl { white-space: pre-wrap; word-break: break-word; padding: 0 8px; }
+.diff .dl.add { background: color-mix(in srgb, var(--running) 16%, transparent); }
+.diff .dl.del { background: color-mix(in srgb, var(--failed) 16%, transparent); }
+.diff .dl.ctx { color: var(--muted); }

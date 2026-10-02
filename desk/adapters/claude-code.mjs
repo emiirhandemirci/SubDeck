@@ -66,6 +66,7 @@ function userActivity(r) {
 // Tools that block on the user; a trailing tool_use of one of these with no result yet means the session waits for an answer.
 const BLOCKING_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
 const WAITING_NOTIFS = new Set(['permission_prompt', 'elicitation_dialog', 'agent_needs_input']);
+const NOTIF_KIND = { permission_prompt: 'permission', elicitation_dialog: 'question' };   // agent_needs_input does not say which
 const isToolResultUser = c => Array.isArray(c) && c.some(b => b && b.type === 'tool_result');
 
 /** fromStart: the records begin at the top of the file, so the first user record opens run 1. */
@@ -235,7 +236,8 @@ export async function readHooks(projectPath, cache) {
   const dst = await statOrNull(dir);
   const agents = new Map();
   const notifs = new Map();   // 's:<sessionId>' or 'a:<agentId>' -> latest waiting-type Notification time
-  if (!dst || !dst.isDirectory()) return { agents, notifs, bad: 0, dir: null };
+  const notifTypes = new Map();   // same keys -> notification_type of that latest one
+  if (!dst || !dst.isDirectory()) return { agents, notifs, notifTypes, bad: 0, dir: null };
   const files = [path.join(dir, 'events.jsonl')];
   for (const e of await readdirSafe(path.join(dir, 'events.d'))) if (e.isFile() && e.name.endsWith('.json')) files.push(path.join(dir, 'events.d', e.name));
   let bad = 0;
@@ -254,7 +256,7 @@ export async function readHooks(projectPath, cache) {
       const p = parseJsonl(text);
       const notes = p.records
         .filter(e => e.event === 'Notification' && toIso(e.ts) && e.payload && WAITING_NOTIFS.has(e.payload.notification_type))
-        .map(e => ({ ts: toIso(e.ts), key: typeof e.agent_id === 'string' && e.agent_id ? 'a:' + e.agent_id : typeof e.session_id === 'string' && e.session_id ? 's:' + e.session_id : null }))
+        .map(e => ({ ts: toIso(e.ts), type: e.payload.notification_type, key: typeof e.agent_id === 'string' && e.agent_id ? 'a:' + e.agent_id : typeof e.session_id === 'string' && e.session_id ? 's:' + e.session_id : null }))
         .filter(e => e.key);
       const events = p.records
         .filter(e => typeof e.agent_id === 'string' && e.agent_id && (e.event === 'SubagentStart' || e.event === 'SubagentStop') && toIso(e.ts))
@@ -266,7 +268,7 @@ export async function readHooks(projectPath, cache) {
       cache.set('h:' + f, c);
     }
     bad += c.bad;
-    for (const n of c.notes) if (!notifs.get(n.key) || n.ts > notifs.get(n.key)) notifs.set(n.key, n.ts);
+    for (const n of c.notes) if (!notifs.get(n.key) || n.ts > notifs.get(n.key)) { notifs.set(n.key, n.ts); notifTypes.set(n.key, n.type); }
     for (const e of c.events) {
       const a = agents.get(e.agentId) || { start: null, stop: null, agentType: null, sessionId: null, transcriptPath: null };
       if (e.event === 'SubagentStart') a.start = earlier(a.start, e.ts);
@@ -277,7 +279,7 @@ export async function readHooks(projectPath, cache) {
       agents.set(e.agentId, a);
     }
   }
-  return { agents, notifs, bad, dir };
+  return { agents, notifs, notifTypes, bad, dir };
 }
 
 function subTitle(meta, agentId) {
@@ -298,11 +300,11 @@ export function latestCompletion(tr, notif) {
 }
 
 /** Waiting: a pending blocking tool in the transcript (field), else a waiting-type Notification hook newer than the last transcript write (hook). null otherwise. */
-export function waitingBasis(pending, notifIso, mtimeMs, mtimeIso) {
-  if (pending) return { kind: 'waiting', at: pending.at, stateSource: 'field', fallbackAt: mtimeIso };
+export function waitingBasis(pending, notifIso, mtimeMs, mtimeIso, notifType = null) {
+  if (pending) return { kind: 'waiting', at: pending.at, stateSource: 'field', fallbackAt: mtimeIso, waitingKind: pending.name === 'ExitPlanMode' ? 'plan' : 'question' };
   const t = notifIso ? Date.parse(notifIso) : NaN;
   // the Notification fires after the tool_use was written and before any answer; a later transcript write means the prompt was resolved
-  if (Number.isFinite(t) && mtimeMs < t + 2000) return { kind: 'waiting', at: notifIso, stateSource: 'hook', fallbackAt: mtimeIso };
+  if (Number.isFinite(t) && mtimeMs < t + 2000) return { kind: 'waiting', at: notifIso, stateSource: 'hook', fallbackAt: mtimeIso, ...(NOTIF_KIND[notifType] ? { waitingKind: NOTIF_KIND[notifType] } : {}) };
   return null;
 }
 
@@ -377,6 +379,94 @@ export async function readContent(file, { subagent }) {
     finalReport: finalReport === null ? null : capText(finalReport, REPORT_MAX).text };
 }
 
+// ---- changed files (on demand like readContent: read only when requested, never cached, stored or logged) ----
+export const CHANGE_STR_MAX = 20000;     // per old/new/content string, in characters
+export const CHANGE_TOTAL_MAX = 200000;  // all strings of one file response
+export const CHANGE_EDITS_MAX = 200;
+const CHANGE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+const pathOfInput = i => { for (const k of ['file_path', 'notebook_path', 'path']) if (typeof i[k] === 'string' && i[k].trim()) return i[k]; return null; };
+const str = v => (typeof v === 'string' ? v : '');
+
+/** Expands one tool_use block into ops [{kind, at, ...payload}]; kind is write | edit | notebook. */
+function opsOf(name, input, at) {
+  if (name === 'Write') return [{ kind: 'write', at, content: str(input.content ?? input.file_text) }];
+  if (name === 'Edit') return [{ kind: 'edit', at, old: str(input.old_string), new: str(input.new_string), replaceAll: input.replace_all === true }];
+  if (name === 'MultiEdit') return (Array.isArray(input.edits) ? input.edits : []).filter(e => e && typeof e === 'object')
+    .map(e => ({ kind: 'edit', at, old: str(e.old_string), new: str(e.new_string), replaceAll: e.replace_all === true }));
+  return [{ kind: 'notebook', at, editMode: str(input.edit_mode) || 'replace', cellId: str(input.cell_id) || null, cellType: str(input.cell_type) || null, new: str(input.new_source) }];
+}
+
+/** Streams one transcript; returns [{path, ops}] in first-touch order. Calls whose result is an error are dropped. */
+async function streamChanges(file) {
+  let fh;
+  try { fh = await fs.open(file, 'r'); } catch { return null; }
+  const files = new Map();   // exact path -> { path, ops }
+  const byId = new Map();    // tool_use id -> ops (to drop failed calls)
+  try {
+    const rl = readline.createInterface({ input: fh.createReadStream({ encoding: 'utf8' }), crlfDelay: Infinity });
+    for await (const line of rl) {
+      if (!line.includes('"tool_use"') && !line.includes('"tool_result"')) continue;
+      let r; try { r = JSON.parse(line); } catch { continue; }
+      if (!r || typeof r !== 'object' || !r.message || typeof r.message !== 'object' || !Array.isArray(r.message.content)) continue;
+      if (r.type === 'user') {
+        for (const b of r.message.content) if (b && b.type === 'tool_result' && b.is_error === true && byId.has(b.tool_use_id)) for (const op of byId.get(b.tool_use_id)) op.failed = true;
+      } else if (r.type === 'assistant') {
+        const at = toIso(r.timestamp);
+        for (const b of r.message.content) {
+          if (!b || b.type !== 'tool_use' || !CHANGE_TOOLS.has(b.name) || !b.input || typeof b.input !== 'object') continue;
+          const p = pathOfInput(b.input);
+          if (!p) continue;
+          const ops = opsOf(b.name, b.input, at);
+          if (!ops.length) continue;
+          let f = files.get(p); if (!f) { f = { path: p, ops: [] }; files.set(p, f); }
+          f.ops.push(...ops);
+          if (typeof b.id === 'string') byId.set(b.id, ops);
+        }
+      }
+    }
+  } finally { await fh.close(); }
+  return [...files.values()].map(f => ({ path: f.path, ops: f.ops.filter(o => !o.failed) })).filter(f => f.ops.length);
+}
+
+const later = (a, b) => (!a ? b : !b ? a : (Date.parse(a) >= Date.parse(b) ? a : b));
+const keyOf = (p, env) => projectKey(p, env && env.platform);
+
+/** File list of one agent: paths, counts and times only (no old/new/content), merged by normalized path. */
+export async function readChangeList(file, env) {
+  const raw = await streamChanges(file);
+  if (!raw) return null;
+  const merged = new Map();
+  for (const f of raw) {
+    const k = keyOf(f.path, env);
+    let m = merged.get(k);
+    if (!m) { m = { path: f.path, count: 0, firstAt: null, lastAt: null, kinds: new Set() }; merged.set(k, m); }
+    for (const o of f.ops) { m.count++; m.kinds.add(o.kind); m.firstAt = earlier(m.firstAt, o.at); m.lastAt = later(m.lastAt, o.at); }
+  }
+  return { files: [...merged.values()].map(m => ({ ...m, kinds: [...m.kinds].sort() })).sort((a, b) => String(a.firstAt).localeCompare(String(b.firstAt))) };
+}
+
+/** Edits of one file (matched by normalized path), strings clipped; truncated:true when anything was cut or omitted. */
+export async function readChangeFile(file, env, filePath) {
+  const raw = await streamChanges(file);
+  if (!raw) return null;
+  const want = keyOf(filePath, env);
+  const hits = raw.filter(f => keyOf(f.path, env) === want);
+  const ops = hits.flatMap(f => f.ops).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  if (!ops.length) return null;
+  let budget = CHANGE_TOTAL_MAX, truncated = false;
+  const cut = s => { const c = capText(s, Math.min(CHANGE_STR_MAX, Math.max(0, budget))); budget -= Array.from(c.text).length; if (c.truncated) truncated = true; return c.text; };
+  const edits = [];
+  for (const o of ops) {
+    if (edits.length >= CHANGE_EDITS_MAX || budget <= 0) { truncated = true; break; }
+    const e = { kind: o.kind, at: o.at };
+    if (o.kind === 'write') e.content = cut(o.content);
+    else if (o.kind === 'edit') { e.old = cut(o.old); e.new = cut(o.new); e.replaceAll = o.replaceAll; }
+    else { e.editMode = o.editMode; e.cellId = o.cellId; e.cellType = o.cellType; e.new = cut(o.new); }
+    edits.push(e);
+  }
+  return { path: hits[0].path, edits, total: ops.length, truncated };
+}
+
 async function scan(env, { cache }) {
   const cutoff = env.now() - env.days * 86400000;
   let skipped = 0;
@@ -429,6 +519,7 @@ async function scan(env, { cache }) {
     const hookInfo = g.projectPath ? hooksByKey.get(projectKey(g.projectPath, env.platform)) : null;
     const hooks = hookInfo ? hookInfo.agents : new Map();
     const notifs = hookInfo ? hookInfo.notifs : new Map();
+    const notifTypes = hookInfo ? hookInfo.notifTypes : new Map();
     const base = { tool: 'claude-code', projectPath: g.projectPath, projectLabel: g.projectLabel, archived: false };
     const mt = msToIso(g.st.mtimeMs);
     const title = clip(g.top.customTitle, 120) ? { title: clip(g.top.customTitle, 120), titleSource: 'explicit' }
@@ -438,7 +529,7 @@ async function scan(env, { cache }) {
       createdAt: g.top.createdAt || msToIso(g.st.birthtimeMs || g.st.mtimeMs), updatedAt: mt, endedAt: null,
       tokens: { context: g.top.tokens, total: null }, lastActivity: g.top.lastActivity,
       refs: { file: g.file, db: null, key: null },
-      stateBasis: waitingBasis(g.top.pending, notifs.get('s:' + g.uuid), g.st.mtimeMs, mt) || { kind: 'mtime', at: mt, stateSource: 'mtime' } });
+      stateBasis: waitingBasis(g.top.pending, notifs.get('s:' + g.uuid), g.st.mtimeMs, mt, notifTypes.get('s:' + g.uuid)) || { kind: 'mtime', at: mt, stateSource: 'mtime' } });
     const seen = new Set();
     for (const s of g.subs) {
       seen.add(s.agentId);
@@ -452,7 +543,7 @@ async function scan(env, { cache }) {
         createdAt: earlier(s.tr.createdAt, hook && hook.start) || smt, updatedAt: smt, endedAt: (hook && hook.stop) || (done && done.at) || null,
         ...(runStartedAt ? { runStartedAt } : {}),
         tokens: { context: s.tr.tokens, total: null }, lastActivity: s.tr.lastActivity,
-        refs: { file: s.file, db: null, key: null }, stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt)) });
+        refs: { file: s.file, db: null, key: null }, stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt, notifTypes.get('a:' + s.agentId))) });
     }
     for (const [agentId, hook] of hooks) {
       if (seen.has(agentId) || hook.sessionId !== g.uuid) continue;
@@ -479,5 +570,13 @@ export default {
   async timeline(env, session) {
     const file = session && session.refs && session.refs.file;
     return file ? readContent(file, { subagent: session.depth > 0 }) : null;
+  },
+  async changes(env, session) {
+    const file = session && session.refs && session.refs.file;
+    return file ? readChangeList(file, env) : null;
+  },
+  async changeFile(env, session, filePath) {
+    const file = session && session.refs && session.refs.file;
+    return file ? readChangeFile(file, env, filePath) : null;
   },
 };
