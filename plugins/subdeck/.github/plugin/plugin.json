@@ -1,6 +1,6 @@
 {
   "name": "subdeck",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Manager plus sub-agents toolkit: orchestrator rulebook, live agent status, SubDeck Desk dashboard, settings, and guard hooks.",
   "author": { "name": "Emirhan Demirci" },
   "license": "MIT",
