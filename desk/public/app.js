@@ -74,11 +74,8 @@ function renderBell() {
   b.title = on ? 'Desktop notifications: on (click to turn off)' : 'Desktop notifications: off (click to turn on)';
   const ov = S.notifyOverrides || [];
   if (ov.length) {
-    const list = ov.map(o => `${o.project || 'project'}: ${tildify(o.file, S.home)} (${o.enabled ? 'on' : 'off'})`).join('
-');
-    b.title += `
-Overridden by a project config, which wins over this switch:
-${list}`;
+    const list = ov.map(o => `${o.project || 'project'}: ${tildify(o.file, S.home)} (${o.enabled ? 'on' : 'off'})`).join('\n');
+    b.title += `\nOverridden by a project config, which wins over this switch:\n${list}`;
   }
   b.classList.toggle('overridden', ov.length > 0);
   b.replaceChildren();
