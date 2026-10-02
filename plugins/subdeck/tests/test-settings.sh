@@ -149,7 +149,33 @@ has "$calls" "^cli push branches --project $P\$" "stub: cli push <mode> --projec
 has "$calls" "^cli branches main,rel/\* --project $P\$" "stub: cli branches <list> --project <dir>"
 rm -rf "${STUB:?}"
 
+
+# ---- sub-script rejection mid-way: snapshot restore leaves every config file byte-identical ----
+STUB="$(mktemp -d)"; cp "$HERE/../scripts/"*.sh "$STUB/"
+cat > "$STUB/guard.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+case "$2" in branches) echo "error: stub rejects branches"; exit 0 ;; esac
+exec bash "$REAL_GUARD" "$@"
+STUBEOF
+REAL_GUARD="$HERE/../scripts/guard.sh"; export REAL_GUARD
+for scope in "" "--project"; do
+  rm -f "$CFG"; rm -rf "${SS:?}"/*
+  run set worker=haiku notify=on $scope >/dev/null
+  TF="$CFG"; [ -n "$scope" ] && TF="$PS/config.json"
+  b1="$(cat "$TF")"; b2="$(cat "$H/.subdeck/config.json" 2>/dev/null)"
+  err="$(HOME="$H" bash "$STUB/settings.sh" set worker=opus push=off context=777 protect-branches=main $scope "$P" 2>&1 >/dev/null)"; rc=$?
+  [ $rc -eq 2 ] && ok "mid-way rejection${scope:+ $scope}: exit 2" || bad "mid-way rejection exit $rc"
+  has "$err" 'stub rejects branches' "mid-way rejection${scope:+ $scope}: message"
+  [ "$(cat "$TF")" = "$b1" ] && ok "mid-way rejection${scope:+ $scope}: target file byte-identical" || bad "target changed: $(cat "$TF")"
+  [ "$(cat "$H/.subdeck/config.json" 2>/dev/null)" = "$b2" ] && ok "mid-way rejection${scope:+ $scope}: user file byte-identical" || bad "user file changed"
+done
+# target absent before: stays absent
+rm -f "$CFG"; rm -rf "${SS:?}"/*
+HOME="$H" bash "$STUB/settings.sh" set worker=opus protect-branches=main "$P" >/dev/null 2>&1
+[ ! -e "$CFG" ] && ok "mid-way rejection: absent file stays absent" || bad "file created: $(cat "$CFG")"
+rm -rf "${STUB:?}"
 # ---- context key keeps other members; reset ----
+run set push=ask >/dev/null
 out="$(run set context=123456)"
 grep -q '"context":{"window":123456}' "$CFG" && ok "context stored as context.window" || bad "context config: $(cat "$CFG")"
 grep -q '"guard"' "$CFG" && ok "context write keeps other members" || bad "context write dropped members"

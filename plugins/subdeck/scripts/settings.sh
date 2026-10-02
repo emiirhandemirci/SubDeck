@@ -378,7 +378,8 @@ case "$CMD" in
     done
     # a corrupt target file must not leave a half-applied set
     if [ -n "$CX" ] && ! ctx_members "$TARGET" >/dev/null; then die "$TARGET is not a valid JSON object; left untouched"; fi
-    OUT=""; ERRLINE=""
+    OUT=""; ERRLINE=""; SNAPF=""
+    if [ -f "$TARGET" ]; then SNAPF="$(mktemp)"; cp "$TARGET" "$SNAPF"; fi   # restored if any routed write fails
     route() { # run a routed command, keep its first output line, remember the first error
       local l; l="$("$@" | head -1)"; [ -n "$l" ] && OUT="$OUT$l"$'\n'
       case "$l" in error*) [ -n "$ERRLINE" ] || ERRLINE="$l" ;; esac
@@ -399,7 +400,11 @@ case "$CMD" in
     if [ -n "$CX" ]; then
       if l="$(ctx_write "$TARGET" "$CX")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
     fi
-    [ -n "$ERRLINE" ] && die "${ERRLINE#error: }"
+    if [ -n "$ERRLINE" ]; then
+      if [ -n "$SNAPF" ]; then cp "$SNAPF" "$TARGET" 2>/dev/null; else rm -f "$TARGET" 2>/dev/null; fi
+      rm -f "$SNAPF"; die "${ERRLINE#error: } (nothing written)"
+    fi
+    rm -f "$SNAPF"
     printf '%s' "$OUT"
     [ -n "$SL" ] && echo "statusline=$SL: not written by this script; it needs your confirmation (handled by the skill)."
     echo; show ;;
