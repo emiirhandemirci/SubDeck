@@ -387,6 +387,15 @@ function contentResult(st) {
 /** Parses one transcript and returns { prompt, promptTruncated, toolCalls, toolCallsTruncated, toolCallTotal, finalReport } or null when the file is unreadable.
  *  Incremental: the parsed state and the byte offset after the last complete line are cached per file (bounded LRU); a call reads only appended bytes.
  *  The cache entry is dropped when the file shrank or was replaced (different dev/ino). A trailing unterminated line is parsed for the result but not committed. */
+export const contentReadStats = { bytes: 0 };   // test observable: transcript bytes read by readContent (excludes the small guard probes)
+const GUARD = 64;
+async function probe(fh, from, to) {
+  const n = Math.max(0, to - from);
+  if (!n) return Buffer.alloc(0);
+  const b = Buffer.alloc(n);
+  const { bytesRead } = await fh.read(b, 0, n, from);
+  return b.subarray(0, bytesRead);
+}
 export async function readContent(file, { subagent }) {
   let fh;
   try { fh = await fs.open(file, 'r'); } catch { return null; }
@@ -396,13 +405,16 @@ export async function readContent(file, { subagent }) {
     let ent = contentCache.get(key);
     contentCache.delete(key);
     if (ent && (ent.dev !== stat.dev || ent.ino !== stat.ino || stat.size < ent.offset)) ent = null;
-    if (!ent) ent = { dev: stat.dev, ino: stat.ino, offset: 0, state: newContentState() };
+    // same-inode rewrite guard: the first and last GUARD bytes before the cached offset must be unchanged
+    if (ent && ent.offset > 0 && !(ent.head.equals(await probe(fh, 0, ent.head.length)) && ent.tail.equals(await probe(fh, ent.offset - ent.tail.length, ent.offset)))) ent = null;
+    if (!ent) ent = { dev: stat.dev, ino: stat.ino, offset: 0, head: Buffer.alloc(0), tail: Buffer.alloc(0), state: newContentState() };
     let pos = ent.offset, carry = Buffer.alloc(0);
     const buf = Buffer.allocUnsafe(CONTENT_CHUNK);
     while (pos < stat.size) {
       const { bytesRead } = await fh.read(buf, 0, Math.min(CONTENT_CHUNK, stat.size - pos), pos);
       if (bytesRead <= 0) break;
       pos += bytesRead;
+      contentReadStats.bytes += bytesRead;
       let data = carry.length ? Buffer.concat([carry, buf.subarray(0, bytesRead)]) : Buffer.from(buf.subarray(0, bytesRead));
       const nl = data.lastIndexOf(0x0a);
       if (nl < 0) { carry = data; continue; }
@@ -411,6 +423,7 @@ export async function readContent(file, { subagent }) {
       for (const line of complete.toString('utf8').split('\n')) applyContentLine(ent.state, line, subagent);
       ent.offset = pos - carry.length;
     }
+    if (ent.offset > 0) { ent.head = await probe(fh, 0, Math.min(GUARD, ent.offset)); ent.tail = await probe(fh, Math.max(0, ent.offset - GUARD), ent.offset); }
     let state = ent.state;
     if (carry.length) { state = cloneContentState(ent.state); applyContentLine(state, carry.toString('utf8'), subagent); }
     contentCache.set(key, ent);

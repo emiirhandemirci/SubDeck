@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { readContent } from '../adapters/claude-code.mjs';
+import { readContent, contentReadStats } from '../adapters/claude-code.mjs';
 import { rec, writeJsonl, tmpDir } from './fixtures/claude-fixture.mjs';
 
 const T = '2026-09-29T10:00:00.000Z';
@@ -63,4 +63,33 @@ test('readContent: tool result arriving in a later read updates an earlier call;
   assert.equal((await readContent(f, { subagent: false })).toolCalls[0].ok, false);
   assert.equal((await readContent(f, { subagent: true })).prompt, 'META');
   assert.equal((await readContent(f, { subagent: false })).prompt, null);
+});
+
+test('readContent: a second read after an append reads only the appended bytes', async () => {
+  const f = path.join(tmpDir('desk-cc-'), 's.jsonl');
+  const recs = [rec.user(T, '/p', 'hello')];
+  for (let i = 0; i < 200; i++) recs.push(rec.tool(T, 'Read', { file_path: '/file-' + i }));
+  writeJsonl(f, recs);
+  await readContent(f, { subagent: false });
+  const size = fs.statSync(f).size;
+  const add = line(rec.tool(T, 'Read', { file_path: '/extra' }));
+  fs.appendFileSync(f, add);
+  const before = contentReadStats.bytes;
+  const c = await readContent(f, { subagent: false });
+  const read = contentReadStats.bytes - before;
+  assert.equal(c.toolCallTotal, 201);
+  assert.ok(size > 10 * add.length);
+  assert.equal(read, Buffer.byteLength(add));
+});
+
+test('readContent: a same-inode rewrite to a larger size is re-read from scratch', async () => {
+  const f = path.join(tmpDir('desk-cc-'), 's.jsonl');
+  writeJsonl(f, [rec.user(T, '/p', 'first'), rec.tool(T, 'Read', { file_path: '/a' })]);
+  assert.equal((await readContent(f, { subagent: false })).prompt, 'first');
+  const ino = fs.statSync(f).ino;
+  writeJsonl(f, [rec.user(T, '/p', 'other'), rec.tool(T, 'Read', { file_path: '/b' }), rec.tool(T, 'Read', { file_path: '/c' }), rec.tool(T, 'Read', { file_path: '/d' })]);
+  assert.equal(fs.statSync(f).ino, ino);
+  const c = await readContent(f, { subagent: false });
+  assert.equal(c.prompt, 'other');
+  assert.deepEqual(targets(c), ['/b', '/c', '/d']);
 });
