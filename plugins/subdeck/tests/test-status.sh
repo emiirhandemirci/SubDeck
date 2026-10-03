@@ -83,7 +83,8 @@ OUT="$(bash "$STATUS" "$P4")"
 has "$OUT" '^e2e12345 +- +w +[0-9:]{8} .* running +[^ ]+ +Read ' "logger -> status end to end"
 
 # ---- UTF-8, JSON escapes, exit codes ----
-utf8ok() { printf '%s' "$1" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; }
+# strict UTF-8 validation via node (macOS iconv rejects valid 4-byte sequences such as emoji)
+utf8ok() { printf '%s' "$1" | node -e 'const c=[];process.stdin.on("data",d=>c.push(d)).on("end",()=>{try{new TextDecoder("utf-8",{fatal:true}).decode(Buffer.concat(c))}catch(e){process.exit(1)}})'; }
 nchars() { printf '%s' "$1" | node -e 'let s="";process.stdin.setEncoding("utf8").on("data",d=>s+=d).on("end",()=>console.log([...s].length))'; }
 B='\'   # a lone backslash, used to build JSON escapes
 U="$(mktemp -d)"; mkdir -p "$U/.subdeck" "$U/s1/subagents"
