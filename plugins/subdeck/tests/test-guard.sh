@@ -6,6 +6,7 @@ LAUNCH="$HERE/../scripts/run-hook.cmd"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "ok   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "FAIL $1"; }
+nowms() { node -e "console.log(Date.now())"; }
 has() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then ok "$3"; else bad "$3 (no match for: $2)"; printf '%s\n' "$1" | sed 's/^/     | /'; fi; }
 H="$(mktemp -d)"; P="$(mktemp -d)"; mkdir -p "$P/sub" "$P/build"
 unset SUBDECK_GUARD
@@ -486,8 +487,8 @@ if [ "${SUBDECK_PERF_STRICT:-0}" = 1 ]; then LIM1=400; LIM2=1500; else LIM1=1500
 best_ms() { # runs payload -> minimum wall ms
   local n="$1" pl="$2" i s e m best=999999
   for i in $(seq "$n"); do
-    s=$(date +%s%N); printf '%s' "$pl" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G" > /dev/null; e=$(date +%s%N)
-    m=$(( (e - s) / 1000000 )); [ "$m" -lt "$best" ] && best=$m
+    s=$(nowms); printf '%s' "$pl" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G" > /dev/null; e=$(nowms)
+    m=$(( e - s )); [ "$m" -lt "$best" ] && best=$m
   done
   echo "$best"
 }

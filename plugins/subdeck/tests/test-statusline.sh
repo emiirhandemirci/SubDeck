@@ -73,7 +73,7 @@ grep -Eq '^[0-9]+ running=1 ' "$PC/.subdeck/statusline.cache" && ok "cache: form
 ev "$(isoat -99)" SubagentStart r2rrrrrr "$T/s1.jsonl" >> "$PC/.subdeck/events.jsonl"
 eq "$(cj)" "SubDeck ● 1 running" "cache: warm run reuses the old counts"
 eq "$(NO_COLOR=1 SUBDECK_STATUSLINE_TTL=0 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PC\"}}")" "SubDeck ● 2 running" "cache: TTL=0 bypasses it"
-sed -i 's/^[0-9]* /1 /' "$PC/.subdeck/statusline.cache"
+sed 's/^[0-9]* /1 /' "$PC/.subdeck/statusline.cache" > "$PC/.subdeck/sc.tmp" && mv "$PC/.subdeck/sc.tmp" "$PC/.subdeck/statusline.cache"
 eq "$(cj)" "SubDeck ● 2 running" "cache: expired entry is recomputed"
 [ "$(ls "$PC/.subdeck" | grep -c 'statusline.cache\.')" = 0 ] && ok "cache: no tmp leftovers" || bad "cache: tmp leftovers"
 printf 'junk' > "$PC/.subdeck/statusline.cache"

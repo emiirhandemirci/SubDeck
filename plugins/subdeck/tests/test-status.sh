@@ -5,6 +5,7 @@ STATUS="$HERE/../scripts/status.sh"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "ok   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "FAIL $1"; }
+touch_ago() { node -e "const t=Date.now()/1000-$1*60;require('fs').utimesSync(process.argv[1],t,t)" "$2" "$1" 2>/dev/null; }
 has() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then ok "$3"; else bad "$3 (no match for: $2)"; printf '%s\n' "$1" | sed 's/^/     | /'; fi; }
 hasnt() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then bad "$3"; else ok "$3"; fi; }
 
@@ -194,7 +195,7 @@ has "$W3" '^AGENT .* STATE +ACTIVITY$' "COLUMNS=100 drops MODEL"
 # stale detection
 S="$(mktemp -d)"; mkdir -p "$S/.subdeck" "$S/s1/subagents"
 printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"x"}]}}' > "$S/s1/subagents/agent-s1s1s1s1.jsonl"
-cp "$S/s1/subagents/agent-s1s1s1s1.jsonl" "$S/s1/subagents/agent-s2s2s2s2.jsonl"; touch -d '2 hours ago' "$S/s1/subagents/agent-s2s2s2s2.jsonl"
+cp "$S/s1/subagents/agent-s1s1s1s1.jsonl" "$S/s1/subagents/agent-s2s2s2s2.jsonl"; touch_ago 120 "$S/s1/subagents/agent-s2s2s2s2.jsonl"
 {
   ev 2026-01-01T10:00:00Z SubagentStart s1s1s1s1 w "$S/m.jsonl"
   ev 2026-01-01T10:00:00Z SubagentStart s2s2s2s2 w "$S/m.jsonl"
@@ -285,10 +286,10 @@ PX="$(mktemp -d)"; TX="$(mktemp -d)"; mkdir -p "$PX/.subdeck" "$TX/s1/subagents"
 mk() { printf '%s\n' "$2" > "$TX/s1/subagents/agent-$1.jsonl"; }
 TXT='{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"working"}]}}'
 mk run1xxxxx "$TXT"; mk run2xxxxx "$TXT"                       # running (fresh)
-mk idlexxxxx "$TXT"; touch -d '2 minutes ago' "$TX/s1/subagents/agent-idlexxxxx.jsonl" 2>/dev/null   # quiet but not stale
+mk idlexxxxx "$TXT"; touch_ago 2 "$TX/s1/subagents/agent-idlexxxxx.jsonl" 2>/dev/null   # quiet but not stale
 mk askxxxxxx '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"ExitPlanMode","input":{"plan":"p"}}]}}'   # waiting (blocking tool call)
-mk stalexxxx "$TXT"; touch -d '30 minutes ago' "$TX/s1/subagents/agent-stalexxxx.jsonl" 2>/dev/null  # stale
-mk stale2xxx "$TXT"; touch -d '40 minutes ago' "$TX/s1/subagents/agent-stale2xxx.jsonl" 2>/dev/null
+mk stalexxxx "$TXT"; touch_ago 30 "$TX/s1/subagents/agent-stalexxxx.jsonl" 2>/dev/null  # stale
+mk stale2xxx "$TXT"; touch_ago 40 "$TX/s1/subagents/agent-stale2xxx.jsonl" 2>/dev/null
 mk failxxxxx '{"type":"assistant","isApiErrorMessage":true,"message":{"role":"assistant","content":[{"type":"text","text":"API Error"}]}}'
 {
   for id in run1xxxxx run2xxxxx idlexxxxx askxxxxxx stalexxxx stale2xxx failxxxxx nofilexxx; do ev "$(isoat -3000)" SubagentStart "$id" worker-sonnet "$TX/s1.jsonl"; done
