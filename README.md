@@ -8,7 +8,7 @@
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Emirhan_Demirci-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/emirhan-demirci-/)
 
 ![version](https://img.shields.io/badge/version-0.5.2-6366f1)
-![node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white)
+![node](https://img.shields.io/badge/node-%E2%89%A5%2020-339933?logo=nodedotjs&logoColor=white)
 ![plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757)
 ![deps](https://img.shields.io/badge/dependencies-zero-22c55e)
 ![license](https://img.shields.io/badge/license-MIT-blue)
@@ -17,7 +17,14 @@
 
 </div>
 
-SubDeck is a Claude Code plugin marketplace for running a **manager session with sub-agents**. The manager delegates to worker, researcher and verifier agents and reads short reports. You get a live, IDE-independent view of what every agent is doing. Everything is deterministic (hooks, bash, awk); the model is never called just to produce status.
+SubDeck works **alongside** Claude Code's built-in Agent View (`claude agents`) and Agent Teams. It does not replace them. It adds one local, read-only view across several tools, plus a manager rulebook for running sub-agents.
+
+- **One view across tools:** Claude Code and Cursor (stable); Codex, Copilot, Gemini CLI, Cline/Roo and OpenCode (experimental).
+- **Waiting list:** every session blocked on you, what it waits for, and for how long.
+- **Changed files per agent,** with "also changed by" badges when two agents edit the same file (Claude Code).
+- **Context bars** per session and token totals per project (tokens, not cost).
+- **Manager rulebook and guard:** worker, researcher and verifier agents, plus a deterministic hook that blocks risky commands (a guard rail, not a sandbox).
+- **Zero dependencies, no telemetry, `127.0.0.1` only.** Everything is deterministic (hooks, bash, awk); the model is never called just to produce status.
 
 <p align="center">
   <img src="docs/assets/how-it-works.webp" alt="One prompt to the manager starts three sub-agents (worker, researcher, verifier) in parallel, and they show up live in SubDeck Desk" width="800">
@@ -155,7 +162,7 @@ Check the manifests with `claude plugin validate .` and `claude plugin validate 
 - Agents: `worker-sonnet` (default), `worker-opus` (critical work only), `researcher` (read-only), `verifier` (no commits), plus `*-current` variants that inherit the session model.
 - Hooks: `SubagentStart` / `SubagentStop` write events to `<project>/.subdeck/`; `Stop` / `Notification` send desktop notifications; `PreToolUse` runs the guard.
 - Scripts: event logger, `status.sh` (bash + awk), `run-hook.cmd` (Windows/POSIX launcher). Templates: `CLAUDE.local.md.template`, `decision.md.template`.
-- Requirements: Bash and awk (Git Bash on Windows), Claude Code with plugin support, git. Desk needs Node 22.13 or newer.
+- Requirements: Bash and awk (Git Bash on Windows), Claude Code with plugin support, git. Desk needs Node 20 or newer to start; Cursor, Codex and OpenCode (SQLite) need Node 22.13+.
 </details>
 
 ## Limits
@@ -169,6 +176,20 @@ What SubDeck does not do:
 - **Weak or local models may narrate instead of launching agents.** The manager rulebook assumes a model that follows tool-use instructions.
 - **The status line is Claude Code only.**
 - **No cost or quota tracking.** Desk shows tokens and context fill, not money or plan limits.
+
+## FAQ
+
+**How is this different from Claude Code Agent View?**
+Agent View (`claude agents`) is Anthropic's own terminal view of your Claude Code background sessions, and Agent Teams coordinates teammates inside Claude Code. SubDeck does not replace either. Desk is a local web page that also reads Cursor (and, experimentally, Codex, Copilot, Gemini CLI, Cline/Roo and OpenCode), lists per-agent changed files with "also changed by" conflict badges, and shows context bars. The plugin adds a manager rulebook and a guard. Use whichever combination helps.
+
+**Does it send data anywhere?**
+No. Desk binds `127.0.0.1`, reads local session files read-only, has no telemetry and no dependencies, and never calls a model.
+
+**Is the guard a sandbox?**
+No. It is a guard rail: a deterministic hook that blocks common mistakes. Aliases, shell variables, other interpreters and scripts can get around it.
+
+**Does it track cost?**
+No. Desk shows tokens and context fill only, not money or plan limits.
 
 ## Status
 

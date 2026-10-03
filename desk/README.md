@@ -8,7 +8,7 @@ A local, read-only web dashboard that shows what your AI coding agents are doing
 node desk/server.mjs [--port N] [--days N] [--open] [--no-content]
 ```
 
-- Needs Node 20 or newer; Cursor, Codex and OpenCode (SQLite) need Node 22.13+ (built-in `node:sqlite`).
+- Needs Node 20 or newer to start; Cursor, Codex and OpenCode (SQLite) need Node 22.13+ (built-in `node:sqlite`).
 - Binds `127.0.0.1` only. Default port 4917, falling back to 4918-4936; `--port N` is exact (exit 1 if busy); `--port 0` picks any free port.
 - `--days N` sets the retention window (1-365, default 14). `--open` opens the browser. `--no-content` disables the agent content endpoint.
 - A second start prints the URL of the running instance. Runtime file: `~/.subdeck/desk.json` (`pid`, `port`, `startedAt`, `version`).

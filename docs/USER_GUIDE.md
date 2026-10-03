@@ -8,7 +8,7 @@ SubDeck is a manager + sub-agents toolkit for Claude Code: rules, agents and ski
 
 - Claude Code.
 - Git Bash on Windows (the plugin scripts are bash).
-- Node.js 22.13 or newer for Desk (Cursor support needs the built-in `node:sqlite`).
+- Node.js 20 or newer to start Desk; Node 22.13+ for the SQLite-based adapters (Cursor, Codex, OpenCode; built-in `node:sqlite`).
 
 ## 3. Install
 
@@ -74,7 +74,7 @@ On a machine with internet and a clone of SubDeck:
 
 1. `./make-offline-bundle.sh` (add `--ref v0.5.2` for a tag or commit). It writes `dist/SubDeck-<version>-offline.zip` from tracked files only, plus the installers, `INSTALL.cmd` and `OFFLINE-README.txt`, and prints the SHA-256. Copy the zip to the USB stick; compare the hash on the other side if you like (`Get-FileHash` / `sha256sum`).
 
-On the offline machine (needs Claude Code, Git for Windows, and Node.js 22.13+ only for Desk):
+On the offline machine (needs Claude Code, Git for Windows, and Node.js 20+ only for Desk, 22.13+ for Cursor/Codex/OpenCode):
 
 2. Unzip anywhere and double-click `INSTALL.cmd`, or run `.\install-offline.ps1` in PowerShell (`./install-offline.sh` in Git Bash, macOS, Linux). On a non-Claude backend add `-ModeCurrent` (`--mode-current`) so sub-agents use the session's model; the installer recommends it when `ANTHROPIC_BASE_URL` points to a non-Anthropic host.
 3. The installer copies the plugin to `%USERPROFILE%\.subdeck\offline\SubDeck` (`-Target` / `--target` changes it; only an older copy of ours, marked by `.subdeck-offline-install`, is ever replaced), then runs `claude plugin marketplace add <that folder>` and `claude plugin install subdeck@subdeck` (or the `update` forms when already installed). A local-directory marketplace is read in place, so Claude Code does not fetch anything.
@@ -276,9 +276,9 @@ SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds a
 
 **`claude` not found.** Add the folder that contains the Claude Code executable to your `PATH`, then open a new terminal.
 
-**A tool is missing in the header.** Tools that Desk cannot find are listed under "not detected". Codex, Copilot, Gemini, Cline/Roo and OpenCode read their standard data folders; if yours live elsewhere see the environment overrides in [desk/README.md](../desk/README.md). OpenCode and Codex also need Node 22.13 or newer.
+**A tool is missing in the header.** Tools that Desk cannot find are listed under "not detected". Codex, Copilot, Gemini, Cline/Roo and OpenCode read their standard data folders; if yours live elsewhere see the environment overrides in [desk/README.md](../desk/README.md). Cursor, OpenCode and Codex need Node 22.13 or newer.
 
-**Cursor shows nothing.** Check that Node is 22.13 or newer (`node --version`) and that Cursor has been used on this machine, so its data directory exists.
+**Cursor shows nothing.** Check that Node is 22.13 or newer (Desk itself starts on Node 20) (`node --version`) and that Cursor has been used on this machine, so its data directory exists.
 
 **An agent looks idle but is finished.** Update to the latest SubDeck and restart Desk (`/subdeck:desk stop`, then `/subdeck:desk`). Older versions guessed completion from file activity only.
 
