@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SubDeck settings: one table of everything, and `set` routing to the existing scripts (decision 0026).
+# SubDeck settings: one table of everything, and `set` routing to the existing scripts.
 #
 #   bash <plugin>/scripts/settings.sh [show]                          compact table
 #   bash <plugin>/scripts/settings.sh set key=value ... [--project]   route keys to models.sh / notify.sh / guard.sh

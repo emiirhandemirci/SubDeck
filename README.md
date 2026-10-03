@@ -121,8 +121,8 @@ flowchart LR
 
 ## Quick start
 
-1. Install the plugin (see below).
-2. In your project, copy `plugins/subdeck/templates/CLAUDE.local.md.template` to `CLAUDE.local.md` (private, git-ignored) and fill in the placeholders. `.subdeck/` ignores itself (SubDeck writes `.subdeck/.gitignore`).
+1. Install the plugin (see [Install](#install) above).
+2. In your project, copy the template to `CLAUDE.local.md` (marketplace installs have it at `~/.claude/plugins/marketplaces/subdeck/plugins/subdeck/templates/CLAUDE.local.md.template`; from a clone it is `plugins/subdeck/templates/CLAUDE.local.md.template`) (private, git-ignored) and fill in the placeholders. `.subdeck/` ignores itself (SubDeck writes `.subdeck/.gitignore`).
 3. Start Claude Code and run `/subdeck:desk` to open the dashboard. The manager rulebook loads on its own when a session delegates.
 
 | Command | What it does |
@@ -134,7 +134,7 @@ flowchart LR
 These three are the whole command surface. Launching agents and pushing go through the manager, which follows the rulebook (`/subdeck:orchestrator` opens it by hand). Coming from 0.4? `task` and `pr` are now manager rules; `models`, `notify`, `guard` and `statusline` are keys of `/subdeck:settings`. See the [User Guide](docs/USER_GUIDE.md#4-commands).
 
 <details>
-<summary><b>Install</b></summary>
+<summary><b>Install from a local checkout</b></summary>
 
 Local marketplace (persistent), inside a Claude Code session:
 
@@ -172,7 +172,7 @@ What SubDeck does not do:
 
 ## Status
 
-v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 adds notifications, guard rules and the Desk context-usage bar. Roadmap and decision records live in `internal/design.md` and `internal/decisions/` (private, maintainers only).
+v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 adds notifications, guard rules and the Desk context-usage bar. Roadmap: see [CHANGELOG.md](CHANGELOG.md) and GitHub issues.
 
 ## License
 
