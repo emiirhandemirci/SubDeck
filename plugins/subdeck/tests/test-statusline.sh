@@ -41,7 +41,9 @@ eq "$(SUBDECK_ASCII=1 NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":
 
 # project_dir preferred, falls back to cwd; backslash-escaped JSON paths do not break parsing
 eq "$(NO_COLOR=1 bash "$SL" <<<"{\"cwd\":\"$P\"}")" "SubDeck ● 2 running  ◐ 1 waiting" "cwd fallback"
-eq "$(NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$E\",\"project_dir\":\"$P\"}}")" "SubDeck ● 2 running  ◐ 1 waiting" "project_dir with .subdeck wins over current_dir"
+# JSON built in a variable first: bash 3.2 (macOS) mangles this here-string when nested inside "$(...)" as an argument
+J2="{\"workspace\":{\"current_dir\":\"$E\",\"project_dir\":\"$P\"}}"
+eq "$(NO_COLOR=1 bash "$SL" <<<"$J2")" "SubDeck ● 2 running  ◐ 1 waiting" "project_dir with .subdeck wins over current_dir"
 eq "$(NO_COLOR=1 CLAUDE_PROJECT_DIR="$P" bash "$SL" <<<'{"workspace":{"current_dir":"Z:\nope\x"}}')" "SubDeck ● 2 running  ◐ 1 waiting" "unusable JSON path -> CLAUDE_PROJECT_DIR"
 
 # counts line stays machine-parsable (no failed records here)
