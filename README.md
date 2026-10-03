@@ -122,7 +122,7 @@ flowchart LR
 ## Quick start
 
 1. Install the plugin (see below).
-2. In your project, copy `plugins/subdeck/templates/CLAUDE.local.md.template` to `CLAUDE.local.md` (private, git-ignored) and fill in the placeholders. Add `.subdeck/` to `.gitignore`.
+2. In your project, copy `plugins/subdeck/templates/CLAUDE.local.md.template` to `CLAUDE.local.md` (private, git-ignored) and fill in the placeholders. `.subdeck/` ignores itself (SubDeck writes `.subdeck/.gitignore`).
 3. Start Claude Code and run `/subdeck:desk` to open the dashboard. The manager rulebook loads on its own when a session delegates.
 
 | Command | What it does |

@@ -113,5 +113,16 @@ wait
 check "$(count_all "$P")" "30/0" "30 parallel writers: jsonl + events.d == 30, all parse"
 rm -rf "$P"
 
+# .subdeck/.gitignore: created once, keeps the folder out of git status, never overwritten
+P="$(newproj)"
+git -C "$P" init -q 2>/dev/null
+echo '{"agent_id":"g"}' | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" SubagentStart
+check "$(tail -n 1 "$P/.subdeck/.gitignore")" "*" ".subdeck/.gitignore created with *"
+check "$(git -C "$P" status --porcelain 2>/dev/null)" "" "git status clean after an event"
+printf 'custom\n' > "$P/.subdeck/.gitignore"
+echo '{"agent_id":"g2"}' | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" SubagentStart
+check "$(cat "$P/.subdeck/.gitignore")" "custom" "existing .subdeck/.gitignore is not overwritten"
+rm -rf "$P"
+
 echo "SUMMARY: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

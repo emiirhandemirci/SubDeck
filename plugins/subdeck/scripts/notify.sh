@@ -101,6 +101,7 @@ log_attempt() {
   local ts f="$PROJECT/.subdeck/notify.log"
   printf -v ts '%(%Y-%m-%dT%H:%M:%S%z)T' -1 2>/dev/null || ts="$(date +%Y-%m-%dT%H:%M:%S%z)"
   mkdir -p "$PROJECT/.subdeck" 2>/dev/null
+  [ -e "$PROJECT/.subdeck/.gitignore" ] || printf '# Created by SubDeck: local agent events and state, not for version control.\n*\n' > "$PROJECT/.subdeck/.gitignore" 2>/dev/null
   printf '%s %s %s %s\n' "$ts" "$1" "$2" "$3" >> "$f" 2>/dev/null
   if [ "$4" = trim ] && [ -f "$f" ] && [ "$(wc -c < "$f")" -gt 32768 ]; then
     tail -n 100 "$f" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f" 2>/dev/null

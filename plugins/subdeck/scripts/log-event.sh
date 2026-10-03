@@ -22,6 +22,8 @@ fi
 DIR="$PROJECT/.subdeck"
 LOCK="$DIR/events.lock"
 mkdir -p "$DIR" 2>/dev/null || exit 0
+# Keep .subdeck/ out of the user's git status without touching their .gitignore. Never overwrite.
+[ -e "$DIR/.gitignore" ] || printf '# Created by SubDeck: local agent events and state, not for version control.\n*\n' > "$DIR/.gitignore" 2>/dev/null
 
 log_err() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$DIR/hook-errors.log" 2>/dev/null; }
 

@@ -38,7 +38,7 @@ claude --plugin-dir <path-to-SubDeck>/plugins/subdeck
 
 or `claude plugin marketplace add <path-to-SubDeck>` followed by `claude plugin install subdeck@subdeck`.
 
-Add `.subdeck/` to your project's `.gitignore`; the hooks write agent events there.
+The hooks write agent events to `.subdeck/` in your project; SubDeck adds `.subdeck/.gitignore` so the folder stays out of git.
 
 **Other tools (GitHub Copilot CLI, Codex).** One command each installs the plugin from the same repository:
 
