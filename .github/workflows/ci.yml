@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  desk:
+    name: Desk tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: Run Desk tests
+        run: node --test "desk/test/*.test.mjs"
+
+  plugin:
+    name: Plugin bash tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: Run plugin tests
+        shell: bash
+        run: |
+          status=0
+          for t in plugins/subdeck/tests/test-*.sh; do
+            echo "::group::$t"
+            bash "$t" || { echo "FAILED: $t"; status=1; }
+            echo "::endgroup::"
+          done
+          exit $status
