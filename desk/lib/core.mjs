@@ -79,7 +79,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
         const la = s.lastActivity;
         const out = {
           id, nativeId: s.nativeId, tool: a.tool, sourceId: a.tool, projectId: p.id, parentId: null, depth: 0,
-          title: s.title, titleSource: s.titleSource, agentType: s.agentType ?? null, model: s.model ?? null,
+          title: s.title, titleSource: s.titleSource, agentType: s.agentType ?? null, model: s.model ?? null, effort: typeof s.effort === 'string' ? s.effort : null,
           state: 'unknown', stateSource: 'none',
           createdAt: s.createdAt ?? null, runStartedAt: s.runStartedAt ?? null, updatedAt: s.updatedAt ?? null, endedAt: s.endedAt ?? null, durationMs: null,
           tokens: { context: s.tokens.context ?? null, total: s.tokens.total ?? null },
@@ -97,7 +97,12 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
     for (const s of sessions) {
       if (!s._parentNative) continue;
       const parent = nativeIndex.get(s.tool + '\u0000' + s._parentNative);
-      if (parent && parent !== s) { s.parentId = parent.id; s.depth = 1; parent.childCount++; }
+      if (parent && parent !== s) { s.parentId = parent.id; s.depth = 1; parent.childCount++; Object.defineProperty(s, '_parentObj', { value: parent, enumerable: false }); }
+    }
+    for (const s of sessions) {   // nested sub-agents: depth follows the parent chain (capped, cycle-safe)
+      let d = 0, p = s;
+      for (; p._parentObj && d < 8; p = p._parentObj) d++;
+      if (s._parentObj) s.depth = d;
     }
     bases = newBases;
     applyStates(sessions, now());

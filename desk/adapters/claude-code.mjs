@@ -169,11 +169,11 @@ export function completionsOf(o) {
   return out;
 }
 
-/** Latest completion per agent id. Incremental: only bytes appended since the last scan are read (cache key c:<file>). */
-export async function readCompletions(file, st, cache) {
+/** Incremental parent/agent transcript scan (cache key c:<file>): completions per agent id plus ids of agents it spawned. */
+async function scanSpawns(file, st, cache) {
   const key = 'c:' + file;
   let c = cache.get(key);
-  if (!c || st.size < c.offset) c = { offset: 0, agents: new Map() };
+  if (!c || st.size < c.offset) c = { offset: 0, agents: new Map(), children: new Set() };
   if (st.size > c.offset) {
     const fh = await fs.open(file, 'r');
     try {
@@ -192,7 +192,9 @@ export async function readCompletions(file, st, cache) {
           if (!line.includes('task-notification') && !(line.includes('"toolUseResult"') && line.includes('"agentId"'))) continue;
           let o; try { o = JSON.parse(line); } catch { continue; }
           if (!o || typeof o !== 'object') continue;
+          if (o.toolUseResult && typeof o.toolUseResult === 'object' && typeof o.toolUseResult.agentId === 'string') c.children.add(o.toolUseResult.agentId);
           for (const d of completionsOf(o)) {
+            c.children.add(d.agentId);
             const prev = c.agents.get(d.agentId);
             if (!prev || Date.parse(d.at) >= Date.parse(prev.at)) c.agents.set(d.agentId, d);
           }
@@ -203,8 +205,14 @@ export async function readCompletions(file, st, cache) {
     } finally { await fh.close(); }
   }
   cache.set(key, c);
-  return c.agents;
+  return c;
 }
+
+/** Latest completion per agent id. Incremental: only bytes appended since the last scan are read (cache key c:<file>). */
+export async function readCompletions(file, st, cache) { return (await scanSpawns(file, st, cache)).agents; }
+
+/** Ids of the agents a transcript spawned (Agent tool results and task notifications); used to find the real parent of a nested sub-agent. */
+export async function readSpawned(file, st, cache) { return (await scanSpawns(file, st, cache)).children; }
 
 // appended to desk/adapters/claude-code.mjs
 
@@ -230,6 +238,14 @@ async function readMeta(file, cache) {
   return value;
 }
 
+/** Reasoning effort from a hook payload: `effort.level` (documented object form) or a plain string. null when absent or unusable. */
+export function effortOf(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const v = payload.effort;
+  const level = typeof v === 'string' ? v : v && typeof v === 'object' && typeof v.level === 'string' ? v.level : null;
+  return clip(level, 20);
+}
+
 /** Reads <project>/.subdeck/events.jsonl + events.d/*.json; keeps only ids, types and timestamps. */
 export async function readHooks(projectPath, cache) {
   const dir = path.join(projectPath, '.subdeck');
@@ -237,7 +253,9 @@ export async function readHooks(projectPath, cache) {
   const agents = new Map();
   const notifs = new Map();   // 's:<sessionId>' or 'a:<agentId>' -> latest waiting-type Notification time
   const notifTypes = new Map();   // same keys -> notification_type of that latest one
-  if (!dst || !dst.isDirectory()) return { agents, notifs, notifTypes, bad: 0, dir: null };
+  const fails = new Map();   // same keys -> latest StopFailure { ts, errorType }
+  const efforts = new Map();   // same keys -> latest effort level seen in a hook payload
+  if (!dst || !dst.isDirectory()) return { agents, notifs, notifTypes, fails, efforts, bad: 0, dir: null };
   const files = [path.join(dir, 'events.jsonl')];
   for (const e of await readdirSafe(path.join(dir, 'events.d'))) if (e.isFile() && e.name.endsWith('.json')) files.push(path.join(dir, 'events.d', e.name));
   let bad = 0;
@@ -264,11 +282,17 @@ export async function readHooks(projectPath, cache) {
           agentType: typeof e.agent_type === 'string' ? e.agent_type : null,
           sessionId: typeof e.session_id === 'string' ? e.session_id : null,
           transcriptPath: typeof e.transcript_path === 'string' ? e.transcript_path : null }));
-      c = { sig, events, notes, bad: p.bad };
+      const keyOf = e => (typeof e.agent_id === 'string' && e.agent_id ? 'a:' + e.agent_id : typeof e.session_id === 'string' && e.session_id ? 's:' + e.session_id : null);
+      const failed = p.records.filter(e => e.event === 'StopFailure' && toIso(e.ts) && keyOf(e))
+        .map(e => ({ key: keyOf(e), ts: toIso(e.ts), errorType: e.payload && typeof e.payload.error_type === 'string' ? e.payload.error_type : null }));
+      const effs = p.records.filter(e => toIso(e.ts) && keyOf(e) && effortOf(e.payload)).map(e => ({ key: keyOf(e), ts: toIso(e.ts), level: effortOf(e.payload) }));
+      c = { sig, events, notes, failed, effs, bad: p.bad };
       cache.set('h:' + f, c);
     }
     bad += c.bad;
     for (const n of c.notes) if (!notifs.get(n.key) || n.ts > notifs.get(n.key)) { notifs.set(n.key, n.ts); notifTypes.set(n.key, n.type); }
+    for (const f of c.failed) if (!fails.get(f.key) || f.ts > fails.get(f.key).ts) fails.set(f.key, { ts: f.ts, errorType: f.errorType });
+    for (const f of c.effs) if (!efforts.get(f.key) || f.ts >= efforts.get(f.key).ts) efforts.set(f.key, { ts: f.ts, level: f.level });
     for (const e of c.events) {
       const a = agents.get(e.agentId) || { start: null, stop: null, agentType: null, sessionId: null, transcriptPath: null };
       if (e.event === 'SubagentStart') a.start = earlier(a.start, e.ts);
@@ -279,7 +303,7 @@ export async function readHooks(projectPath, cache) {
       agents.set(e.agentId, a);
     }
   }
-  return { agents, notifs, notifTypes, bad, dir };
+  return { agents, notifs, notifTypes, fails, efforts: new Map([...efforts].map(([k, v]) => [k, v.level])), bad, dir };
 }
 
 function subTitle(meta, agentId) {
@@ -308,7 +332,15 @@ export function waitingBasis(pending, notifIso, mtimeMs, mtimeIso, notifType = n
   return null;
 }
 
-function subBasis(hook, mtimeIso, done, wait) {
+/** A StopFailure hook event newer than the last transcript write means the turn ended in an error (rate limit, billing, ...). */
+export function failedBasis(fail, mtimeMs) {
+  if (!fail) return null;
+  const t = Date.parse(fail.ts);
+  return Number.isFinite(t) && mtimeMs < t + 2000 ? { kind: 'fixed', state: 'failed', stateSource: 'hook' } : null;
+}
+
+function subBasis(hook, mtimeIso, done, wait, fail = null) {
+  if (fail) return fail;
   if (done && done.state === 'failed') return { kind: 'fixed', state: 'failed', stateSource: 'field' };   // explicit failure of the latest run wins over a Stop hook
   if (hook && hook.stop) return { kind: 'fixed', state: 'finished', stateSource: 'hook' };
   if (done) return { kind: 'fixed', state: done.state, stateSource: 'field' };
@@ -520,6 +552,22 @@ export async function readChangeFile(file, env, filePath) {
   return { path: hits[0].path, edits, total: ops.length, truncated };
 }
 
+/** Agent Team members from <claude dir>/teams/<team>/config.json: agentId -> { name, agentType, team }. Only ids and names are kept. */
+export async function readTeams(dir) {
+  const members = new Map();
+  for (const t of await readdirSafe(dir)) {
+    if (!t.isDirectory()) continue;
+    let o; try { o = JSON.parse(await fs.readFile(path.join(dir, t.name, 'config.json'), 'utf8')); } catch { continue; }
+    if (!o || typeof o !== 'object' || !Array.isArray(o.members)) continue;
+    for (const m of o.members) {
+      if (!m || typeof m !== 'object' || typeof m.agentId !== 'string' || !m.agentId) continue;
+      members.set(m.agentId, { name: typeof m.name === 'string' ? m.name : null, agentType: typeof m.agentType === 'string' ? m.agentType : null, team: t.name });
+    }
+  }
+  return members;
+}
+const isLead = (agentType, member) => agentType === 'team-lead' || (member && member.agentType === 'team-lead');
+
 async function scan(env, { cache }) {
   const cutoff = env.now() - env.days * 86400000;
   let skipped = 0;
@@ -546,13 +594,30 @@ async function scan(env, { cache }) {
       const top = await readTranscript(file, st, cache, { growIfNoUsage: false });
       skipped += top.bad;
       const completions = subs.length ? await readCompletions(file, st, cache) : new Map();
+      const byAgent = new Map(subs.map(s => [s.agentId, s]));
+      for (const s of subs) {
+        // nested sub-agents: the transcript that spawned an agent (Agent tool result / task notification) is its real parent
+        s.spawned = await readSpawned(s.file, s.st, cache);
+        s.comps = await readCompletions(s.file, s.st, cache);
+      }
+      for (const s of subs) {
+        s.parentAgent = null;
+        for (const p of subs) if (p !== s && p.spawned.has(s.agentId)) { s.parentAgent = p.agentId; break; }
+      }
+      for (const s of subs) {   // a cycle (should never happen) falls back to the session as parent
+        const seenIds = new Set([s.agentId]);
+        for (let p = s.parentAgent; p; p = byAgent.get(p).parentAgent) {
+          if (seenIds.has(p)) { s.parentAgent = null; break; }
+          seenIds.add(p);
+        }
+      }
       for (const s of subs) {
         s.tr = await readTranscript(s.file, s.st, cache, { growIfNoUsage: true });
         s.meta = await readMeta(s.file.replace(/\.jsonl$/, '.meta.json'), cache);
         skipped += s.tr.bad;
       }
       const projectPath = top.cwd || (subs.find(s => s.tr.cwd) || {}).tr?.cwd || null;
-      groups.push({ uuid, file, st, top, subs, completions, projectPath, projectLabel: projectPath ? null : slug.name });
+      groups.push({ uuid, file, st, top, subs, completions, byAgent, projectPath, projectLabel: projectPath ? null : slug.name });
     }
   }
   // hook events, once per project
@@ -567,47 +632,57 @@ async function scan(env, { cache }) {
     skipped += h.bad;
     if (h.dir) watchExtra.push(h.dir);
   }
+  const teams = await readTeams(path.join(path.dirname(env.claudeProjectsDir), 'teams'));
   const sessions = [];
   for (const g of groups) {
     const hookInfo = g.projectPath ? hooksByKey.get(projectKey(g.projectPath, env.platform)) : null;
     const hooks = hookInfo ? hookInfo.agents : new Map();
     const notifs = hookInfo ? hookInfo.notifs : new Map();
     const notifTypes = hookInfo ? hookInfo.notifTypes : new Map();
+    const fails = hookInfo ? hookInfo.fails : new Map();
+    const efforts = hookInfo ? hookInfo.efforts : new Map();
     const base = { tool: 'claude-code', projectPath: g.projectPath, projectLabel: g.projectLabel, archived: false };
     const mt = msToIso(g.st.mtimeMs);
     const title = clip(g.top.customTitle, 120) ? { title: clip(g.top.customTitle, 120), titleSource: 'explicit' }
       : clip(g.top.aiTitle, 120) ? { title: clip(g.top.aiTitle, 120), titleSource: 'summary' }
       : { title: `Session ${g.uuid.slice(0, 8)}`, titleSource: 'fallback' };
-    sessions.push({ ...base, nativeId: g.uuid, parentNativeId: null, depth: 0, ...title, agentType: null, model: g.top.model,
+    sessions.push({ ...base, nativeId: g.uuid, parentNativeId: null, depth: 0, ...title, agentType: null, model: g.top.model, effort: efforts.get('s:' + g.uuid) || null,
       createdAt: g.top.createdAt || msToIso(g.st.birthtimeMs || g.st.mtimeMs), updatedAt: mt, endedAt: null,
       tokens: { context: g.top.tokens, total: null }, lastActivity: g.top.lastActivity,
       refs: { file: g.file, db: null, key: null },
-      stateBasis: waitingBasis(g.top.pending, notifs.get('s:' + g.uuid), g.st.mtimeMs, mt, notifTypes.get('s:' + g.uuid)) || { kind: 'mtime', at: mt, stateSource: 'mtime' } });
+      stateBasis: failedBasis(fails.get('s:' + g.uuid), g.st.mtimeMs) || waitingBasis(g.top.pending, notifs.get('s:' + g.uuid), g.st.mtimeMs, mt, notifTypes.get('s:' + g.uuid)) || { kind: 'mtime', at: mt, stateSource: 'mtime' } });
     const seen = new Set();
     for (const s of g.subs) {
       seen.add(s.agentId);
+      const member = teams.get(s.agentId) || null;
+      if (isLead(s.meta && s.meta.agentType, member)) continue;   // the team lead is the main session, not an agent
       const hook = hooks.get(s.agentId);
       const smt = msToIso(s.st.mtimeMs);
-      const done = latestCompletion(s.tr, g.completions.get(s.agentId));
+      const parentSub = s.parentAgent ? g.byAgent.get(s.parentAgent) : null;
+      const compNote = [g.completions.get(s.agentId), parentSub && parentSub.comps.get(s.agentId)].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+      const done = latestCompletion(s.tr, compNote);
       const runStartedAt = (hook && hook.stop) ? null : ((done && done.runStartedAt) || s.tr.runStartedAt || null);
-      sessions.push({ ...base, nativeId: s.agentId, parentNativeId: g.uuid, depth: 1, ...subTitle(s.meta, s.agentId),
-        agentType: (s.meta && s.meta.agentType) || (hook && hook.agentType) || null,
+      sessions.push({ ...base, nativeId: s.agentId, parentNativeId: s.parentAgent || g.uuid, depth: 1, ...(member && member.name ? { title: clip(member.name, 120), titleSource: 'meta' } : subTitle(s.meta, s.agentId)),
+        agentType: (s.meta && s.meta.agentType) || (hook && hook.agentType) || (member && member.agentType) || null,
+        effort: efforts.get('a:' + s.agentId) || null,
         model: s.tr.model || (s.meta && s.meta.model) || null,
         createdAt: earlier(s.tr.createdAt, hook && hook.start) || smt, updatedAt: smt, endedAt: (hook && hook.stop) || (done && done.at) || null,
         ...(runStartedAt ? { runStartedAt } : {}),
         tokens: { context: s.tr.tokens, total: null }, lastActivity: s.tr.lastActivity,
-        refs: { file: s.file, db: null, key: null }, stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt, notifTypes.get('a:' + s.agentId))) });
+        refs: { file: s.file, db: null, key: null }, stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt, notifTypes.get('a:' + s.agentId)), failedBasis(fails.get('a:' + s.agentId), s.st.mtimeMs)) });
     }
     for (const [agentId, hook] of hooks) {
       if (seen.has(agentId) || hook.sessionId !== g.uuid) continue;
       // Stop-only hook events with no start, no agent type and no transcript file (seen is built from the files on disk) are not agents
       if (!hook.start && !hook.agentType) continue;
+      const member = teams.get(agentId) || null;
+      if (isLead(hook.agentType, member)) continue;   // lead events carry no sub-agent of their own
       const derived = hook.transcriptPath ? path.join(path.dirname(hook.transcriptPath), g.uuid, 'subagents', `agent-${agentId}.jsonl`) : null;
       sessions.push({ ...base, nativeId: agentId, parentNativeId: g.uuid, depth: 1,
-        title: clip(hook.agentType, 120) || `agent ${agentId.slice(0, 8)}`, titleSource: 'fallback',
-        agentType: hook.agentType, model: null, createdAt: hook.start || hook.stop, updatedAt: hook.stop || hook.start,
+        ...(member && member.name ? { title: clip(member.name, 120), titleSource: 'meta' } : { title: clip(hook.agentType, 120) || `agent ${agentId.slice(0, 8)}`, titleSource: 'fallback' }),
+        agentType: hook.agentType || (member && member.agentType) || null, effort: efforts.get('a:' + agentId) || null, model: null, createdAt: hook.start || hook.stop, updatedAt: hook.stop || hook.start,
         endedAt: hook.stop || null, tokens: { context: null, total: null }, lastActivity: null,
-        refs: { file: derived, db: null, key: null }, stateBasis: subBasis(hook, null) });
+        refs: { file: derived, db: null, key: null }, stateBasis: subBasis(hook, null, null, null, failedBasis(fails.get('a:' + agentId), 0)) });
     }
   }
   return { sessions, skipped, notes: [], watchExtra };
