@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.3
+
+- **Desk:** transcript content is read incrementally with a bounded cache. Desk tolerates Claude Code Agent Teams, nested agents, `StopFailure` events and the `effort` field.
+- **Guard:** neutral deny/ask messages; PowerShell recursive deletes and backtick escapes are caught; options of wrappers such as `sudo` and `env` are skipped when finding the real command.
+- **Settings:** `models.sh` looks up values only inside the `modelPolicy` object.
+- **Hooks:** `.subdeck/.gitignore` is written automatically so the folder stays out of `git status`.
+- **macOS:** bash 3.2 fixes in the event logger and the status table; Desk starts when launched through a symlinked path; portable generator and plugin tests work on macOS.
+- **`/subdeck:desk`:** starts on Node 20+ and warns below 22.13.
+- **Docs:** README is positioned alongside Agent View and has an FAQ; new plugin README; manifest directory metadata.
+- **Project:** GitHub issue templates, SECURITY, CONTRIBUTING, and CI on Linux, macOS and Windows.
+
 ## 0.5.2
 
 - **Protected paths:** `/subdeck:settings set protect=CLAUDE.md,.github/workflows/**,*.lock` adds a guard rule (`protected-paths`, default ask) for Write/Edit/MultiEdit/apply_patch and obvious shell writes and deletes. A project list replaces the user list. Still a guard rail, not a sandbox.
