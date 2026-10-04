@@ -78,5 +78,25 @@ OUT="$(HOME="$OH" USERPROFILE="$OH" SUBDECK_DESK_DIR= bash "$CACHE/scripts/desk.
 has "$OUT" '^SubDeck Desk: http' "offline target ~/.subdeck/offline/SubDeck/desk found"
 HOME="$OH" USERPROFILE="$OH" bash "$CACHE/scripts/desk.sh" stop >/dev/null
 
+# Node version gate: fake node reports a version, otherwise delegates to the real node
+REALNODE="$(command -v node)"; FN="$(mktemp -d)"
+cat > "$FN/node" <<EOF
+#!/usr/bin/env bash
+case "\$*" in *process.versions.node*) echo "\$FAKE_NODE_V" ;; *) exec "$REALNODE" "\$@" ;; esac
+EOF
+chmod +x "$FN/node"
+OUT="$(PATH="$FN:$PATH" FAKE_NODE_V=18.19.0 bash "$LAUNCH" start)"
+has "$OUT" '^Node\.js >= 20 is required' "node < 20 refuses"
+OUT="$(PATH="$FN:$PATH" FAKE_NODE_V=20.11.0 bash "$LAUNCH" start)"
+has "$OUT" '^Warning: .*Cursor, Codex and OpenCode.*22\.13' "node 20 warns about SQLite adapters"
+has "$OUT" '^SubDeck Desk: http' "node 20 still starts"
+bash "$LAUNCH" stop >/dev/null
+OUT="$(PATH="$FN:$PATH" FAKE_NODE_V=22.12.1 bash "$LAUNCH" start)"
+has "$OUT" '^Warning: ' "node 22.12 warns"
+bash "$LAUNCH" stop >/dev/null
+OUT="$(PATH="$FN:$PATH" FAKE_NODE_V=22.13.0 bash "$LAUNCH" start)"
+if printf '%s\n' "$OUT" | grep -q '^Warning'; then bad "node 22.13 no warning"; else ok "node 22.13 no warning"; fi
+bash "$LAUNCH" stop >/dev/null
+
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

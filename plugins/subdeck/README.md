@@ -45,5 +45,5 @@ bash and awk (Git Bash on Windows). Desk additionally needs Node.js.
 
 - Repository: https://github.com/emiirhandemirci/SubDeck
 - User guide: https://github.com/emiirhandemirci/SubDeck/blob/main/docs/USER_GUIDE.md
-- Security policy: https://github.com/emiirhandemirci/SubDeck/blob/main/SECURITY.md
+- Security policy: https://github.com/emiirhandemirci/SubDeck/blob/main/.github/SECURITY.md
 - Issues: https://github.com/emiirhandemirci/SubDeck/issues
