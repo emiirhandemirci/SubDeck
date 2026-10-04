@@ -47,7 +47,7 @@ if [ -f "$HERE/../../../desk/server.mjs" ]; then
   has "$OUT" '^SubDeck Desk' "bad SUBDECK_DESK_DIR falls back to the repo-relative desk/"
   bash "$LAUNCH" stop >/dev/null
 else
-  has "$OUT" 'Set SUBDECK_DESK_DIR' "bad SUBDECK_DESK_DIR message"
+  has "$OUT" 'set SUBDECK_DESK_DIR' "bad SUBDECK_DESK_DIR message"
 fi
 [ $RC -eq 0 ] && ok "bad dir exit 0" || bad "bad dir exit 0"
 
@@ -58,7 +58,9 @@ OUT="$(HOME="$FAKEH" USERPROFILE="$FAKEH" SUBDECK_DESK_DIR= bash "$CACHE/scripts
 has "$OUT" '^SubDeck Desk: http' "installed layout finds Desk in the marketplace clone"
 HOME="$FAKEH" USERPROFILE="$FAKEH" bash "$CACHE/scripts/desk.sh" stop >/dev/null
 OUT="$(HOME="$HOME/empty" USERPROFILE="$HOME/empty" SUBDECK_DESK_DIR= bash "$CACHE/scripts/desk.sh" start)"
-has "$OUT" 'not found.*marketplaces/subdeck/desk' "not-found message lists tried locations"
+has "$OUT" 'ships in the SubDeck repository' "not-found message explains where Desk ships"
+has "$OUT" 'claude plugin marketplace add emiirhandemirci/SubDeck' "not-found message gives the marketplace add command"
+has "$OUT" 'Tried:.*marketplaces/subdeck/desk' "not-found message lists tried locations"
 
 # local-directory marketplace: Desk found through the path Claude Code records in known_marketplaces.json
 LOCALM="$(mktemp -d)"; cp -r "$DESK" "$LOCALM/desk"

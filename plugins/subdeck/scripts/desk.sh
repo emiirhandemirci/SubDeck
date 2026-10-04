@@ -76,7 +76,13 @@ case "$CMD" in
     if alive; then echo "SubDeck Desk: $(url)"; echo "$TIP"; exit 0; fi
     [ -n "$NODE_WARN" ] && echo "$NODE_WARN"
     DESK="$(find_desk)"
-    if [ -z "$DESK" ]; then echo "SubDeck Desk not found. Tried: \$SUBDECK_DESK_DIR (${SUBDECK_DESK_DIR:-unset}), $HERE/../../../desk, $MKT_DESK. Set SUBDECK_DESK_DIR to the desk/ folder of a SubDeck checkout."; exit 0; fi
+    if [ -z "$DESK" ]; then
+      echo "SubDeck Desk is not part of the plugin folder; it ships in the SubDeck repository."
+      echo "To get it, run: claude plugin marketplace add emiirhandemirci/SubDeck (this clones the repo; /subdeck:desk then finds it automatically)."
+      echo "Or clone the repo yourself and set SUBDECK_DESK_DIR to its desk/ folder."
+      echo "Tried: \$SUBDECK_DESK_DIR (${SUBDECK_DESK_DIR:-unset}), $HERE/../../../desk, $MKT_DESK"
+      exit 0
+    fi
     mkdir -p "$RT_DIR"
     rm -f "$RT"
     if is_windows; then
