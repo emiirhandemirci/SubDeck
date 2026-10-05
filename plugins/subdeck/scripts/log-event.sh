@@ -44,19 +44,21 @@ release() { [ "$HAVE_LOCK" = 1 ] && rm -rf "$LOCK" 2>/dev/null; HAVE_LOCK=0; }
 trap 'release' EXIT
 trap 'release; exit 0' INT TERM HUP
 
-printf -v START "%(%s)T" -1
+# epoch seconds into $1; bash < 4.2 (macOS /bin/bash 3.2) has no printf %(...)T
+now_s() { printf -v "$1" '%(%s)T' -1 2>/dev/null || printf -v "$1" '%s' "$(date +%s)"; }
+now_s START
 MISSING=0
 while :; do
   if mkdir "$LOCK" 2>/dev/null; then
     HAVE_LOCK=1
     # atomic owner write (tmp + mv): readers never see a partial line
-    printf -v OTS "%(%s)T" -1
+    now_s OTS
     printf '%s %s\n' "$$" "$OTS" > "$LOCK/owner.tmp" 2>/dev/null \
       && mv -f "$LOCK/owner.tmp" "$LOCK/owner" 2>/dev/null
     break
   fi
   # Stale lock detection (older than 10 s; or no owner file for ~2 s).
-  printf -v NOW "%(%s)T" -1
+  now_s NOW
   TS=""
   # accept only a complete line "<pid> <9+ digit epoch>"; anything else counts as missing
   OWNER=""

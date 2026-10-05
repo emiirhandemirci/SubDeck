@@ -43,7 +43,9 @@ eq "$(SUBDECK_ASCII=1 NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":
 
 # project_dir preferred, falls back to cwd; backslash-escaped JSON paths do not break parsing
 eq "$(NO_COLOR=1 bash "$SL" <<<"{\"cwd\":\"$P\"}")" "SubDeck ● 2 running  ◐ 1 waiting" "cwd fallback"
-eq "$(NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$E\",\"project_dir\":\"$P\"}}")" "SubDeck ● 2 running  ◐ 1 waiting" "project_dir with .subdeck wins over current_dir"
+# JSON built in a variable first: bash 3.2 (macOS) mangles this here-string when nested inside "$(...)" as an argument
+J2="{\"workspace\":{\"current_dir\":\"$E\",\"project_dir\":\"$P\"}}"
+eq "$(NO_COLOR=1 bash "$SL" <<<"$J2")" "SubDeck ● 2 running  ◐ 1 waiting" "project_dir with .subdeck wins over current_dir"
 eq "$(NO_COLOR=1 CLAUDE_PROJECT_DIR="$P" bash "$SL" <<<'{"workspace":{"current_dir":"Z:\nope\x"}}')" "SubDeck ● 2 running  ◐ 1 waiting" "unusable JSON path -> CLAUDE_PROJECT_DIR"
 
 # counts line stays machine-parsable (no failed records here)
@@ -75,7 +77,7 @@ grep -Eq '^[0-9]+ running=1 ' "$PCS/statusline.cache" && ok "cache: format '<epo
 ev "$(isoat -99)" SubagentStart r2rrrrrr "$T/s1.jsonl" >> "$PCS/events.jsonl"
 eq "$(cj)" "SubDeck ● 1 running" "cache: warm run reuses the old counts"
 eq "$(NO_COLOR=1 SUBDECK_STATUSLINE_TTL=0 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PC\"}}")" "SubDeck ● 2 running" "cache: TTL=0 bypasses it"
-sed -i 's/^[0-9]* /1 /' "$PCS/statusline.cache"
+sed "s/^[0-9]* /1 /" "$PCS/statusline.cache" > "$PCS/sc.tmp" && mv "$PCS/sc.tmp" "$PCS/statusline.cache"
 eq "$(cj)" "SubDeck ● 2 running" "cache: expired entry is recomputed"
 [ "$(ls "$PCS" | grep -c 'statusline.cache\.')" = 0 ] && ok "cache: no tmp leftovers" || bad "cache: tmp leftovers"
 printf 'junk' > "$PCS/statusline.cache"

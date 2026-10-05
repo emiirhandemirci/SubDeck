@@ -48,6 +48,10 @@ getval() { # file key -> value or empty
   [ -f "$1" ] || return 0
   tr -d '\r' < "$1" | grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed 's/^[^:]*:[[:space:]]*"//; s/"$//'
 }
+getpol() { # file key -> value from inside the modelPolicy object only, or empty
+  [ -f "$1" ] || return 0
+  members "$1" only 2>/dev/null | grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed 's/^[^:]*:[[:space:]]*"//; s/"$//'
+}
 valid_key() { case " $KEYS " in *" $1 "*) return 0 ;; esac; return 1; }
 valid_val() { # key value
   if [ "$1" = mode ]; then case "$2" in auto|named|current) return 0 ;; esac; return 1; fi
@@ -73,9 +77,9 @@ resolve() { # alias -> resolved id text
 
 # members FILE: print each top-level member of a JSON object on its own line (raw text), except modelPolicy.
 # Returns 1 when the file is not a well-formed JSON object; an absent or blank file has no members (returns 0).
-members() {
+members() { # FILE [only]: with "only", print just the modelPolicy member instead
   [ -f "$1" ] || return 0
-  tr -d '\r' < "$1" | tr '\n' ' ' | awk '
+  tr -d '\r' < "$1" | tr '\n' ' ' | awk -v only="$2" '
     { t = t $0 }
     END {
       gsub(/^[ \t]+|[ \t]+$/, "", t)
@@ -100,7 +104,7 @@ members() {
     }
     function emit() {
       gsub(/^[ \t]+|[ \t]+$/, "", cur)
-      if (cur != "" && cur !~ /^"modelPolicy"[ \t]*:/) print cur
+      if (cur != "" && ((only == "only") == (cur ~ /^"modelPolicy"[ \t]*:/))) print cur
       cur = ""
     }'
 }
@@ -146,9 +150,9 @@ show() {
   printf '%-11s %-24s %s\n' KEY VALUE SOURCE
   for k in $KEYS; do
     v="$(default_of "$k")"; src="default"
-    val="$(getval "$UFILE" "$k")"; if [ -n "$val" ]; then v="$val"; src="user"; fi
-    if [ -n "$LFILE" ]; then val="$(getval "$LFILE" "$k")"; if [ -n "$val" ]; then v="$val"; src="project"; fi; fi
-    val="$(getval "$PFILE" "$k")"; if [ -n "$val" ]; then v="$val"; src="project"; fi
+    val="$(getpol "$UFILE" "$k")"; if [ -n "$val" ]; then v="$val"; src="user"; fi
+    if [ -n "$LFILE" ]; then val="$(getpol "$LFILE" "$k")"; if [ -n "$val" ]; then v="$val"; src="project"; fi; fi
+    val="$(getpol "$PFILE" "$k")"; if [ -n "$val" ]; then v="$val"; src="project"; fi
     printf '%-11s %-24s %s\n' "$k" "$v" "$src"
     if [ "$k" != mode ]; then ids="$ids$k|$v"$'\n'; fi
   done
@@ -197,7 +201,7 @@ case "$CMD" in
     fi
     MERGED=()
     for k in $KEYS; do
-      val="$(getval "$TARGET" "$k")"
+      val="$(getpol "$TARGET" "$k")"
       for kv in "${NEW[@]}"; do if [ "${kv%%=*}" = "$k" ]; then val="${kv#*=}"; fi; done
       if [ -n "$val" ]; then MERGED+=("$k=$val"); fi
     done

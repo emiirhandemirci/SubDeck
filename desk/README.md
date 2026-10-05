@@ -26,7 +26,7 @@ node desk/server.mjs [--port N] [--days N] [--open] [--no-content]
 | Cline/Roo | `globalStorage` of the Cline and Roo extensions in VS Code family editors | Title is the first task text. Roo child tasks link to their parent. |
 | OpenCode | `$XDG_DATA_HOME/opencode` (default `~/.local/share/opencode`): `opencode.db`, older `storage/` | Needs Node 22.13+ for the database. |
 
-Tools that are not installed are hidden in the UI header (listed under a collapsed "not detected" hint). Newer adapters (Codex, Copilot, Gemini CLI, Cline/Roo, OpenCode) carry an `experimental` flag in `/api/sources`; the UI shows no label for it, only a tooltip on the header badge ("data format not yet verified on every platform").
+Tools that are not installed are hidden in the UI header (listed under a collapsed "not detected" hint). Adapters whose data format is not yet verified on every platform (Codex, Copilot, Gemini CLI, Cline/Roo, OpenCode) are flagged in `/api/sources`; the UI shows no label for them, only a tooltip on the header badge.
 
 Tool colours: Claude orange, Cursor blue, Codex teal, Copilot violet, Gemini pink, Cline/Roo yellow, OpenCode green.
 

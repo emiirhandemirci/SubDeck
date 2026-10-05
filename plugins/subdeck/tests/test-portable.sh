@@ -22,7 +22,7 @@ if grep -rq $'\r' "$PL/skills-portable" "$PL/.github" "$PL/hooks/copilot-plugin-
 for s in desk status settings orchestrator; do
   f="$PL/skills-portable/$s/SKILL.md"
   [ -f "$f" ] && head -1 "$f" | grep -qx -- '---' && grep -qx "name: $s" "$f" && grep -q '^description: ' "$f" && ok "$s: portable skill has name + description" || bad "$s: frontmatter"
-  grep -q 'CLAUDE_PLUGIN_ROOT\|CLAUDE_PROJECT_DIR\|^```!\|allowed-tools\|disable-model-invocation\|\$ARGUMENTS' "$f" && bad "$s: Claude-specific syntax left" || ok "$s: no Claude-specific syntax"
+  grep -Eq 'CLAUDE_PLUGIN_ROOT|CLAUDE_PROJECT_DIR|^```!|allowed-tools|disable-model-invocation|\$ARGUMENTS' "$f" && bad "$s: Claude-specific syntax left" || ok "$s: no Claude-specific syntax"
   grep -q 'subdeck:' "$f" && bad "$s: namespaced Claude names left" || ok "$s: no subdeck: names"
 done
 for s in desk status settings; do
@@ -48,7 +48,7 @@ if command -v node >/dev/null 2>&1; then
   jt "$H" '!JSON.stringify(j).includes("__ROOT__") && !JSON.stringify(j).includes("CLAUDE_PLUGIN_ROOT") && Object.values(j.hooks).every(a=>a.every(h=>/\$PLUGIN_ROOT/.test(h.bash)&&/\$env:PLUGIN_ROOT/.test(h.powershell)))'; [ $? = 0 ] && ok "copilot plugin hooks use PLUGIN_ROOT (bash + powershell)" || bad "copilot plugin hooks root variable"
   jt "$PL/hooks/hooks.json" 'JSON.stringify(j).includes("CLAUDE_PLUGIN_ROOT")'; [ $? = 0 ] && ok "Claude hooks.json untouched" || bad "Claude hooks.json"
 fi
-n=0; for f in "$PL"/agents/*.md; do b="$(basename "$f" .md)"; g="$PL/.github/agents/$b.agent.md"; [ -f "$g" ] && grep -qx "name: $b" "$g" && ! grep -q '^model:\|^effort:\|^memory:' "$g" && n=$((n+1)); done
+n=0; for f in "$PL"/agents/*.md; do b="$(basename "$f" .md)"; g="$PL/.github/agents/$b.agent.md"; [ -f "$g" ] && grep -qx "name: $b" "$g" && ! grep -Eq '^(model|effort|memory):' "$g" && n=$((n+1)); done
 [ "$n" = 7 ] && ok "7 Copilot agents, Claude-only keys dropped" || bad "copilot agents: $n"
 grep -qx 'tools: \["read", "search"\]' "$PL/.github/agents/researcher.agent.md" && ! grep -q '^tools:' "$PL/.github/agents/worker-sonnet.agent.md" && ok "copilot: researcher read-only, worker unrestricted" || bad "copilot tools"
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" -eq 0 ]

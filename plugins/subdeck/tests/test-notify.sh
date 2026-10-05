@@ -5,6 +5,7 @@ N="$HERE/../scripts/notify.sh"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "ok   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "FAIL $1"; }
+nowms() { node -e "console.log(Date.now())"; }
 has() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then ok "$3"; else bad "$3 (no match for: $2)"; printf '%s\n' "$1" | sed 's/^/     | /'; fi; }
 hasnt() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then bad "$3 (unexpected: $2)"; else ok "$3"; fi; }
 H="$(mktemp -d)"; P0="$(mktemp -d)"; P="$P0/my-proj"; mkdir -p "$P"
@@ -144,9 +145,9 @@ HOME="$H" bash "$N" hook >/dev/null 2>&1 </dev/null; [ $? -eq 0 ] && ok "hook wi
 HOME="$H" bash "$N" nonsense "$P" >/dev/null 2>&1; [ $? -eq 0 ] && ok "unknown subcommand exits 0" || bad "unknown subcommand failed"
 
 # runtime (real detached mode is not exercised here: dry-run path must be fast, and hook returns before the child ends)
-s=$(date +%s%N)
+s=$(nowms)
 printf '{}' | HOME="$H" SUBDECK_NOTIFY_DRYRUN=1 CLAUDE_PROJECT_DIR="$P" bash "$N" hook done >/dev/null
-e=$(date +%s%N); ms=$(( (e - s) / 1000000 ))
+e=$(nowms); ms=$(( e - s ))
 RT=3000; [ "${SUBDECK_PERF_STRICT:-0}" = 1 ] && RT=1000
 [ $ms -lt $RT ] && ok "hook runtime ${ms} ms (< $RT)" || bad "hook runtime ${ms} ms"
 # detached run with a slow fake powershell.exe: hook must return without waiting for it
@@ -155,9 +156,9 @@ FB="$(mktemp -d)"; printf '#!/usr/bin/env bash\nsleep 3\n' > "$FB/powershell.exe
 LIMIT=2500; [ "${SUBDECK_PERF_STRICT:-0}" = 1 ] && LIMIT=1000
 ms=999999
 for _ in 1 2 3; do
-  s=$(date +%s%N)
+  s=$(nowms)
   printf '{}' | HOME="$H" PATH="$FB:$PATH" SUBDECK_NOTIFY_OS=windows CLAUDE_PROJECT_DIR="$P" bash "$N" hook done >/dev/null 2>&1
-  e=$(date +%s%N); t=$(( (e - s) / 1000000 )); [ $t -lt $ms ] && ms=$t
+  e=$(nowms); t=$(( e - s )); [ $t -lt $ms ] && ms=$t
 done
 [ $ms -lt $LIMIT ] && ok "detached: hook returned in ${ms} ms (best of 3) while child sleeps 3 s" || bad "not detached (${ms} ms)"
 

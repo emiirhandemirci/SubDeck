@@ -10,7 +10,7 @@ fm()   { awk '/^---\r?$/{c++; next} c==1{print}' "$1" | tr -d '\r'; }
 
 for pair in worker-sonnet:worker-current researcher:researcher-current verifier:verifier-current; do
   named="${pair%%:*}"; cur="${pair##*:}"
-  if [ "$(body "$A/$named.md" | md5sum)" = "$(body "$A/$cur.md" | md5sum)" ]; then ok "$cur body identical to $named"; else bad "$cur body differs from $named"; fi
+  if [ "$(body "$A/$named.md" | cksum)" = "$(body "$A/$cur.md" | cksum)" ]; then ok "$cur body identical to $named"; else bad "$cur body differs from $named"; fi
   if fm "$A/$cur.md" | grep -qx 'model: inherit'; then ok "$cur has model: inherit"; else bad "$cur lacks model: inherit"; fi
   if fm "$A/$cur.md" | grep -qx "name: $cur"; then ok "$cur name matches"; else bad "$cur name wrong"; fi
   if grep -q $'\r' "$A/$cur.md"; then bad "$cur has CRLF"; else ok "$cur LF endings"; fi

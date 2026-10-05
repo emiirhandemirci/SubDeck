@@ -129,6 +129,13 @@ export async function main(argv = process.argv.slice(2)) {
   if (args.open) openBrowser(url);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+// Node resolves symlinks for the main module, so compare real paths (macOS tmpdir /var -> /private/var, symlinked installs).
+function isMain() {
+  if (!process.argv[1]) return false;
+  const self = fileURLToPath(import.meta.url);
+  try { return fs.realpathSync(process.argv[1]) === fs.realpathSync(self); }
+  catch { return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href; }
+}
+if (isMain()) {
   main().catch(e => { console.error(`SubDeck Desk failed: ${String(e && e.message).split('\n')[0]}`); process.exit(1); });
 }
