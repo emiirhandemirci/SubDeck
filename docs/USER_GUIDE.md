@@ -83,7 +83,7 @@ For a machine with no internet and no GitHub access (for example an intranet PC 
 
 On a machine with internet and a clone of SubDeck:
 
-1. `./make-offline-bundle.sh` (add `--ref v0.6.0` for a tag or commit). It writes `dist/SubDeck-<version>-offline.zip` from tracked files only, plus the installers, `INSTALL.cmd` and `OFFLINE-README.txt`, and prints the SHA-256. Copy the zip to the USB stick; compare the hash on the other side if you like (`Get-FileHash` / `sha256sum`).
+1. `./make-offline-bundle.sh` (add `--ref v0.6.1` for a tag or commit). It writes `dist/SubDeck-<version>-offline.zip` from tracked files only, plus the installers, `INSTALL.cmd` and `OFFLINE-README.txt`, and prints the SHA-256. Copy the zip to the USB stick; compare the hash on the other side if you like (`Get-FileHash` / `sha256sum`).
 
 On the offline machine (needs Claude Code, Git for Windows, and Node.js 22.13+ only for Desk):
 
@@ -182,6 +182,8 @@ Each agent also shows where its state came from. "Estimated from file activity" 
 **Context usage.** Each session and agent row has a thin bar: the last known context tokens divided by the model's window. Claude models are measured against their real window: Opus 4.7 and later, Sonnet 5 and later and Fable/Mythos against 1M, older models (Haiku, Sonnet 4.5 and earlier, Opus 4.5 and earlier) against 200k; a `[1m]` marker or a context above 200k also means 1M. When Desk cannot know the window (Opus or Sonnet 4.6 without a visible marker, bare aliases, unrecognised ids) and for other tools, it shows just the token count. The bar is neutral below 60%, amber from 60 to 85%, red above 85%, and the percentage is always printed. Each project shows the total tokens of its sessions and agents in the retention window. These are tokens, not cost, and the totals are approximate (per-session context can overlap across turns). Tools that report no usage show nothing.
 
 **Paths.** Desk never shows your home directory: paths in the project list, tooltips and the session "Data" row start with `~`, and a home directory inside free text (session titles, summaries, last activity, tool-call targets, prompts, final reports) is shown as `~` too. "Copy path" still copies the full real path.
+
+**Nested agents and failures.** Nested agents and Agent Teams appear under their parent. An agent that stops on an error (`StopFailure`) is shown as failed with the reason, and the session effort level is displayed.
 
 **Stop.** `/subdeck:desk stop`.
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1
+
+- **Guard hardening:** recursive deletes through PowerShell and cmd, backtick escapes and wrapper commands that take option arguments are now caught; deny/ask messages are neutral and short.
+- **Desk:** nested agents and Agent Teams are shown, a `StopFailure` is a failed agent with its reason, and the effort level is displayed.
+- **macOS portability:** epoch and field-separator fixes, portable `sed`, and a safer main-script check in the shell scripts; lookups are scoped to `modelPolicy`.
+- **Repository:** GitHub community files, CI, a plugin README and directory metadata; internal references removed from public files.
+
 ## 0.6.0
 
 - **Desk Settings tab and theme:** edit every `/subdeck:settings` key in the browser (selects, switches, list chips, scope All projects / This project, confirmation before turning a guard off). New System / Light / Dark switch and visual polish.

@@ -7,7 +7,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-emiirhandemirci-181717?logo=github&logoColor=white)](https://github.com/emiirhandemirci)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Emirhan_Demirci-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/emirhan-demirci-/)
 
-![version](https://img.shields.io/badge/version-0.6.0-6366f1)
+![version](https://img.shields.io/badge/version-0.6.1-6366f1)
 ![node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white)
 ![plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757)
 ![deps](https://img.shields.io/badge/dependencies-zero-22c55e)
@@ -79,6 +79,7 @@ Restart the tool, then try `/subdeck:status` or `/subdeck:desk` (Claude Code).
 - **State outside the repo:** events, notification log and project settings live in `~/.subdeck/projects/`, never in your project.
 - **No nested managers:** plugin agents cannot launch agents.
 - **Sandbox-friendly Desk:** `SUBDECK_HOME` sets the single data root Desk reads.
+- **Nested agents and failure reasons:** Desk shows nested agents and Agent Teams, marks a stopped-on-error agent as failed with its reason, and displays the effort level.
 
 ## SubDeck Desk
 
