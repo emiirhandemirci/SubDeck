@@ -189,3 +189,19 @@ test('project tokenTotal sums sessions and agents; null without usage data', asy
   assert.equal(byName.SubDeck, 1000);
   assert.equal(byName.Other, null);
 });
+
+test('nested sub-agents: depth follows the parent chain; effort passes through', async () => {
+  const a = adapter('claude-code', 'claude', ok([
+    sess({ tool: 'claude-code', nativeId: 'g', parentNativeId: 'c', depth: 1, effort: 'high' }),   // listed before its parent on purpose
+    sess({ tool: 'claude-code', nativeId: 'c', parentNativeId: 'p', depth: 1 }),
+    sess({ tool: 'claude-code', nativeId: 'p' }),
+  ]));
+  const core = createCore({ env, adapters: [a], now: () => NOW });
+  await core.scanAll();
+  const by = Object.fromEntries(core.snapshot().sessions.map(x => [x.nativeId, x]));
+  assert.deepEqual([by.p.depth, by.c.depth, by.g.depth], [0, 1, 2]);
+  assert.equal(by.g.parentId, 'claude.c');
+  assert.equal(by.g.effort, 'high');
+  assert.equal(by.p.effort, null);
+  JSON.stringify(core.snapshot());   // no circular refs
+});

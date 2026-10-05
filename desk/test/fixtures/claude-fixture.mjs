@@ -50,3 +50,14 @@ export function writeJsonl(file, records, { mtimeMs = null, crlf = false, traile
 export function writeMeta(transcriptFile, meta) {
   fs.writeFileSync(transcriptFile.replace(/\.jsonl$/, '.meta.json'), JSON.stringify(meta));
 }
+
+/** One line of events.jsonl as log-event.sh writes it. */
+export const hookEvent = (ts, event, { agentId = '', agentType = '', sessionId = 'sess-g', payload = {} } = {}) =>
+  JSON.stringify({ ts, event, agent_id: agentId, agent_type: agentType, transcript_path: '/x', session_id: sessionId, payload });
+
+/** Agent Team config (~/.claude/teams/<team>/config.json); members: [{ name, agentId, agentType? }]. */
+export function writeTeam(claudeDir, team, members) {
+  const dir = path.join(claudeDir, 'teams', team);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ name: team, members }));
+}

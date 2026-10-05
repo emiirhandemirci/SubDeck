@@ -75,3 +75,11 @@ export function classifyFailure(records) {
   if (turns >= STUCK_TURNS && edits === 0) return out('stuck');
   return out('unknown');
 }
+
+/** Maps a StopFailure hook error_type to a failure { kind, detail }; unrecognised or missing types give 'unknown'. */
+export function failureOfStopError(errorType) {
+  const e = String(errorType || '').toLowerCase();
+  if (/rate_limit|billing/.test(e)) return out('quota');
+  if (/server_error|authentication|invalid_request|max_output|api/.test(e)) return out('api');
+  return out('unknown');
+}
