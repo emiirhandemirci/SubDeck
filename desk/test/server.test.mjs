@@ -20,7 +20,7 @@ test('parseArgs', () => {
 });
 
 function start(home, extra = []) {
-  const env = { ...process.env, HOME: home, USERPROFILE: home, SUBDECK_CLAUDE_PROJECTS_DIR: path.join(home, 'none'), SUBDECK_DISABLE: 'cursor' };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, SUBDECK_HOME: home, SUBDECK_CLAUDE_PROJECTS_DIR: path.join(home, 'none'), SUBDECK_DISABLE: 'cursor' };
   const child = spawn(process.execPath, [SERVER, '--port', '0', ...extra], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   const firstLine = new Promise((resolve, reject) => {
     let buf = '';

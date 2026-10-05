@@ -163,6 +163,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid body' }); }
     if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.enabled !== 'boolean' || Object.keys(body).length !== 1) return json(res, 400, { error: 'body must be {"enabled": true|false}' });
     const w = writeNotifyEnabled(configFile, body.enabled);
+    settingsGen++; settingsCache.clear();   // the Settings tab reads this value; never serve a stale cached copy
     return w.ok ? json(res, 200, { enabled: w.enabled }) : json(res, 500, { error: w.error });
   }
 
