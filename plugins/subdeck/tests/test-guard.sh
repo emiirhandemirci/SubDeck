@@ -6,6 +6,8 @@ LAUNCH="$HERE/../scripts/run-hook.cmd"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "ok   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "FAIL $1"; }
+# wall clock in ms: bash 5 EPOCHREALTIME (no process start), else node (macOS bash 3.2 has no date +%N)
+nowms() { if [ -n "${EPOCHREALTIME:-}" ]; then local t="${EPOCHREALTIME/[.,]/}"; echo $(( 10#$t / 1000 )); else node -e "console.log(Date.now())"; fi; }
 has() { if printf '%s\n' "$1" | grep -Eq -- "$2"; then ok "$3"; else bad "$3 (no match for: $2)"; printf '%s\n' "$1" | sed 's/^/     | /'; fi; }
 H="$(mktemp -d)"; P="$(mktemp -d)"; mkdir -p "$P/sub" "$P/build"
 (cd "$P" && git init -q 2>/dev/null; git -C "$P" symbolic-ref HEAD refs/heads/main 2>/dev/null)
@@ -13,11 +15,11 @@ setbranch() { git -C "$P" symbolic-ref HEAD "refs/heads/$1"; }
 unset SUBDECK_GUARD SUBDECK_STATE_DIR SUBDECK_HOME
 
 esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/\\n}"; s="${s//$'\t'/\\t}"; printf '%s' "$s"; }
-bash_json() { printf '{"session_id":"s","cwd":"%s","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s","description":"d"},"tool_use_id":"t"}' "$(esc "${2:-$P}")" "$(esc "$1")"; }
+bash_json() { printf '{"session_id":"s","cwd":"%s","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"command":"%s","description":"d"},"tool_use_id":"t"}' "$(esc "${2:-$P}")" "${TOOL:-Bash}" "$(esc "$1")"; }
 file_json() { printf '{"session_id":"s","cwd":"%s","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"file_path":"%s","content":"x"},"tool_use_id":"t"}' "$(esc "$P")" "$1" "$(esc "$2")"; }
 decision() { # stdin payload -> deny|ask|allow ; also checks exit code 0 and valid shape
   local out rc
-  out="$(HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"; rc=$?
+  out="$(HOME="$H" CLAUDE_PROJECT_DIR="$P" OS="${TEST_OS-$OS}" bash "$G")"; rc=$?
   [ $rc -eq 0 ] || { echo "exit$rc"; return; }
   if [ -z "$out" ]; then echo allow; return; fi
   if ! printf '%s' "$out" | grep -Eq '^\{"hookSpecificOutput":\{"hookEventName":"PreToolUse","permissionDecision":"(deny|ask)","permissionDecisionReason":"[^"]*(\\"[^"]*)*"\}\}$'; then echo "badshape:$out"; return; fi
@@ -109,6 +111,120 @@ allow	rm -rf $SOME_UNKNOWN_VAR
 allow	git status
 allow	ls -la
 TABLE
+
+# ---- wrappers: options that take an argument are skipped with it ----
+while IFS=$'\t' read -r want cmd; do
+  [ -n "$want" ] || continue
+  expect "$want" "$cmd"
+done <<'TABLE'
+deny	sudo -u root git push --force
+deny	sudo -u root -g wheel git add -A
+deny	sudo --user root git push -f
+deny	sudo --user=root git push -f
+deny	sudo -Eu root rm -rf /
+deny	sudo -uroot git push --force
+deny	sudo -- git push --force
+deny	sudo -C 3 -h host -p pw git push -f
+deny	doas -u root rm -rf /
+deny	env -u FOO git push -f
+deny	env -i PATH=/usr/bin git add .
+deny	env - git push -f
+deny	env -C /tmp git push --force
+deny	nice -n 10 git push --force
+deny	nice --adjustment 5 git push -f
+deny	nice -10 rm -rf /
+deny	time -f %e git push -f
+deny	time -o /tmp/t.txt git push --force
+deny	command -p git push --force
+deny	timeout -s KILL 5 git push --force
+deny	timeout -k 5 10 git push -f
+deny	timeout --signal KILL 5 git push -f
+deny	timeout --signal=KILL 5 git push -f
+deny	stdbuf -o L git push -f
+deny	xargs -I {} rm -rf ~
+deny	exec -a name git push -f
+deny	nohup git push --force
+deny	sudo -u root nice -n 5 timeout -s TERM 9 git push -f
+ask	sudo -u deploy git push
+allow	sudo -u root git status
+allow	sudo apt-get install -y jq
+allow	sudo -u root rm -rf /tmp/cache
+allow	env -u FOO ls
+allow	nice -n 10 make
+allow	timeout -s KILL 5 make test
+allow	xargs -I {} rm -rf {}
+TABLE
+
+# ---- PowerShell tool: backtick escapes, backslash paths, Remove-Item/rd deletes of protected roots ----
+while IFS=$'\t' read -r want cmd; do
+  [ -n "$want" ] || continue
+  TOOL=PowerShell expect "$want" "${cmd//@P@/$P}" "PowerShell: ${cmd//@P@/<P>}"
+done <<'TABLE'
+deny	Remove-Item -Recurse -Force ~
+deny	Remove-Item -Recurse -Force $HOME
+deny	Remove-Item -Recurse -Force $Home\*
+deny	Remove-Item -Recurse -Force "$HOME\*"
+deny	Remove-Item -Recurse -Force $env:USERPROFILE
+deny	Remove-Item -LiteralPath "${env:USERPROFILE}" -Recurse -Force
+deny	ri -r -fo ~\
+deny	rm -r -Force @P@
+deny	rm -Recurse -Force .
+deny	Remove-Item -Recurse -Force ..
+deny	Remove-Item -Recurse:$true -Force ~
+deny	Remove-Item -Rec -Force build, ~
+deny	del -Recurse C:\
+deny	rmdir -Recurse -Force C:\*
+deny	Remove-Item -Path C:\ -Recurse
+deny	Remove-Item -Path:C:\ -Recurse
+deny	Remove-Item -Recurse -Force \
+deny	rm -rf ~
+deny	rd /s /q ~
+deny	cmd /c rd /s /q C:\
+deny	cmd /c "rmdir /s /q C:\"
+deny	cmd.exe /C del /s /q \
+deny	Set-Location sub; Remove-Item -Recurse ..\..
+deny	Remove-Item -Recurse -Force * -Include *
+deny	git push --force
+deny	git add -A
+ask	echo $(git push)
+allow	Remove-Item -Recurse -Force node_modules
+allow	Remove-Item -Recurse -Force .\build
+allow	Remove-Item -Recurse -Force @P@\build
+allow	rm -r -fo dist, out
+allow	Remove-Item ~\notes.txt
+allow	Remove-Item -Force ~
+allow	Remove-Item -Recurse -Force ~ -WhatIf
+allow	Remove-Item -Recurse -Path . -Include *.log
+allow	Remove-Item -Recurse -Filter *.tmp ~
+allow	Remove-Item -Recurse -Force C:\Users\me\other\build
+allow	rd /s /q build
+allow	cmd /c rd /s /q build
+allow	cmd /c dir C:\
+allow	Get-ChildItem -Recurse | Remove-Item
+allow	Write-Host "Use `git add -A` carefully"
+allow	Write-Host "line1`nline2"; git status
+allow	Write-Output "a`tb `$(git push)"
+allow	Write-Host "Path: C:\Users\x\"; Get-ChildItem
+allow	git commit -m "fix `"quoted`" thing" -- a.txt
+allow	git log --oneline | Select-String push
+allow	Get-Content .\README.md
+TABLE
+TOOL=PowerShell expect deny $'git push `\n  --force origin main' "PowerShell: backtick line continuation is joined"
+TOOL=PowerShell expect deny $'git push `\r\n  --force origin main' "PowerShell: backtick CRLF continuation is joined"
+expect ask 'echo `git push`' "Bash: backticks are still command substitution"
+expect allow 'echo "\`git push -f\`"' "Bash: escaped backticks are literal"
+
+# ---- messages: neutral wording, how to change the rule ----
+msg() { bash_json "$1" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G"; }
+out="$(msg 'git add -A')"
+has "$out" 'git-add-all.*Stage explicit paths' "git-add-all reason is actionable"
+printf '%s' "$out" | grep -q 'other agents' && bad "git-add-all reason mentions other agents" || ok "git-add-all reason is neutral"
+has "$out" 'To change this rule: /subdeck:settings set git-add-all=ask\|off' "deny reason tells how to change the rule"
+has "$(msg 'git push')" 'To change this rule: /subdeck:settings set push=ask\|off \(or protect-branches=' "push (branches mode) reason tells how to change the rule"
+has "$(msg 'git reset --hard HEAD~1')" 'To change this rule: /subdeck:settings set history-rewrite=deny\|off' "ask reason tells how to change the rule"
+out="$(msg 'git push')"
+printf '%s' "$out" | grep -q 'explicit user approval' && bad "push reason uses old wording" || ok "push reason is neutral"
+has "$(msg 'rm -rf ~')" 'rm-rf-danger.*Delete specific subdirectories' "rm-rf-danger reason is actionable"
 
 # multi-line commands, heredocs, env assignments
 expect deny  $'echo hi\ngit add .' "newline-separated git add ."
@@ -283,13 +399,11 @@ ask	sed -ni 's/a/b/p' CLAUDE.md
 ask	echo y | tee CLAUDE.md
 ask	bash -c "echo x > CLAUDE.md"
 ask	true && rm yarn.lock
-ask	rm SUB/../claude.MD
 ask	Remove-Item CLAUDE.md
 ask	Remove-Item -Path migrations -Recurse
 ask	dd if=/dev/zero of=CLAUDE.md
 ask	truncate -s 0 CLAUDE.md
 ask	rm docs/SPEC.md
-ask	rm src/locked/a.txt
 allow	cat CLAUDE.md
 allow	grep foo CLAUDE.md > out.txt
 allow	echo x > notes.md
@@ -316,8 +430,15 @@ expect_file ask   Edit  "$P/sub/CLAUDE.md"
 expect_file ask   MultiEdit "$P/.github/workflows/ci.yml"
 expect_file ask   Write "$P/migrations/2024/001.sql"
 expect_file ask   Write "$P/yarn.lock"
-expect_file ask   Write "$P/docs/spec.md"
-expect_file ask   Write "$P/claude.md"
+# case-insensitive matching applies on Windows only
+TEST_OS=Windows_NT expect ask 'rm SUB/../claude.MD' "Windows: rm SUB/../claude.MD"
+TEST_OS=Windows_NT expect ask 'rm src/locked/a.txt' "Windows: rm src/locked/a.txt"
+TEST_OS=Windows_NT expect_file ask Write "$P/docs/spec.md"
+TEST_OS=Windows_NT expect_file ask Write "$P/claude.md"
+if [ "$OS" != Windows_NT ]; then
+  TEST_OS= expect allow 'rm SUB/../claude.MD' "POSIX: protected-path match is case-sensitive"
+  TEST_OS= expect_file allow Write "$P/claude.md"
+fi
 expect_file allow Write "$P/CLAUDE.md.bak"
 expect_file allow Write "$P/.github/dependabot.yml"
 expect_file allow Write "$P/src/migrations.js"
@@ -435,7 +556,7 @@ has "$got" '"permissionDecision":"ask".*current branch could not be determined' 
 rmdir "$NR" 2>/dev/null
 # reason text names the cause and the settings key
 got="$(bash_json 'git push origin main' | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
-has "$got" 'pushing to the protected branch main.*set push=off' "branches: ask reason names the branch"
+has "$got" 'pushing to the protected branch main.*set push=ask\|off' "branches: ask reason names the branch"
 # modes ask / off / deny
 cfg "$UC" '{"guard":{"rules":{"push":"ask"}}}'
 expect ask   'git push origin feature/x'        "mode ask: every push asks"
@@ -487,8 +608,8 @@ if [ "${SUBDECK_PERF_STRICT:-0}" = 1 ]; then LIM1=400; LIM2=1500; else LIM1=1500
 best_ms() { # runs payload -> minimum wall ms
   local n="$1" pl="$2" i s e m best=999999
   for i in $(seq "$n"); do
-    s=$(date +%s%N); printf '%s' "$pl" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G" > /dev/null; e=$(date +%s%N)
-    m=$(( (e - s) / 1000000 )); [ "$m" -lt "$best" ] && best=$m
+    s=$(nowms); printf '%s' "$pl" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G" > /dev/null; e=$(nowms)
+    m=$(( e - s )); [ "$m" -lt "$best" ] && best=$m
   done
   echo "$best"
 }
