@@ -7,8 +7,8 @@
 [![GitHub](https://img.shields.io/badge/GitHub-emiirhandemirci-181717?logo=github&logoColor=white)](https://github.com/emiirhandemirci)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Emirhan_Demirci-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/emirhan-demirci-/)
 
-![version](https://img.shields.io/badge/version-0.6.0-6366f1)
-![node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white)
+![version](https://img.shields.io/badge/version-0.6.1-6366f1)
+![node](https://img.shields.io/badge/node-%E2%89%A5%2020-339933?logo=nodedotjs&logoColor=white)
 ![plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757)
 ![deps](https://img.shields.io/badge/dependencies-zero-22c55e)
 ![license](https://img.shields.io/badge/license-MIT-blue)
@@ -17,7 +17,14 @@
 
 </div>
 
-SubDeck is a Claude Code plugin marketplace for running a **manager session with sub-agents**. The manager delegates to worker, researcher and verifier agents and reads short reports. You get a live, IDE-independent view of what every agent is doing. Everything is deterministic (hooks, bash, awk); the model is never called just to produce status.
+SubDeck works **alongside** Claude Code's built-in Agent View (`claude agents`) and Agent Teams. It does not replace them. It adds one local, read-only view across several tools, plus a manager rulebook for running sub-agents.
+
+- **One view across tools:** Claude Code and Cursor (stable); Codex, Copilot, Gemini CLI, Cline/Roo and OpenCode (experimental).
+- **Waiting list:** every session blocked on you, what it waits for, and for how long.
+- **Changed files per agent,** with "also changed by" badges when two agents edit the same file (Claude Code).
+- **Context bars** per session and token totals per project (tokens, not cost).
+- **Manager rulebook and guard:** worker, researcher and verifier agents, plus a deterministic hook that blocks risky commands (a guard rail, not a sandbox).
+- **Zero dependencies, no telemetry, `127.0.0.1` only.** Everything is deterministic (hooks, bash, awk); the model is never called just to produce status.
 
 <p align="center">
   <img src="docs/assets/how-it-works.webp" alt="One prompt to the manager starts three sub-agents (worker, researcher, verifier) in parallel, and they show up live in SubDeck Desk" width="800">
@@ -134,8 +141,8 @@ flowchart LR
 
 ## Quick start
 
-1. Install the plugin (see below).
-2. In your project, copy `plugins/subdeck/templates/CLAUDE.local.md.template` to `CLAUDE.local.md` (private, git-ignored) and fill in the placeholders.
+1. Install the plugin (see [Install](#install) above).
+2. In your project, copy the template to `CLAUDE.local.md` (marketplace installs have it at `~/.claude/plugins/marketplaces/subdeck/plugins/subdeck/templates/CLAUDE.local.md.template`; from a clone it is `plugins/subdeck/templates/CLAUDE.local.md.template`) (private, git-ignored) and fill in the placeholders.
 3. Start Claude Code and run `/subdeck:desk` to open the dashboard. The manager rulebook loads on its own when a session delegates.
 
 SubDeck keeps its per-project records outside your project, in `~/.subdeck/projects/<name>-<hash>/` (events, notification log, status-line cache, project settings). Nothing is written into your repository, so no `.gitignore` entry is needed. `SUBDECK_STATE_DIR` moves that root; `SUBDECK_HOME` moves `~/.subdeck`. Older versions wrote `<project>/.subdeck/`; SubDeck still reads it (its project settings apply below the new ones) but never writes or deletes it. When you no longer need it: `rm -rf <project>/.subdeck`.
@@ -149,7 +156,7 @@ SubDeck keeps its per-project records outside your project, in `~/.subdeck/proje
 These three are the whole command surface. Launching agents and pushing go through the manager, which follows the rulebook (`/subdeck:orchestrator` opens it by hand). Coming from 0.4? `task` and `pr` are now manager rules; `models`, `notify`, `guard` and `statusline` are keys of `/subdeck:settings`. See the [User Guide](docs/USER_GUIDE.md#4-commands).
 
 <details>
-<summary><b>Install</b></summary>
+<summary><b>Install from a local checkout</b></summary>
 
 Local marketplace (persistent), inside a Claude Code session:
 
@@ -170,7 +177,7 @@ Check the manifests with `claude plugin validate .` and `claude plugin validate 
 - Agents: `worker-sonnet` (default), `worker-opus` (critical work only), `researcher` (read-only), `verifier` (no commits), plus `*-current` variants that inherit the session model.
 - Hooks: `SubagentStart` / `SubagentStop` write events to `~/.subdeck/projects/<name>-<hash>/`; `Stop` / `Notification` send desktop notifications; `PreToolUse` runs the guard.
 - Scripts: event logger, `status.sh` (bash + awk), `run-hook.cmd` (Windows/POSIX launcher). Templates: `CLAUDE.local.md.template`, `decision.md.template`.
-- Requirements: Bash and awk (Git Bash on Windows), Claude Code with plugin support, git. Desk needs Node 22.13 or newer.
+- Requirements: Bash and awk (Git Bash on Windows), Claude Code with plugin support, git. Desk needs Node 20 or newer to start; Cursor, Codex and OpenCode (SQLite) need Node 22.13+.
 </details>
 
 ## Limits
@@ -185,9 +192,29 @@ What SubDeck does not do:
 - **The status line is Claude Code only.**
 - **No cost or quota tracking.** Desk shows tokens and context fill, not money or plan limits.
 
+## FAQ
+
+**How is this different from Claude Code Agent View?**
+Agent View (`claude agents`) is Anthropic's own terminal view of your Claude Code background sessions, and Agent Teams coordinates teammates inside Claude Code. SubDeck does not replace either. Desk is a local web page that also reads Cursor (and, experimentally, Codex, Copilot, Gemini CLI, Cline/Roo and OpenCode), lists per-agent changed files with "also changed by" conflict badges, and shows context bars. The plugin adds a manager rulebook and a guard. Use whichever combination helps.
+
+**Does it send data anywhere?**
+No. Desk binds `127.0.0.1`, reads local session files read-only, has no telemetry and no dependencies, and never calls a model.
+
+**Is the guard a sandbox?**
+No. It is a guard rail: a deterministic hook that blocks common mistakes. Aliases, shell variables, other interpreters and scripts can get around it.
+
+**Does it track cost?**
+No. Desk shows tokens and context fill only, not money or plan limits.
+
+**Does it write into my repository?**
+No. Events, the notification log, the status-line cache and project settings live in `~/.subdeck/projects/<name>-<hash>/`, so no `.gitignore` entry is needed. Settings are changed with `/subdeck:settings` or in the Desk Settings tab.
+
+**Will the guard stop my agents from pushing?**
+Only where it matters by default: with `push=branches` a push asks for approval when it targets a protected branch (`protect-branches`, default `main,master,release/*`), a tag, or uses `--all`/`--mirror`; other pushes go through. Force pushes are always denied. `/subdeck:settings set push=ask` asks for every push, `push=off` turns the check off.
+
 ## Status
 
-v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 added notifications, guard rules and the Desk context-usage bar; v0.5 cut the commands to three; v0.6 adds the Desk Settings tab, the branch-aware push guard and state outside the repository. Roadmap and decision records live in `internal/design.md` and `internal/decisions/` (private, maintainers only).
+v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 added notifications, guard rules and the Desk context-usage bar; v0.5 cut the commands to three; v0.6 adds the Desk Settings tab, the branch-aware push guard and state outside the repository. Roadmap: see [CHANGELOG.md](CHANGELOG.md) and GitHub issues.
 
 ## License
 

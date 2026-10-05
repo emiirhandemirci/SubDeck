@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.1
+
+- **macOS:** bash 3.2 fixes in the event logger (epoch time falls back to `date +%s`) and the status table (field separator); Desk starts when launched through a symlinked path; the portable generator and plugin tests work on macOS.
+- **Desk:** transcript content is read incrementally with a bounded cache and a guard against same-inode rewrites. Desk tolerates Claude Code Agent Teams, nested agents, `StopFailure` events and the `effort` field.
+- **Guard hardening:** neutral deny/ask messages that end with how to change the rule; PowerShell recursive deletes on protected roots and backtick escapes are caught; options of wrappers such as `sudo`, `env`, `nice` and `time` are skipped when finding the real command.
+- **Settings:** `models.sh` looks up values only inside the `modelPolicy` object; a same-named key elsewhere is ignored.
+- **`/subdeck:desk`:** starts on Node 20+ (warns below 22.13) and prints a friendlier hint when Desk is not found.
+- **Docs:** README is positioned alongside Agent View and has an FAQ; new plugin README; manifest directory metadata.
+- **Project:** GitHub issue templates, SECURITY, CONTRIBUTING, and CI on Linux, macOS and Windows.
+
 ## 0.6.0
 
 - **Desk Settings tab and theme:** edit every `/subdeck:settings` key in the browser (selects, switches, list chips, scope All projects / This project, confirmation before turning a guard off). New System / Light / Dark switch and visual polish.

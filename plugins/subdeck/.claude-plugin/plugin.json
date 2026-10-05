@@ -1,7 +1,13 @@
 {
   "name": "subdeck",
-  "version": "0.6.0",
+  "displayName": "SubDeck",
+  "version": "0.6.1",
   "license": "MIT",
   "description": "Manager plus sub-agents toolkit for Claude Code: worker agents, orchestrator skill, live status, and hooks.",
-  "author": { "name": "Emirhan Demirci" }
+  "author": { "name": "Emirhan Demirci", "url": "https://github.com/emiirhandemirci" },
+  "homepage": "https://github.com/emiirhandemirci/SubDeck#readme",
+  "repository": "https://github.com/emiirhandemirci/SubDeck",
+  "documentationUrl": "https://github.com/emiirhandemirci/SubDeck/blob/main/docs/USER_GUIDE.md",
+  "supportUrl": "https://github.com/emiirhandemirci/SubDeck/issues",
+  "keywords": ["subagents", "orchestration", "agents", "dashboard", "hooks", "guard", "multi-agent", "observability"]
 }

@@ -1,0 +1,55 @@
+name: Bug report
+description: Something in SubDeck (plugin or Desk) does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not paste secrets or full transcripts.** Session files can contain API keys, tokens and private code. Redact anything sensitive before posting.
+  - type: input
+    id: tool
+    attributes:
+      label: Tool and version
+      description: Which AI coding tool is involved, and its version.
+      placeholder: Claude Code 2.x
+    validations:
+      required: true
+  - type: input
+    id: subdeck-version
+    attributes:
+      label: SubDeck version
+      placeholder: "0.6.1"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 14 / Ubuntu 24.04 / Windows 11
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node -v` (relevant for Desk).
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Redacted sample of the session-file shape (optional)
+      description: If the bug is about parsing, paste one or two JSON lines with all values, paths and content replaced by placeholders. Keep keys and structure only.
+      render: json

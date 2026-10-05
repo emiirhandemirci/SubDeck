@@ -48,12 +48,12 @@ collect() {
   done
 }
 
-# Fold: sort by ts (stable), then one record per agent, fields separated by \001.
+# Fold: sort by ts (stable), then one record per agent, fields separated by \037.
 fold() {
   collect | tr -d '\r' | awk '
-    /^\{/ { if (match($0, /"ts":"[^"]*"/)) print substr($0, RSTART + 6, RLENGTH - 7) "\001" $0 }' |
-  LC_ALL=C sort -s -t $'\001' -k1,1 |
-  awk -F $'\001' -v now="$NOW" -v off="$OFF" -v all="$ALL" '
+    /^\{/ { if (match($0, /"ts":"[^"]*"/)) print substr($0, RSTART + 6, RLENGTH - 7) "\037" $0 }' |
+  LC_ALL=C sort -s -t $'\037' -k1,1 |
+  awk -F $'\037' -v now="$NOW" -v off="$OFF" -v all="$ALL" '
   function field(s, name,   r) {
     if (match(s, "\"" name "\":\"([^\"\\\\]|\\\\.)*\"")) {
       r = substr(s, RSTART, RLENGTH); sub("^\"" name "\":\"", "", r); sub(/"$/, "", r); return r
@@ -261,7 +261,7 @@ fold() {
     if (!(g in gpath)) { gpath[g] = ""; for (sp in path) if (sess(sp) == g) { gpath[g] = parentof(sp); break } }
     w = ""
     if (state == "running") { w = ntf["a:" id] + 0; if (ntf["s:" sess(id)] + 0 > w) w = ntf["s:" sess(id)] + 0; if (w <= st[id]) w = "" }
-    printf "%s\001%s\001%s\001%s\001%s\001%s\001%s\001%s\001%s\001%s\001%s\n", id, (id in type ? type[id] : "-"), (st[id] ? hms(st[id]) : "-"), dur(d), state, agentpath(id), g, gpath[g], (d < 0 ? 0 : d), w, (id in msg ? msg[id] : "")
+    printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n", id, (id in type ? type[id] : "-"), (st[id] ? hms(st[id]) : "-"), dur(d), state, agentpath(id), g, gpath[g], (d < 0 ? 0 : d), w, (id in msg ? msg[id] : "")
   }'
 }
 
@@ -444,10 +444,10 @@ if [ "$COUNTS" = 1 ]; then
   FILES=()
   RL=""
   NL=$'\n'
-  FS1=$'\001'
+  FS1=$'\037'
   BS=$'\134'
   if [ -n "$ROWS" ]; then
-    while IFS=$'\001' read -r id type start dur state path sid spath secs wts msg; do
+    while IFS=$'\037' read -r id type start dur state path sid spath secs wts msg; do
       if [ "$state" = failed ]; then RL="${RL}X${NL}"; continue; fi
       if [ "$state" != running ]; then RL="${RL}F${NL}"; continue; fi
       np="${path//"$BS$BS"//}"; np="${np//"$BS"//}"   # backslashes (single or doubled) to /, no fork
@@ -465,12 +465,12 @@ if [ "$COUNTS" = 1 ]; then
       [ "${#FILES[@]}" -eq 1 ] && FILES+=(/dev/null)
       tail -n 1 "${FILES[@]}" 2>/dev/null
     fi
-  } | awk -F $'\001' -v now="$NOW" -v stale="$((STALE_MIN * 60))" '
+  } | awk -F $'\037' -v now="$NOW" -v stale="$((STALE_MIN * 60))" '
     /^@@STAT$/ { mode = "stat"; next }
     /^@@TAIL$/ { mode = "tail"; next }
     mode == "" && /^F$/ { fin++; next }
     mode == "" && /^X$/ { failn++; next }
-    mode == "" && /^R\001/ { n++; ex[n] = $2; secs[n] = $3 + 0; wts[n] = $4; np[n] = $5; next }
+    mode == "" && /^R\037/ { n++; ex[n] = $2; secs[n] = $3 + 0; wts[n] = $4; np[n] = $5; next }
     mode == "stat" { i = index($0, " "); if (i > 1) mt[substr($0, i + 1)] = substr($0, 1, i - 1) + 0; next }
     mode == "tail" {
       sub(/\r$/, "")
@@ -525,7 +525,7 @@ esac
 STALE_MIN="${SUBDECK_STALE_MIN:-5}"
 case "$STALE_MIN" in ""|*[!0-9]*) STALE_MIN=5 ;; esac
 prev="<none>"
-while IFS=$'\001' read -r id type start dur state path sid spath secs wts msg; do
+while IFS=$'\037' read -r id type start dur state path sid spath secs wts msg; do
   if [ "$sid" != "$prev" ]; then
     [ "$prev" != "<none>" ] && echo
     st="$(session_title "$sid" "$(norm_path "$spath")")"

@@ -18,7 +18,7 @@ import gemini from './adapters/gemini.mjs';
 import cline from './adapters/cline.mjs';
 import opencode from './adapters/opencode.mjs';
 
-export const VERSION = '0.6.0';
+export const VERSION = '0.6.1';
 export const ADAPTERS = [claudeCode, cursor, codex, copilot, gemini, cline, opencode];
 const DEFAULT_PORT = 4917;
 const PORT_TRIES = 20;
@@ -129,6 +129,13 @@ export async function main(argv = process.argv.slice(2)) {
   if (args.open) openBrowser(url);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+// Node resolves symlinks for the main module, so compare real paths (macOS tmpdir /var -> /private/var, symlinked installs).
+function isMain() {
+  if (!process.argv[1]) return false;
+  const self = fileURLToPath(import.meta.url);
+  try { return fs.realpathSync(process.argv[1]) === fs.realpathSync(self); }
+  catch { return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href; }
+}
+if (isMain()) {
   main().catch(e => { console.error(`SubDeck Desk failed: ${String(e && e.message).split('\n')[0]}`); process.exit(1); });
 }

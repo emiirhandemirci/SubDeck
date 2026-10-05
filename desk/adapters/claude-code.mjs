@@ -5,7 +5,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { clip } from '../lib/model.mjs';
 import { projectKey, stateDirs } from '../lib/paths.mjs';
-import { classifyFailure } from './claude-failure.mjs';
+import { classifyFailure, FAILURE_DETAIL } from './claude-failure.mjs';
 
 export const HEAD_BYTES = 65536;
 export const TAIL_BYTES = 65536;
@@ -176,11 +176,11 @@ export function completionsOf(o) {
   return out;
 }
 
-/** Latest completion per agent id. Incremental: only bytes appended since the last scan are read (cache key c:<file>). */
-export async function readCompletions(file, st, cache) {
+/** Incremental parent/agent transcript scan (cache key c:<file>): completions per agent id plus ids of agents it spawned. */
+async function scanSpawns(file, st, cache) {
   const key = 'c:' + file;
   let c = cache.get(key);
-  if (!c || st.size < c.offset) c = { offset: 0, agents: new Map() };
+  if (!c || st.size < c.offset) c = { offset: 0, agents: new Map(), children: new Set() };
   if (st.size > c.offset) {
     const fh = await fs.open(file, 'r');
     try {
@@ -199,7 +199,9 @@ export async function readCompletions(file, st, cache) {
           if (!line.includes('task-notification') && !(line.includes('"toolUseResult"') && line.includes('"agentId"'))) continue;
           let o; try { o = JSON.parse(line); } catch { continue; }
           if (!o || typeof o !== 'object') continue;
+          if (o.toolUseResult && typeof o.toolUseResult === 'object' && typeof o.toolUseResult.agentId === 'string') c.children.add(o.toolUseResult.agentId);
           for (const d of completionsOf(o)) {
+            c.children.add(d.agentId);
             const prev = c.agents.get(d.agentId);
             if (!prev || Date.parse(d.at) >= Date.parse(prev.at)) c.agents.set(d.agentId, d);
           }
@@ -210,8 +212,14 @@ export async function readCompletions(file, st, cache) {
     } finally { await fh.close(); }
   }
   cache.set(key, c);
-  return c.agents;
+  return c;
 }
+
+/** Latest completion per agent id. Incremental: only bytes appended since the last scan are read (cache key c:<file>). */
+export async function readCompletions(file, st, cache) { return (await scanSpawns(file, st, cache)).agents; }
+
+/** Ids of the agents a transcript spawned (Agent tool results and task notifications); used to find the real parent of a nested sub-agent. */
+export async function readSpawned(file, st, cache) { return (await scanSpawns(file, st, cache)).children; }
 
 // appended to desk/adapters/claude-code.mjs
 
@@ -237,6 +245,14 @@ async function readMeta(file, cache) {
   return value;
 }
 
+/** Reasoning effort from a hook payload: `effort.level` (documented object form) or a plain string. null when absent or unusable. */
+export function effortOf(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const v = payload.effort;
+  const level = typeof v === 'string' ? v : v && typeof v === 'object' && typeof v.level === 'string' ? v.level : null;
+  return clip(level, 20);
+}
+
 /**
  * Reads events.jsonl + events.d/*.json from the project's state dir (~/.subdeck/projects/<key>/, see
  * lib/paths.mjs stateDirs) and from a legacy <project>/.subdeck/; events of both are merged.
@@ -247,9 +263,11 @@ export async function readHooks(projectPath, cache, env) {
   const agents = new Map();
   const notifs = new Map();   // 's:<sessionId>' or 'a:<agentId>' -> latest waiting-type Notification time
   const notifTypes = new Map();   // same keys -> notification_type of that latest one
+  const fails = new Map();   // same keys -> latest StopFailure { ts, errorType }
+  const efforts = new Map();   // same keys -> latest effort level seen in a hook payload
   const dirs = [];
   for (const d of candidates) { const st = await statOrNull(d); if (st && st.isDirectory()) dirs.push(d); }
-  if (!dirs.length) return { agents, notifs, notifTypes, bad: 0, dir: null, dirs };
+  if (!dirs.length) return { agents, notifs, notifTypes, fails, efforts, bad: 0, dir: null, dirs };
   const files = [];
   for (const dir of dirs) {
     files.push(path.join(dir, 'events.jsonl'));
@@ -279,11 +297,17 @@ export async function readHooks(projectPath, cache, env) {
           agentType: typeof e.agent_type === 'string' ? e.agent_type : null,
           sessionId: typeof e.session_id === 'string' ? e.session_id : null,
           transcriptPath: typeof e.transcript_path === 'string' ? e.transcript_path : null }));
-      c = { sig, events, notes, bad: p.bad };
+      const keyOf = e => (typeof e.agent_id === 'string' && e.agent_id ? 'a:' + e.agent_id : typeof e.session_id === 'string' && e.session_id ? 's:' + e.session_id : null);
+      const failed = p.records.filter(e => e.event === 'StopFailure' && toIso(e.ts) && keyOf(e))
+        .map(e => ({ key: keyOf(e), ts: toIso(e.ts), errorType: e.payload && typeof e.payload.error_type === 'string' ? e.payload.error_type : null }));
+      const effs = p.records.filter(e => toIso(e.ts) && keyOf(e) && effortOf(e.payload)).map(e => ({ key: keyOf(e), ts: toIso(e.ts), level: effortOf(e.payload) }));
+      c = { sig, events, notes, failed, effs, bad: p.bad };
       cache.set('h:' + f, c);
     }
     bad += c.bad;
     for (const n of c.notes) if (!notifs.get(n.key) || n.ts > notifs.get(n.key)) { notifs.set(n.key, n.ts); notifTypes.set(n.key, n.type); }
+    for (const f of c.failed) if (!fails.get(f.key) || f.ts > fails.get(f.key).ts) fails.set(f.key, { ts: f.ts, errorType: f.errorType });
+    for (const f of c.effs) if (!efforts.get(f.key) || f.ts >= efforts.get(f.key).ts) efforts.set(f.key, { ts: f.ts, level: f.level });
     for (const e of c.events) {
       const a = agents.get(e.agentId) || { start: null, lastStart: null, stop: null, agentType: null, sessionId: null, transcriptPath: null };
       if (e.event === 'SubagentStart') { a.start = earlier(a.start, e.ts); if (!a.lastStart || Date.parse(e.ts) > Date.parse(a.lastStart)) a.lastStart = e.ts; }
@@ -294,7 +318,7 @@ export async function readHooks(projectPath, cache, env) {
       agents.set(e.agentId, a);
     }
   }
-  return { agents, notifs, notifTypes, bad, dir: dirs[0], dirs };
+  return { agents, notifs, notifTypes, fails, efforts: new Map([...efforts].map(([k, v]) => [k, v.level])), bad, dir: dirs[0], dirs };
 }
 
 function subTitle(meta, agentId) {
@@ -335,7 +359,22 @@ export function resumedAfterStop(hook, stamps) {
   return best;
 }
 
-function subBasis(hook, mtimeIso, done, wait) {
+/** A StopFailure hook event newer than the last transcript write means the turn ended in an error (rate limit, billing, ...). */
+export function failedBasis(fail, mtimeMs) {
+  if (!fail) return null;
+  const t = Date.parse(fail.ts);
+  return Number.isFinite(t) && mtimeMs < t + 2000 ? { kind: 'fixed', state: 'failed', stateSource: 'hook' } : null;
+}
+
+/** Failure reason from a StopFailure hook's error_type (rate_limit, billing_error, server_error, ...). */
+export function hookFailure(fail) {
+  const t = String((fail && fail.errorType) || '');
+  const kind = /rate|limit|billing|quota|overload/i.test(t) ? 'quota' : /time.?out/i.test(t) ? 'timeout' : 'api';
+  return { kind, detail: FAILURE_DETAIL[kind] };
+}
+
+function subBasis(hook, mtimeIso, done, wait, fail = null) {
+  if (fail) return fail;
   if (done && done.state === 'failed') return { kind: 'fixed', state: 'failed', stateSource: 'field' };   // explicit failure of the latest run wins over a Stop hook
   if (hook && hook.stop) return { kind: 'fixed', state: 'finished', stateSource: 'hook' };
   if (done) return { kind: 'fixed', state: done.state, stateSource: 'field' };
@@ -344,7 +383,7 @@ function subBasis(hook, mtimeIso, done, wait) {
   return { kind: 'mtime', at: mtimeIso, stateSource: 'mtime' };
 }
 
-// ---- on-demand content (decision 0020): read only when the user opens an agent; never cached, never listed ----
+// ---- on-demand content: read only when the user opens an agent; never listed; parsed state cached per file, bounded ----
 export const PROMPT_MAX = 20000;
 export const REPORT_MAX = 20000;
 export const TOOL_CALLS_MAX = 500;
@@ -361,49 +400,102 @@ export function toolTarget(input) {
 const textOf = c => (typeof c === 'string' ? c : Array.isArray(c) ? c.filter(b => b && b.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n') : '');
 const capText = (s, max) => { const a = Array.from(s); return a.length > max ? { text: a.slice(0, max).join(''), truncated: true } : { text: s, truncated: false }; };
 
-/** Streams one transcript and returns { prompt, promptTruncated, toolCalls, toolCallsTruncated, toolCallTotal, finalReport } or null when the file is unreadable. */
+const CONTENT_CACHE_MAX = 20;
+const CONTENT_CHUNK = 1 << 20;
+const contentCache = new Map();   // `${subagent}|${file}` -> { dev, ino, offset, state }; Map order = LRU order
+
+const newContentState = () => ({ prompt: null, finalReport: null, total: 0, calls: [], byId: new Map() });
+function cloneContentState(st) {
+  const calls = st.calls.map(e => ({ ...e }));
+  const byId = new Map();
+  for (const [k, v] of st.byId) { const i = st.calls.indexOf(v); if (i >= 0) byId.set(k, calls[i]); }
+  return { prompt: st.prompt, finalReport: st.finalReport, total: st.total, calls, byId };
+}
+
+/** Folds one transcript line into the parsed state. */
+function applyContentLine(st, line, subagent) {
+  if (!line.trim()) return;
+  let r; try { r = JSON.parse(line); } catch { return; }
+  if (!r || typeof r !== 'object' || !r.message || typeof r.message !== 'object') return;
+  const c = r.message.content;
+  if (r.type === 'user') {
+    if (isToolResultUser(c)) {
+      for (const b of c) if (b && b.type === 'tool_result' && st.byId.has(b.tool_use_id)) st.byId.get(b.tool_use_id).ok = b.is_error !== true;
+    } else if (st.prompt === null && (subagent || !r.isMeta)) {
+      const t = textOf(c);
+      if (t.trim() && (subagent || !t.startsWith('<local-command') && !t.startsWith('<command-name>'))) st.prompt = t;
+    }
+  } else if (r.type === 'assistant') {
+    const at = toIso(r.timestamp);
+    const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
+    const t = textOf(blocks);
+    if (t.trim()) st.finalReport = t;
+    for (const b of blocks) {
+      if (!b) continue;
+      if (b.type === 'tool_use' || b.type === 'thinking') {
+        st.total++;
+        const e = b.type === 'thinking' ? { at, tool: 'Thinking', target: '', ok: null }
+          : { at, tool: typeof b.name === 'string' ? b.name : 'tool', target: toolTarget(b.input), ok: null };
+        st.calls.push(e);
+        if (b.type === 'tool_use' && typeof b.id === 'string') st.byId.set(b.id, e);
+        if (st.calls.length > TOOL_CALLS_MAX) { const old = st.calls.shift(); for (const [k, v] of st.byId) if (v === old) { st.byId.delete(k); break; } }
+      }
+    }
+  }
+}
+
+function contentResult(st) {
+  const p = capText(st.prompt || '', PROMPT_MAX);
+  return { prompt: st.prompt === null ? null : p.text, promptTruncated: p.truncated, toolCalls: st.calls.map(e => ({ ...e })), toolCallsTruncated: st.total > st.calls.length, toolCallTotal: st.total,
+    finalReport: st.finalReport === null ? null : capText(st.finalReport, REPORT_MAX).text };
+}
+
+/** Parses one transcript and returns { prompt, promptTruncated, toolCalls, toolCallsTruncated, toolCallTotal, finalReport } or null when the file is unreadable.
+ *  Incremental: the parsed state and the byte offset after the last complete line are cached per file (bounded LRU); a call reads only appended bytes.
+ *  The cache entry is dropped when the file shrank or was replaced (different dev/ino). A trailing unterminated line is parsed for the result but not committed. */
+export const contentReadStats = { bytes: 0 };   // test observable: transcript bytes read by readContent (excludes the small guard probes)
+const GUARD = 64;
+async function probe(fh, from, to) {
+  const n = Math.max(0, to - from);
+  if (!n) return Buffer.alloc(0);
+  const b = Buffer.alloc(n);
+  const { bytesRead } = await fh.read(b, 0, n, from);
+  return b.subarray(0, bytesRead);
+}
 export async function readContent(file, { subagent }) {
   let fh;
   try { fh = await fs.open(file, 'r'); } catch { return null; }
-  let prompt = null, finalReport = null, total = 0;
-  const calls = [];
-  const byId = new Map();
   try {
-    const rl = readline.createInterface({ input: fh.createReadStream({ encoding: 'utf8' }), crlfDelay: Infinity });
-    for await (const line of rl) {
-      if (!line.trim()) continue;
-      let r; try { r = JSON.parse(line); } catch { continue; }
-      if (!r || typeof r !== 'object' || !r.message || typeof r.message !== 'object') continue;
-      const c = r.message.content;
-      if (r.type === 'user') {
-        if (isToolResultUser(c)) {
-          for (const b of c) if (b && b.type === 'tool_result' && byId.has(b.tool_use_id)) byId.get(b.tool_use_id).ok = b.is_error !== true;
-        } else if (prompt === null && (subagent || !r.isMeta)) {
-          const t = textOf(c);
-          if (t.trim() && (subagent || !t.startsWith('<local-command') && !t.startsWith('<command-name>'))) prompt = t;
-        }
-      } else if (r.type === 'assistant') {
-        const at = toIso(r.timestamp);
-        const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
-        const t = textOf(blocks);
-        if (t.trim()) finalReport = t;
-        for (const b of blocks) {
-          if (!b) continue;
-          if (b.type === 'tool_use' || b.type === 'thinking') {
-            total++;
-            const e = b.type === 'thinking' ? { at, tool: 'Thinking', target: '', ok: null }
-              : { at, tool: typeof b.name === 'string' ? b.name : 'tool', target: toolTarget(b.input), ok: null };
-            calls.push(e);
-            if (b.type === 'tool_use' && typeof b.id === 'string') byId.set(b.id, e);
-            if (calls.length > TOOL_CALLS_MAX) { const old = calls.shift(); for (const [k, v] of byId) if (v === old) { byId.delete(k); break; } }
-          }
-        }
-      }
+    const key = `${subagent ? 1 : 0}|${file}`;
+    const stat = await fh.stat();
+    let ent = contentCache.get(key);
+    contentCache.delete(key);
+    if (ent && (ent.dev !== stat.dev || ent.ino !== stat.ino || stat.size < ent.offset)) ent = null;
+    // same-inode rewrite guard: the first and last GUARD bytes before the cached offset must be unchanged
+    if (ent && ent.offset > 0 && !(ent.head.equals(await probe(fh, 0, ent.head.length)) && ent.tail.equals(await probe(fh, ent.offset - ent.tail.length, ent.offset)))) ent = null;
+    if (!ent) ent = { dev: stat.dev, ino: stat.ino, offset: 0, head: Buffer.alloc(0), tail: Buffer.alloc(0), state: newContentState() };
+    let pos = ent.offset, carry = Buffer.alloc(0);
+    const buf = Buffer.allocUnsafe(CONTENT_CHUNK);
+    while (pos < stat.size) {
+      const { bytesRead } = await fh.read(buf, 0, Math.min(CONTENT_CHUNK, stat.size - pos), pos);
+      if (bytesRead <= 0) break;
+      pos += bytesRead;
+      contentReadStats.bytes += bytesRead;
+      let data = carry.length ? Buffer.concat([carry, buf.subarray(0, bytesRead)]) : Buffer.from(buf.subarray(0, bytesRead));
+      const nl = data.lastIndexOf(0x0a);
+      if (nl < 0) { carry = data; continue; }
+      const complete = data.subarray(0, nl + 1);
+      carry = Buffer.from(data.subarray(nl + 1));
+      for (const line of complete.toString('utf8').split('\n')) applyContentLine(ent.state, line, subagent);
+      ent.offset = pos - carry.length;
     }
+    if (ent.offset > 0) { ent.head = await probe(fh, 0, Math.min(GUARD, ent.offset)); ent.tail = await probe(fh, Math.max(0, ent.offset - GUARD), ent.offset); }
+    let state = ent.state;
+    if (carry.length) { state = cloneContentState(ent.state); applyContentLine(state, carry.toString('utf8'), subagent); }
+    contentCache.set(key, ent);
+    while (contentCache.size > CONTENT_CACHE_MAX) contentCache.delete(contentCache.keys().next().value);
+    return contentResult(state);
   } finally { await fh.close(); }
-  const p = capText(prompt || '', PROMPT_MAX);
-  return { prompt: prompt === null ? null : p.text, promptTruncated: p.truncated, toolCalls: calls, toolCallsTruncated: total > calls.length, toolCallTotal: total,
-    finalReport: finalReport === null ? null : capText(finalReport, REPORT_MAX).text };
 }
 
 // ---- changed files (on demand like readContent: read only when requested, never cached, stored or logged) ----
@@ -494,6 +586,22 @@ export async function readChangeFile(file, env, filePath) {
   return { path: hits[0].path, edits, total: ops.length, truncated };
 }
 
+/** Agent Team members from <claude dir>/teams/<team>/config.json: agentId -> { name, agentType, team }. Only ids and names are kept. */
+export async function readTeams(dir) {
+  const members = new Map();
+  for (const t of await readdirSafe(dir)) {
+    if (!t.isDirectory()) continue;
+    let o; try { o = JSON.parse(await fs.readFile(path.join(dir, t.name, 'config.json'), 'utf8')); } catch { continue; }
+    if (!o || typeof o !== 'object' || !Array.isArray(o.members)) continue;
+    for (const m of o.members) {
+      if (!m || typeof m !== 'object' || typeof m.agentId !== 'string' || !m.agentId) continue;
+      members.set(m.agentId, { name: typeof m.name === 'string' ? m.name : null, agentType: typeof m.agentType === 'string' ? m.agentType : null, team: t.name });
+    }
+  }
+  return members;
+}
+const isLead = (agentType, member) => agentType === 'team-lead' || (member && member.agentType === 'team-lead');
+
 async function scan(env, { cache }) {
   const cutoff = env.now() - env.days * 86400000;
   let skipped = 0;
@@ -520,13 +628,30 @@ async function scan(env, { cache }) {
       const top = await readTranscript(file, st, cache, { growIfNoUsage: false });
       skipped += top.bad;
       const completions = subs.length ? await readCompletions(file, st, cache) : new Map();
+      const byAgent = new Map(subs.map(s => [s.agentId, s]));
+      for (const s of subs) {
+        // nested sub-agents: the transcript that spawned an agent (Agent tool result / task notification) is its real parent
+        s.spawned = await readSpawned(s.file, s.st, cache);
+        s.comps = await readCompletions(s.file, s.st, cache);
+      }
+      for (const s of subs) {
+        s.parentAgent = null;
+        for (const p of subs) if (p !== s && p.spawned.has(s.agentId)) { s.parentAgent = p.agentId; break; }
+      }
+      for (const s of subs) {   // a cycle (should never happen) falls back to the session as parent
+        const seenIds = new Set([s.agentId]);
+        for (let p = s.parentAgent; p; p = byAgent.get(p).parentAgent) {
+          if (seenIds.has(p)) { s.parentAgent = null; break; }
+          seenIds.add(p);
+        }
+      }
       for (const s of subs) {
         s.tr = await readTranscript(s.file, s.st, cache, { growIfNoUsage: true });
         s.meta = await readMeta(s.file.replace(/\.jsonl$/, '.meta.json'), cache);
         skipped += s.tr.bad;
       }
       const projectPath = top.cwd || (subs.find(s => s.tr.cwd) || {}).tr?.cwd || null;
-      groups.push({ uuid, file, st, top, subs, completions, projectPath, projectLabel: projectPath ? null : slug.name });
+      groups.push({ uuid, file, st, top, subs, completions, byAgent, projectPath, projectLabel: projectPath ? null : slug.name });
     }
   }
   // hook events, once per project
@@ -541,52 +666,65 @@ async function scan(env, { cache }) {
     skipped += h.bad;
     for (const d of h.dirs) watchExtra.push(d);
   }
+  const teams = await readTeams(path.join(path.dirname(env.claudeProjectsDir), 'teams'));
   const sessions = [];
   for (const g of groups) {
     const hookInfo = g.projectPath ? hooksByKey.get(projectKey(g.projectPath, env.platform)) : null;
     const hooks = hookInfo ? hookInfo.agents : new Map();
     const notifs = hookInfo ? hookInfo.notifs : new Map();
     const notifTypes = hookInfo ? hookInfo.notifTypes : new Map();
+    const fails = hookInfo ? hookInfo.fails : new Map();
+    const efforts = hookInfo ? hookInfo.efforts : new Map();
     const base = { tool: 'claude-code', projectPath: g.projectPath, projectLabel: g.projectLabel, archived: false };
     const mt = msToIso(g.st.mtimeMs);
     const title = clip(g.top.customTitle, 120) ? { title: clip(g.top.customTitle, 120), titleSource: 'explicit' }
       : clip(g.top.aiTitle, 120) ? { title: clip(g.top.aiTitle, 120), titleSource: 'summary' }
       : { title: `Session ${g.uuid.slice(0, 8)}`, titleSource: 'fallback' };
-    sessions.push({ ...base, nativeId: g.uuid, parentNativeId: null, depth: 0, ...title, agentType: null, model: g.top.model,
+    sessions.push({ ...base, nativeId: g.uuid, parentNativeId: null, depth: 0, ...title, agentType: null, model: g.top.model, effort: efforts.get('s:' + g.uuid) || null,
       createdAt: g.top.createdAt || msToIso(g.st.birthtimeMs || g.st.mtimeMs), updatedAt: mt, endedAt: null,
       tokens: { context: g.top.tokens, total: null }, lastActivity: g.top.lastActivity,
-      refs: { file: g.file, db: null, key: null },
-      stateBasis: waitingBasis(g.top.pending, notifs.get('s:' + g.uuid), g.st.mtimeMs, mt, notifTypes.get('s:' + g.uuid)) || { kind: 'mtime', at: mt, stateSource: 'mtime' } });
+      refs: { file: g.file, db: null, key: null }, ...(failedBasis(fails.get('s:' + g.uuid), g.st.mtimeMs) ? { failure: hookFailure(fails.get('s:' + g.uuid)) } : {}),
+      stateBasis: failedBasis(fails.get('s:' + g.uuid), g.st.mtimeMs) || waitingBasis(g.top.pending, notifs.get('s:' + g.uuid), g.st.mtimeMs, mt, notifTypes.get('s:' + g.uuid)) || { kind: 'mtime', at: mt, stateSource: 'mtime' } });
     const seen = new Set();
     for (const s of g.subs) {
       seen.add(s.agentId);
+      const member = teams.get(s.agentId) || null;
+      if (isLead(s.meta && s.meta.agentType, member)) continue;   // the team lead is the main session, not an agent
       const rawHook = hooks.get(s.agentId);
       const resumed = resumedAfterStop(rawHook, s.tr.stamps);
       const hook = resumed ? { ...rawHook, stop: null } : rawHook;
       const smt = msToIso(s.st.mtimeMs);
-      let notif = g.completions.get(s.agentId);
+      const parentSub = s.parentAgent ? g.byAgent.get(s.parentAgent) : null;
+      let notif = [g.completions.get(s.agentId), parentSub && parentSub.comps.get(s.agentId)].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
       if (resumed && notif && Date.parse(notif.at) < Date.parse(resumed)) notif = null;   // belongs to the run before the resume
       let done = latestCompletion(s.tr, notif);
       if (resumed && done && Date.parse(done.at) < Date.parse(resumed)) done = null;   // that end belongs to the run before the resume
       const runStartedAt = (hook && hook.stop) ? null : (resumed && !(done && done.state)) ? resumed : ((done && done.runStartedAt) || (resumed) || s.tr.runStartedAt || null);
-      sessions.push({ ...base, nativeId: s.agentId, parentNativeId: g.uuid, depth: 1, ...subTitle(s.meta, s.agentId),
-        agentType: (s.meta && s.meta.agentType) || (hook && hook.agentType) || null,
+      const fail = fails.get('a:' + s.agentId);
+      const failB = failedBasis(fail, s.st.mtimeMs);
+      sessions.push({ ...base, nativeId: s.agentId, parentNativeId: s.parentAgent || g.uuid, depth: 1, ...(member && member.name ? { title: clip(member.name, 120), titleSource: 'meta' } : subTitle(s.meta, s.agentId)),
+        agentType: (s.meta && s.meta.agentType) || (hook && hook.agentType) || (member && member.agentType) || null,
+        effort: efforts.get('a:' + s.agentId) || null,
         model: s.tr.model || (s.meta && s.meta.model) || null,
         createdAt: earlier(s.tr.createdAt, hook && hook.start) || smt, updatedAt: smt, endedAt: (hook && hook.stop) || (done && done.at) || null,
         ...(runStartedAt ? { runStartedAt } : {}),
         tokens: { context: s.tr.tokens, total: null }, lastActivity: s.tr.lastActivity,
-        refs: { file: s.file, db: null, key: null }, failure: s.tr.failure, stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt, notifTypes.get('a:' + s.agentId))) });
+        refs: { file: s.file, db: null, key: null }, failure: failB && (!s.tr.failure || s.tr.failure.kind === 'unknown') ? hookFailure(fail) : s.tr.failure,
+        stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt, notifTypes.get('a:' + s.agentId)), failB) });
     }
     for (const [agentId, hook] of hooks) {
       if (seen.has(agentId) || hook.sessionId !== g.uuid) continue;
       // Stop-only hook events with no start, no agent type and no transcript file (seen is built from the files on disk) are not agents
       if (!hook.start && !hook.agentType) continue;
+      const member = teams.get(agentId) || null;
+      if (isLead(hook.agentType, member)) continue;   // lead events carry no sub-agent of their own
       const derived = hook.transcriptPath ? path.join(path.dirname(hook.transcriptPath), g.uuid, 'subagents', `agent-${agentId}.jsonl`) : null;
       sessions.push({ ...base, nativeId: agentId, parentNativeId: g.uuid, depth: 1,
-        title: clip(hook.agentType, 120) || `agent ${agentId.slice(0, 8)}`, titleSource: 'fallback',
-        agentType: hook.agentType, model: null, createdAt: hook.start || hook.stop, updatedAt: hook.stop || hook.start,
+        ...(member && member.name ? { title: clip(member.name, 120), titleSource: 'meta' } : { title: clip(hook.agentType, 120) || `agent ${agentId.slice(0, 8)}`, titleSource: 'fallback' }),
+        agentType: hook.agentType || (member && member.agentType) || null, effort: efforts.get('a:' + agentId) || null, model: null, createdAt: hook.start || hook.stop, updatedAt: hook.stop || hook.start,
         endedAt: hook.stop || null, tokens: { context: null, total: null }, lastActivity: null,
-        refs: { file: derived, db: null, key: null }, stateBasis: subBasis(hook, null) });
+        refs: { file: derived, db: null, key: null }, ...(fails.get('a:' + agentId) ? { failure: hookFailure(fails.get('a:' + agentId)) } : {}),
+        stateBasis: subBasis(hook, null, null, null, failedBasis(fails.get('a:' + agentId), 0)) });
     }
   }
   return { sessions, skipped, notes: [], watchExtra };

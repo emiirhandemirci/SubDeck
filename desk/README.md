@@ -8,7 +8,7 @@ A local web dashboard that shows what your AI coding agents are doing: projects,
 node desk/server.mjs [--port N] [--days N] [--open] [--no-content]
 ```
 
-- Needs Node 20 or newer; Cursor, Codex and OpenCode (SQLite) need Node 22.13+ (built-in `node:sqlite`).
+- Needs Node 20 or newer to start; Cursor, Codex and OpenCode (SQLite) need Node 22.13+ (built-in `node:sqlite`).
 - Binds `127.0.0.1` only. Default port 4917, falling back to 4918-4936; `--port N` is exact (exit 1 if busy); `--port 0` picks any free port.
 - `--days N` sets the retention window (1-365, default 14). `--open` opens the browser. `--no-content` disables the agent content endpoint.
 - A second start prints the URL of the running instance. Runtime file: `~/.subdeck/desk.json` (`pid`, `port`, `startedAt`, `version`).
@@ -18,7 +18,7 @@ node desk/server.mjs [--port N] [--days N] [--open] [--no-content]
 
 | Tool | Location | Notes |
 |---|---|---|
-| Claude Code | `~/.claude/projects/` transcripts, plus SubDeck hook events from `~/.subdeck/projects/<key>/` (`SUBDECK_STATE_DIR` moves that root) and a legacy `<project>/.subdeck/` | Sub-agents are read from `subagents/`. The model column shows the real id from the last assistant record. |
+| Claude Code | `~/.claude/projects/` transcripts, plus SubDeck hook events from `~/.subdeck/projects/<key>/` (`SUBDECK_STATE_DIR` moves that root) and a legacy `<project>/.subdeck/` | Sub-agents are read from `subagents/`. The model column shows the real id from the last assistant record. Nested sub-agents appear under the agent that spawned them (found from the Agent tool results in its transcript). A `StopFailure` hook event, when logged to the project's `events.jsonl`, shows the session or agent as failed until its transcript is written again; its `error_type` becomes the failure reason when the transcript gives none. Agent Team teammates are named after their entry in `~/.claude/teams/<team>/config.json`; the `team-lead` entry is the main session and is not listed as an agent. Unknown hook events and new payload fields are ignored. Each session and agent carries `effort` (string or `null`), taken from `effort.level` in logged hook payloads; the UI does not show it yet. |
 | Cursor | `state.vscdb` under the Cursor user directory | Opened read-only; retried when Cursor holds a lock. |
 | Codex | `$CODEX_HOME` (default `~/.codex`): `state_N.sqlite` index and `sessions/` rollout files | Needs Node 22.13+. Rollout event names and sub-agent status values are unverified. |
 | Copilot | CLI: `$COPILOT_HOME/session-state` (default `~/.copilot`); VS Code Chat: `chatSessions` under the VS Code user directory | A live `inuse` lock file marks running CLI sessions (state source `lock`). VS Code Chat gives title, times and request count only. |
@@ -69,4 +69,4 @@ node --test "desk/test/*.test.mjs"
 bash plugins/subdeck/tests/test-desk-launcher.sh
 ```
 
-Design: see this README. Design notes, decision records 0015 to 0019 and the smoke check on real data live in `internal/` (private, maintainers only).
+Design: see this README.

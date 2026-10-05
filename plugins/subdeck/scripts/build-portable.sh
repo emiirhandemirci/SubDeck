@@ -67,7 +67,7 @@ d="$OUT/skills-portable/orchestrator"; mkdir -p "$d"
         -e 's#"\${CLAUDE_PLUGIN_ROOT}/scripts/#"<skill dir>/../../scripts/#g' \
         -e 's#`/subdeck:\([a-z]*\)`#the `\1` skill#g' \
         -e 's#/subdeck:\([a-z]*\)#the \1 skill#g' \
-        -e 's#subdeck:\(worker\|researcher\|verifier\)#\1#g' \
+        -e 's#subdeck:worker#worker#g' -e 's#subdeck:researcher#researcher#g' -e 's#subdeck:verifier#verifier#g' \
         -e 's#subdeck:<agent>#<agent>#g'
 } > "$d/SKILL.md"
 cp "$SRC/skills/orchestrator/pr-facts.sh" "$d/pr-facts.sh"

@@ -28,7 +28,10 @@
 #   dd of=, sed -i, git rm/mv/restore/checkout -- <path>, PowerShell Remove-Item/Move-Item/Copy-Item.
 # This is a guard rail, not a sandbox: it reads the command text only. Chains (&& || ; | & newline),
 #   quoting, $(...) and backticks (also inside double quotes), heredoc bodies (skipped), env assignments,
-#   sudo/env/nohup/timeout prefixes, git -C/-c, `bash|sh -c "..."` and `eval` are handled. Known bypasses:
+#   sudo/doas/env/nice/time/timeout/stdbuf/xargs/nohup prefixes (with option arguments: sudo -u root), git -C/-c,
+#   `bash|sh -c "..."` and `eval` are handled. PowerShell tool: backtick is the escape character, backslash a path
+#   separator; Remove-Item/ri/rm/del/rd/rmdir -Recurse (or /s, also via cmd /c) of a protected root is rm-rf-danger.
+#   Known bypasses:
 #   git aliases, scripts/Makefiles, variables holding commands or paths ($X push, rm -rf "$DIR"),
 #   other interpreters (python -c, node -e), find -delete, writing secret/protected files via the shell.
 #   Protected paths also escape through shell globs or variables in targets (rm CLA*), perl -pi, patch,
@@ -255,19 +258,26 @@ function tokenize(cmd, d,  n, i, c, nx, m) {
     if (m == "s") { if (c == "\047") SP--; else WD = WD c; continue }
     if (m == "d") {
       if (c == "\"") { SP--; continue }
-      if (c == "\\") {
+      if (PSM && c == "`") { nx = substr(cmd, i + 1, 1); i++; if (nx != "\n") WD = WD nx; continue }
+      if (!PSM && c == "\\") {
         nx = substr(cmd, i + 1, 1)
         if (nx == "\"" || nx == "\\" || nx == "$" || nx == "`") { WD = WD nx; i++; continue }
         if (nx == "\n") { i++; continue }
         WD = WD c; continue
       }
       if (c == "$" && substr(cmd, i + 1, 1) == "(") { i++; push("c", d); continue }
-      if (c == "`") { push("b", d); continue }
+      if (c == "`" && !PSM) { push("b", d); continue }
       WD = WD c; continue
     }
     if (c == "\047") { push("s", d); HASW = 1; continue }
     if (c == "\"") { push("d", d); HASW = 1; continue }
-    if (c == "\\") { nx = substr(cmd, i + 1, 1); i++; if (nx != "\n") { WD = WD nx; HASW = 1 } continue }
+    if (PSM && c == "`") {
+      nx = substr(cmd, i + 1, 1); i++
+      if (nx == "\r" && substr(cmd, i + 1, 1) == "\n") i++
+      else if (nx != "\n") { WD = WD nx; HASW = 1 }
+      continue
+    }
+    if (c == "\\" && !PSM) { nx = substr(cmd, i + 1, 1); i++; if (nx != "\n") { WD = WD nx; HASW = 1 } continue }
     if (c == " " || c == "\t" || c == "\r") { flush(d); continue }
     if (c == "#" && !HASW && WD == "") { while (i < n && substr(cmd, i + 1, 1) != "\n") i++; continue }
     if (c == "$" && substr(cmd, i + 1, 1) == "(") { i++; push("c", d); continue }
@@ -438,19 +448,19 @@ function pp_prepare(  i, g, anc, a, n, j, an) {
   }
   PPON = 1
 }
-# target path relative to the project root; "\001" when outside it or unknown
+# target path relative to the project root; OUTSIDE (a control character, never part of a path) when outside it or unknown
 function pp_rel(p,  r, bl, rl) {
-  r = resolve(p); if (r == "" || PROJN == "") return "\001"
+  r = resolve(p); if (r == "" || PROJN == "") return OUTSIDE
   rl = r; bl = PROJN
   if (WIN) { rl = tolower(rl); bl = tolower(bl) }
   if (rl == bl) return ""
   if (bl !~ /\/$/) bl = bl "/"
   if (substr(rl, 1, length(bl)) == bl) return substr(rl, length(bl) + 1)
-  return "\001"
+  return OUTSIDE
 }
 function pp_check(p, destr,  r, i) {
   if (!PPON || p == "") return
-  r = pp_rel(p); if (r == "\001") return
+  r = pp_rel(p); if (r == OUTSIDE) return
   for (i = 1; i <= NPL; i++) {
     if (r != "" && r ~ PRE[i]) { pp_hit(p, i); return }
     if (destr && PANC[i] != "" && (r == "" || PANC[i] == r || substr(PANC[i], 1, length(r) + 1) == r "/")) { pp_hit(p, i); return }
@@ -506,17 +516,30 @@ function seg(d, id,  nw, k, x, cmd, j, str) {
   while (k <= nw) {
     x = W[d, id, k]
     if (x ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { k++; continue }
-    if (x ~ /^(sudo|command|builtin|nohup|time|exec|then|do|else|elif|if|while|until|!|\{|\}|nice|env|stdbuf|xargs|doas)$/) {
-      k++; while (k <= nw && W[d, id, k] ~ /^-/) k++
-      continue
-    }
-    if (x == "timeout") { k++; while (k <= nw && W[d, id, k] ~ /^-/) k++; k++; continue }
+    # wrappers: skip their options, including the argument of options that take one (sudo -u root)
+    if (x == "sudo") { k = wopts(d, id, k + 1, nw, "ugCDhpURrtT", "^--(user|group|close-from|chdir|host|prompt|chroot|role|type|command-timeout|other-user)$"); continue }
+    if (x == "doas") { k = wopts(d, id, k + 1, nw, "uC", ""); continue }
+    if (x == "env") { k = wopts(d, id, k + 1, nw, "uCS", "^--(unset|chdir|split-string)$"); continue }
+    if (x == "nice") { k = wopts(d, id, k + 1, nw, "n", "^--adjustment$"); continue }
+    if (x == "time") { k = wopts(d, id, k + 1, nw, "fo", "^--(format|output)$"); continue }
+    if (x == "exec") { k = wopts(d, id, k + 1, nw, "a", ""); continue }
+    if (x == "stdbuf") { k = wopts(d, id, k + 1, nw, "ioe", "^--(input|output|error)$"); continue }
+    if (x == "xargs") { k = wopts(d, id, k + 1, nw, "adEILnPs", "^--(arg-file|delimiter|max-args|max-procs|max-chars|process-slot-var)$"); continue }
+    if (x == "timeout") { k = wopts(d, id, k + 1, nw, "sk", "^--(signal|kill-after)$") + 1; continue }
+    if (x ~ /^(command|builtin|nohup|then|do|else|elif|if|while|until|!|\{|\})$/) { k = wopts(d, id, k + 1, nw, "", ""); continue }
     break
   }
   if (k > nw) return
   cmd = x; sub(/.*[\/\\]/, "", cmd); cmd = tolower(cmd); sub(/\.exe$/, "", cmd)
   if (PPON) prot_cmd(cmd, d, id, k + 1, nw)
   if (cmd == "git") git_seg(d, id, k + 1, nw)
+  else if (PSM && cmd ~ /^(rm|remove-item|ri|del|erase|rd|rmdir)$/) ps_rm_seg(d, id, k + 1, nw)
+  else if (PSM && cmd == "cmd") {
+    # cmd /c "rd /s /q dir": check the command string (cmd.exe also keeps backslashes literal)
+    for (j = k + 1; j <= nw; j++) if (tolower(W[d, id, j]) ~ /^\/[ck]$/) break
+    str = ""; for (j++; j <= nw; j++) str = str " " W[d, id, j]
+    if (str != "") analyze(str, d + 1)
+  }
   else if (cmd == "rm") rm_seg(d, id, k + 1, nw)
   else if (cmd == "cd" || cmd == "pushd") {
     x = (k + 1 <= nw) ? W[d, id, k + 1] : "~"
@@ -530,6 +553,19 @@ function seg(d, id,  nw, k, x, cmd, j, str) {
     str = ""; for (j = k + 1; j <= nw; j++) str = str " " W[d, id, j]
     analyze(str, d + 1)
   }
+}
+# skip a wrapper\047s options from word k; sa: short options that take an argument, la: regex of long ones
+function wopts(d, id, k, nw, sa, la,  x, j, len) {
+  while (k <= nw) {
+    x = W[d, id, k]
+    if (x == "--") return k + 1
+    if (x !~ /^-/) return k
+    k++
+    if (x ~ /^--/) { if (la != "" && x ~ la) k++; continue }
+    len = length(x)
+    for (j = 2; j <= len; j++) if (index(sa, substr(x, j, 1))) { if (j == len) k++; break }
+  }
+  return k
 }
 function git_seg(d, id, k, nw,  x, sc, i, j, ch, len, force, dd, npos, noop, cdir, hard) {
   cdir = CUR
@@ -639,6 +675,37 @@ function rm_seg(d, id, k, nw,  i, x, rec, dd, nt, tg) {
   if (NOPRES) { hit("rm-rf-danger"); return }
   for (i = 1; i <= nt; i++) if (danger_target(tg[i])) { hit("rm-rf-danger"); return }
 }
+# PowerShell / cmd.exe deletes: Remove-Item (ri, rm, del, erase, rd, rmdir) with -Recurse (any prefix: -r, -rec)
+#   or /s; same policy as rm -rf: only protected roots are denied. Paths may be comma-separated.
+#   -WhatIf, or a -Filter/-Include narrower than *, is not a wholesale delete.
+function ps_rm_seg(d, id, k, nw,  i, x, n, rec, nt, tg, a, j, na, v) {
+  rec = 0; nt = 0
+  for (i = k; i <= nw; i++) {
+    x = W[d, id, i]
+    if (x ~ /^\/[A-Za-z]$/) { if (tolower(x) == "/s") rec = 1; continue }
+    if (x ~ /^-[A-Za-z]/) {
+      n = tolower(substr(x, 2)); sub(/:.*/, "", n)
+      if (n == "whatif" || n == "wi") return
+      if (index("recurse", n) == 1 || n ~ /^(rf|fr)$/) rec = 1
+      else if (length(n) > 1 && (index("filter", n) == 1 || index("include", n) == 1 || index("exclude", n) == 1 || index("credential", n) == 1 || index("stream", n) == 1)) {
+        v = (x ~ /:./) ? substr(x, index(x, ":") + 1) : W[d, id, ++i]
+        if ((index("filter", n) == 1 || index("include", n) == 1) && v !~ /^\*(\.\*)?$/) return
+      }
+      else if (n ~ /^(path|literalpath|lp|pspath)$/ && x ~ /:./) { x = substr(x, index(x, ":") + 1); na = split(x, a, ","); for (j = 1; j <= na; j++) tg[++nt] = a[j] }
+      continue
+    }
+    na = split(x, a, ","); for (j = 1; j <= na; j++) if (a[j] != "") tg[++nt] = a[j]
+  }
+  if (!rec) return
+  for (i = 1; i <= nt; i++) if (danger_target(ps_path(tg[i]))) { hit("rm-rf-danger"); return }
+}
+# PowerShell path spelling to the form danger_target/resolve understand
+function ps_path(p,  l) {
+  gsub(/\\/, "/", p); l = tolower(p)
+  if (l ~ /^\$(home|env:userprofile|env:home|\{env:userprofile\}|\{env:home\})(\/|$)/) { sub(/^[^\/]*/, "", p); p = "$HOME" p }
+  else if (l ~ /^\$pwd(\/|$)/) p = "$PWD" substr(p, 5)
+  return p
+}
 function secret_path(p,  b) {
   b = tolower(p); sub(/.*[\/\\]/, "", b)
   if (b ~ /^\.env(\..*)?$/) return b !~ /\.(example|sample|template)$/
@@ -648,15 +715,15 @@ function secret_path(p,  b) {
   return 0
 }
 function reason(id) {
-  if (id == "git-add-all") return "SubDeck guard (git-add-all): do not stage everything; other agents share this working tree. Stage explicit paths (git add <file> ...) and commit with a pathspec (git commit -m \"...\" -- <paths>)."
-  if (id == "force-push") return "SubDeck guard (force-push): force pushes rewrite remote history and are blocked. Push without --force/-f/--force-with-lease/+refspec, or ask the user to run it by hand."
-  if (id == "push" && PUSHINFO != "") return "SubDeck guard (push): " PUSHINFO "; this needs explicit user approval (push mode branches: protected branches, tags and branch-moving merges/rebases/resets ask; other pushes are allowed)."
-  if (id == "push") return "SubDeck guard (push): pushing needs explicit user approval."
-  if (id == "history-rewrite") return "SubDeck guard (history-rewrite): git reset --hard / rebase / filter-branch / filter-repo / clean -f discard or rewrite work and need explicit user approval."
-  if (id == "rm-rf-danger") return "SubDeck guard (rm-rf-danger): recursive delete of /, a drive root, the home directory, the project root or one of their ancestors is blocked. Delete specific subdirectories instead."
-  if (id == "secret-files") return "SubDeck guard (secret-files): this file looks like a secret (.env, key, certificate, credentials); writing it needs explicit user approval."
+  if (id == "git-add-all") return "SubDeck guard (git-add-all): staging everything at once (git add -A/--all/-u/., git commit -a) can pick up unrelated, generated or secret files. Stage explicit paths (git add <file> ...) and commit with a pathspec (git commit -m \"...\" -- <paths>)."
+  if (id == "force-push") return "SubDeck guard (force-push): a force push rewrites remote history. Push without --force/-f/--force-with-lease/+refspec, or ask the user to run it by hand."
+  if (id == "push" && PUSHINFO != "") return "SubDeck guard (push): " PUSHINFO "; get the user\047s approval first (push mode branches: protected branches, tags and branch-moving merges/rebases/resets ask; other pushes are allowed)."
+  if (id == "push") return "SubDeck guard (push): pushing publishes commits to the remote; get the user\047s approval first."
+  if (id == "history-rewrite") return "SubDeck guard (history-rewrite): git reset --hard / rebase / filter-branch / filter-repo / clean -f discard or rewrite work; get the user\047s approval first."
+  if (id == "rm-rf-danger") return "SubDeck guard (rm-rf-danger): this recursive delete targets /, a drive root, the home directory, the project root or one of their ancestors. Delete specific subdirectories instead."
+  if (id == "secret-files") return "SubDeck guard (secret-files): this file looks like a secret (.env, key, certificate, credentials); get the user\047s approval before writing it."
   if (id == "attribution") return "SubDeck guard (attribution): the commit message contains an attribution line (Co-Authored-By / Generated with); remove it and commit again."
-  if (id == "protected-paths") return "SubDeck guard (protected-paths): " PPINFO "; this path is protected (guard.protectedPaths) and editing, moving or deleting it needs explicit user approval."
+  if (id == "protected-paths") return "SubDeck guard (protected-paths): " PPINFO "; this path is listed in guard.protectedPaths; get the user\047s approval before editing, moving or deleting it."
   return "SubDeck guard (" id ")"
 }
 function jesc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/\n/, "\\n", s); gsub(/\t/, " ", s); return s }
@@ -684,6 +751,8 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
   DENYID = ""; ASKID = ""; PUSHINFO = ""; split("", CB); COMMIT = 0; NOPRES = 0; PPINFO = ""; pp_prepare()
   if (tool == "Bash" || tool == "PowerShell") {
     if (cmd == "") return
+    # PowerShell: backtick is the escape character (no command substitution), backslash is a plain path separator
+    PSM = (tool == "PowerShell")
     analyze(cmd, 0)
     if (COMMIT) { low = tolower(cmd); if (index(low, "co-authored-by") || index(low, "generated with")) hit("attribution") }
   } else if (tool == "Write" || tool == "Edit" || tool == "MultiEdit") {
@@ -702,7 +771,9 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
     }
   }
   if (DENYID != "") { dec = "deny"; id = DENYID } else if (ASKID != "") { dec = "ask"; id = ASKID } else return
-  rs = reason(id) " (/subdeck:settings: set " id "=off to change)"
+  rs = reason(id) " To change this rule: /subdeck:settings set " id "=" othermodes(id)
+  if (id == "push" && MODE["push"] == "branches") rs = rs " (or protect-branches=<glob>[,<glob>])"
+  if (id == "protected-paths") rs = rs " (or unprotect=<glob>)"
   # Codex documents only deny for PreToolUse: an "ask" becomes a deny that tells the model to ask the user first
   if (dec == "ask" && ENVIRON["SUBDECK_TOOL"] == "codex") { dec = "deny"; rs = "Ask the user for approval first; retry only if they approve. " rs }
   if (ENVIRON["SUBDECK_TOOL"] == "copilot")
@@ -710,6 +781,13 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
     printf "{\"permissionDecision\":\"%s\",\"permissionDecisionReason\":\"%s\",\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"%s\",\"permissionDecisionReason\":\"%s\"}}\n", dec, jesc(rs), dec, jesc(rs)
   else
     printf "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"%s\",\"permissionDecisionReason\":\"%s\"}}\n", dec, jesc(rs)
+}
+# the modes a rule can be switched to from its current one, for the "To change this rule" hint
+function othermodes(id,  all, n, a, i, r) {
+  all = (id == "push") ? "ask branches off" : "deny ask off"
+  n = split(all, a, " "); r = ""
+  for (i = 1; i <= n; i++) if (a[i] != MODE[id]) r = r (r == "" ? "" : "|") a[i]
+  return r
 }
 function do_show(  i, id, e) {
   if (pf == "") pf = ENVIRON["SD_GUARD_PF"]; if (lf == "") lf = ENVIRON["SD_GUARD_LF"]
@@ -753,6 +831,7 @@ function do_dump(  t, i, id, v) {
   }
 }
 BEGIN {
+  OUTSIDE = sprintf("%c", 1)
   if (mode == "hook") do_hook()
   else if (mode == "show") do_show()
   else if (mode == "dump") do_dump()

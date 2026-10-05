@@ -45,7 +45,7 @@ export function validateAdapterSession(s) {
   if (!str(s.title)) return fail('title');
   if (!TITLE_SOURCES.includes(s.titleSource)) return fail('titleSource');
   if (!str(s.projectPath) && !str(s.projectLabel)) return fail('project');
-  for (const k of ['parentNativeId', 'agentType', 'model', 'createdAt', 'runStartedAt', 'updatedAt', 'endedAt']) if (!optStr(s[k])) return fail(k);
+  for (const k of ['parentNativeId', 'agentType', 'model', 'effort', 'createdAt', 'runStartedAt', 'updatedAt', 'endedAt']) if (!optStr(s[k])) return fail(k);
   if (!s.tokens || !optNum(s.tokens.context) || !optNum(s.tokens.total)) return fail('tokens');
   if (s.lastActivity && !KINDS.includes(s.lastActivity.kind)) return fail('lastActivity.kind');
   const b = s.stateBasis;

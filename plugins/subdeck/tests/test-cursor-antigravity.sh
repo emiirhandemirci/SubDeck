@@ -33,8 +33,8 @@ if head -5 "$ROOT/.cursor-plugin/rules/subdeck.mdc" | grep -qx 'alwaysApply: tru
 nc=0; na=0
 for f in "$PL"/agents/*.md; do b="$(basename "$f" .md)"
   c="$ROOT/.cursor-plugin/agents/$b.md"; a="$PL/.antigravity/agents/$b.md"
-  if [ -f "$c" ] && grep -qx "name: $b" "$c" && grep -qx 'model: inherit' "$c" && ! grep -q '^effort:\|^memory:\|^tools:' "$c"; then nc=$((nc+1)); fi
-  if [ -f "$a" ] && grep -qx "name: $b" "$a" && grep -qx 'subagent: true' "$a" && ! grep -q '^effort:\|^memory:' "$a"; then na=$((na+1)); fi
+  if [ -f "$c" ] && grep -qx "name: $b" "$c" && grep -qx 'model: inherit' "$c" && ! grep -Eq '^(effort|memory|tools):' "$c"; then nc=$((nc+1)); fi
+  if [ -f "$a" ] && grep -qx "name: $b" "$a" && grep -qx 'subagent: true' "$a" && ! grep -Eq '^(effort|memory):' "$a"; then na=$((na+1)); fi
 done
 [ "$nc" = 7 ] && ok "7 cursor agents (name, model inherit, no Claude-only keys)" || bad "cursor agents: $nc"
 [ "$na" = 7 ] && ok "7 antigravity agents (name, subagent: true)" || bad "antigravity agents: $na"

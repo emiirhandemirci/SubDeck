@@ -47,7 +47,7 @@ if [ -f "$HERE/../../../desk/server.mjs" ]; then
   has "$OUT" '^SubDeck Desk' "bad SUBDECK_DESK_DIR falls back to the repo-relative desk/"
   bash "$LAUNCH" stop >/dev/null
 else
-  has "$OUT" 'Set SUBDECK_DESK_DIR' "bad SUBDECK_DESK_DIR message"
+  has "$OUT" 'set SUBDECK_DESK_DIR' "bad SUBDECK_DESK_DIR message"
 fi
 [ $RC -eq 0 ] && ok "bad dir exit 0" || bad "bad dir exit 0"
 
@@ -58,7 +58,9 @@ OUT="$(HOME="$FAKEH" USERPROFILE="$FAKEH" SUBDECK_DESK_DIR= bash "$CACHE/scripts
 has "$OUT" '^SubDeck Desk: http' "installed layout finds Desk in the marketplace clone"
 HOME="$FAKEH" USERPROFILE="$FAKEH" bash "$CACHE/scripts/desk.sh" stop >/dev/null
 OUT="$(HOME="$HOME/empty" USERPROFILE="$HOME/empty" SUBDECK_DESK_DIR= bash "$CACHE/scripts/desk.sh" start)"
-has "$OUT" 'not found.*marketplaces/subdeck/desk' "not-found message lists tried locations"
+has "$OUT" 'ships in the SubDeck repository' "not-found message explains where Desk ships"
+has "$OUT" 'claude plugin marketplace add emiirhandemirci/SubDeck' "not-found message gives the marketplace add command"
+has "$OUT" 'Tried:.*marketplaces/subdeck/desk' "not-found message lists tried locations"
 
 # local-directory marketplace: Desk found through the path Claude Code records in known_marketplaces.json
 LOCALM="$(mktemp -d)"; cp -r "$DESK" "$LOCALM/desk"
@@ -77,6 +79,26 @@ OH="$(mktemp -d)"; mkdir -p "$OH/.subdeck/offline/SubDeck"; cp -r "$DESK" "$OH/.
 OUT="$(HOME="$OH" USERPROFILE="$OH" SUBDECK_DESK_DIR= bash "$CACHE/scripts/desk.sh" start)"
 has "$OUT" '^SubDeck Desk: http' "offline target ~/.subdeck/offline/SubDeck/desk found"
 HOME="$OH" USERPROFILE="$OH" bash "$CACHE/scripts/desk.sh" stop >/dev/null
+
+# Node version gate: fake node reports a version, otherwise delegates to the real node
+REALNODE="$(command -v node)"; FN="$(mktemp -d)"
+cat > "$FN/node" <<EOF
+#!/usr/bin/env bash
+case "\$*" in *process.versions.node*) echo "\$FAKE_NODE_V" ;; *) exec "$REALNODE" "\$@" ;; esac
+EOF
+chmod +x "$FN/node"
+OUT="$(PATH="$FN:$PATH" FAKE_NODE_V=18.19.0 bash "$LAUNCH" start)"
+has "$OUT" '^Node\.js >= 20 is required' "node < 20 refuses"
+OUT="$(PATH="$FN:$PATH" FAKE_NODE_V=20.11.0 bash "$LAUNCH" start)"
+has "$OUT" '^Warning: .*Cursor, Codex and OpenCode.*22\.13' "node 20 warns about SQLite adapters"
+has "$OUT" '^SubDeck Desk: http' "node 20 still starts"
+bash "$LAUNCH" stop >/dev/null
+OUT="$(PATH="$FN:$PATH" FAKE_NODE_V=22.12.1 bash "$LAUNCH" start)"
+has "$OUT" '^Warning: ' "node 22.12 warns"
+bash "$LAUNCH" stop >/dev/null
+OUT="$(PATH="$FN:$PATH" FAKE_NODE_V=22.13.0 bash "$LAUNCH" start)"
+if printf '%s\n' "$OUT" | grep -q '^Warning'; then bad "node 22.13 no warning"; else ok "node 22.13 no warning"; fi
+bash "$LAUNCH" stop >/dev/null
 
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

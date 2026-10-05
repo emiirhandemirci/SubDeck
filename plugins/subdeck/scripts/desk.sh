@@ -52,7 +52,15 @@ alive() {
 }
 url() { printf 'http://127.0.0.1:%s/' "$(rt_field port)"; }
 
-if ! command -v node >/dev/null 2>&1; then echo "Node.js >= 22.13 is required: https://nodejs.org"; exit 0; fi
+if ! command -v node >/dev/null 2>&1; then echo "Node.js >= 20 is required: https://nodejs.org"; exit 0; fi
+NODE_V="$(node -p 'process.versions.node' 2>/dev/null | tr -d '\r')"
+NODE_MAJOR="${NODE_V%%.*}"; NODE_REST="${NODE_V#*.}"; NODE_MINOR="${NODE_REST%%.*}"
+case "$NODE_MAJOR$NODE_MINOR" in ''|*[!0-9]*) NODE_MAJOR=0; NODE_MINOR=0 ;; esac
+if [ "$NODE_MAJOR" -lt 20 ]; then echo "Node.js >= 20 is required (found ${NODE_V:-unknown}): https://nodejs.org"; exit 0; fi
+NODE_WARN=""
+if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 13 ]; }; then
+  NODE_WARN="Warning: Node.js $NODE_V found; Cursor, Codex and OpenCode sessions need Node.js >= 22.13 (other sources work)."
+fi
 
 case "$CMD" in
   status)
@@ -66,8 +74,15 @@ case "$CMD" in
     echo "SubDeck Desk stopped" ;;
   start|*)
     if alive; then echo "SubDeck Desk: $(url)"; echo "$TIP"; exit 0; fi
+    [ -n "$NODE_WARN" ] && echo "$NODE_WARN"
     DESK="$(find_desk)"
-    if [ -z "$DESK" ]; then echo "SubDeck Desk not found. Tried: \$SUBDECK_DESK_DIR (${SUBDECK_DESK_DIR:-unset}), $HERE/../../../desk, $MKT_DESK. Set SUBDECK_DESK_DIR to the desk/ folder of a SubDeck checkout."; exit 0; fi
+    if [ -z "$DESK" ]; then
+      echo "SubDeck Desk is not part of the plugin folder; it ships in the SubDeck repository."
+      echo "To get it, run: claude plugin marketplace add emiirhandemirci/SubDeck (this clones the repo; /subdeck:desk then finds it automatically)."
+      echo "Or clone the repo yourself and set SUBDECK_DESK_DIR to its desk/ folder."
+      echo "Tried: \$SUBDECK_DESK_DIR (${SUBDECK_DESK_DIR:-unset}), $HERE/../../../desk, $MKT_DESK"
+      exit 0
+    fi
     mkdir -p "$RT_DIR"
     rm -f "$RT"
     if is_windows; then

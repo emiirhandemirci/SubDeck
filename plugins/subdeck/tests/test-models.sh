@@ -99,6 +99,22 @@ printf '%s\n' '{"availableModels":["sonnet"]}' > "$P/.claude/settings.json"
 out="$(run show)"; has "$out" 'WARNING: availableModels' "availableModels warns"
 rm -rf "$P/.claude"
 
+# lookups are scoped to modelPolicy: same key names elsewhere are ignored; pretty-printed, single-line and CRLF both work
+rm -f "$PF"; mkdir -p "$H/.subdeck"
+printf '%s\n' '{"guard":{"worker":"haiku","mode":"named"},"modelPolicy":{"verifier":"opus"},"other":{"explore":"fable"}}' > "$H/.subdeck/config.json"
+out="$(run show)"
+has "$out" '^worker +sonnet +default' "worker outside modelPolicy ignored (single line)"
+has "$out" '^mode +auto +default' "mode outside modelPolicy ignored"
+has "$out" '^explore +sonnet +default' "explore outside modelPolicy ignored"
+has "$out" '^verifier +opus +user' "single-line modelPolicy read"
+printf '{\r\n  "notify": {\r\n    "worker": "haiku"\r\n  },\r\n  "modelPolicy": {\r\n    "worker": "opus",\r\n    "mode": "named"\r\n  }\r\n}\r\n' > "$H/.subdeck/config.json"
+out="$(run show)"
+has "$out" '^worker +opus +user' "pretty-printed CRLF modelPolicy read, outer key ignored"
+has "$out" '^mode +named +user' "pretty-printed mode read"
+out="$(run set verifier=haiku)"; out="$(run show)"
+has "$out" '^worker +opus +user' "set keeps modelPolicy value, not the outer one"
+rm -f "$H/.subdeck/config.json"
+
 # legacy <project>/.subdeck/config.json: still read, new file wins, never written
 rm -rf "$H/.subdeck" "$P/.subdeck"
 mkdir -p "$P/.subdeck"; printf '%s\n' '{"modelPolicy":{"worker":"haiku","verifier":"opus"}}' > "$P/.subdeck/config.json"

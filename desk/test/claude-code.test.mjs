@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseJsonl, summarizeRecords, readTranscript, TAIL_BYTES } from '../adapters/claude-code.mjs';
-import { rec, usage, writeJsonl, tmpDir } from './fixtures/claude-fixture.mjs';
+import { rec, usage, writeJsonl, tmpDir, hookEvent, writeTeam } from './fixtures/claude-fixture.mjs';
 
 const T = '2026-09-29T10:00:00.000Z';
 
@@ -65,7 +65,7 @@ test('readTranscript: head gives cwd/createdAt; tail grows to 256 KB when no usa
 });
 
 // appended to desk/test/claude-code.test.mjs
-import claude, { readHooks } from '../adapters/claude-code.mjs';
+import claude, { readHooks, hookFailure } from '../adapters/claude-code.mjs';
 import { writeMeta, setMtime } from './fixtures/claude-fixture.mjs';
 import { deriveState } from '../lib/model.mjs';
 
@@ -492,4 +492,122 @@ test('readHooks with env: state-dir and legacy events are merged; both dirs are 
   assert.ok(h.agents.get('new1').start && h.agents.get('new1').stop);
   const only = tmpDir('subdeck-hook-none-');
   assert.deepEqual((await readHooks(only, new Map(), env)).dirs, []);
+});
+
+// ---- Claude Code 2.1.2xx platform changes (nested agents, StopFailure, Agent Teams, effort, unknown events) ----
+const writeEvents = (proj, lines) => {
+  fs.mkdirSync(path.join(proj, '.subdeck'), { recursive: true });
+  fs.writeFileSync(path.join(proj, '.subdeck', 'events.jsonl'), lines.join('\n') + '\n');
+};
+
+test('nested sub-agents: a child spawned by a sub-agent shows under that sub-agent (depth via core)', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('aaaa', [rec.user(ago(90000), proj), rec.launched(ago(80000), 'bbbb'), rec.notifyAttachment(ago(40000), 'bbbb', 'completed', 20000)], 5000);
+    sub('bbbb', [rec.user(ago(70000), proj), rec.endTurn(ago(50000))], 50000);
+    sub('cccc', [rec.user(ago(70000), proj), rec.tool(ago(60000), 'Read', { file_path: 'x' })], 5000);
+    return [rec.launched(ago(100000), 'aaaa'), rec.launched(ago(95000), 'cccc')];
+  });
+  const { by, r } = await scanBy(sc);
+  assert.equal(by.aaaa.parentNativeId, 'sess-g');
+  assert.equal(by.bbbb.parentNativeId, 'aaaa');
+  assert.equal(by.cccc.parentNativeId, 'sess-g');
+  assert.deepEqual(st(by.bbbb, sc.NOW), { state: 'finished', stateSource: 'field' });   // completion read from the parent sub-agent
+  assert.equal(r.skipped, 0);
+});
+
+test('nested sub-agents: a spawn cycle or self reference falls back to the session', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('aa', [rec.user(ago(9000), proj), rec.launched(ago(8000), 'bb'), rec.launched(ago(7000), 'aa')], 5000);
+    sub('bb', [rec.user(ago(9000), proj), rec.launched(ago(8000), 'aa')], 5000);
+    return [];
+  });
+  const { by } = await scanBy(sc);
+  assert.ok(['sess-g', 'aa', 'bb'].includes(by.aa.parentNativeId) && by.aa.parentNativeId !== 'aa');
+  assert.ok(by.bb.parentNativeId !== 'bb');
+  assert.ok(by.aa.parentNativeId === 'sess-g' || by.bb.parentNativeId === 'sess-g');
+});
+
+test('StopFailure hook event -> failed (hook) until the transcript is written again; session and agent', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('ffff', [rec.user(ago(70000), proj), rec.tool(ago(60000), 'Read', { file_path: 'x' })], 50000);
+    sub('gggg', [rec.user(ago(70000), proj), rec.tool(ago(60000), 'Read', { file_path: 'x' })], 5000);   // wrote after the failure
+    writeEvents(proj, [hookEvent(ago(49000), 'StopFailure', { agentId: 'ffff', payload: { error_type: 'rate_limit' } }),
+      hookEvent(ago(49000), 'StopFailure', { agentId: 'gggg', payload: { error_type: 'overloaded' } }),
+      hookEvent(ago(900), 'StopFailure', { payload: { error_type: 'billing_error' } })]);
+    return [];
+  });
+  const { by } = await scanBy(sc);
+  assert.deepEqual(st(by.ffff, sc.NOW), { state: 'failed', stateSource: 'hook' });
+  assert.deepEqual(st(by.gggg, sc.NOW), { state: 'running', stateSource: 'mtime' });
+  assert.deepEqual(st(by['sess-g'], sc.NOW), { state: 'failed', stateSource: 'hook' });
+  // failure reason from the hook's error_type when the transcript has none
+  assert.equal(by.ffff.failure.kind, 'quota');
+  assert.equal(by['sess-g'].failure.kind, 'quota');
+  assert.notEqual((by.gggg.failure || {}).kind, 'quota');
+});
+
+test('hookFailure maps StopFailure error_type to a failure kind', () => {
+  assert.deepEqual(hookFailure({ errorType: 'rate_limit' }), { kind: 'quota', detail: 'rate or usage limit reached' });
+  assert.equal(hookFailure({ errorType: 'billing_error' }).kind, 'quota');
+  assert.equal(hookFailure({ errorType: 'server_error' }).kind, 'api');
+  assert.equal(hookFailure({ errorType: null }).kind, 'api');
+});
+
+test('unknown hook events and new fields do not break parsing', async () => {
+  const proj = tmpDir('desk-cc-unknown-');
+  writeEvents(proj, [
+    hookEvent('2026-10-01T00:00:00Z', 'PostModelSwitch', { agentId: 'zz', agentType: 'x', payload: { from_model: 'a', to_model: 'b', brand_new: { nested: [1] } } }),
+    hookEvent('2026-10-01T00:00:01Z', 'SessionStart', { payload: { source: 'fork', seconds_since_last_response: 5 } }),
+    hookEvent('2026-10-01T00:00:02Z', 'SomethingFuture', { agentId: 'zz' }),
+    JSON.stringify({ event: 'SubagentStart', agent_id: 'ok1', ts: '2026-10-01T00:00:03Z', surprise: true, payload: { effort: { level: 'future-level', extra: 1 } } }),
+    JSON.stringify({ event: 7, ts: 'nope', agent_id: 5 }),
+  ]);
+  const h = await readHooks(proj, new Map());
+  assert.equal(h.bad, 0);
+  assert.deepEqual([...h.agents.keys()], ['ok1']);
+  assert.equal(h.efforts.get('a:ok1'), 'future-level');
+});
+
+test('Agent Team: teammates get their member name, the team-lead is not an agent, idle/task events add nothing', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('mate1', [rec.user(ago(70000), proj), rec.tool(ago(60000), 'Read', { file_path: 'x' })], 5000);
+    sub('lead1', [rec.user(ago(70000), proj), rec.tool(ago(60000), 'Read', { file_path: 'x' })], 5000);
+    writeTeam(path.join(proj, '..', '..', 'claude'), 'session-abcd1234', [
+      { name: 'team-lead', agentId: 'lead1', agentType: 'team-lead' }, { name: 'researcher', agentId: 'mate1', agentType: 'Explore' }]);
+    writeEvents(proj, [hookEvent(ago(5000), 'TeammateIdle', { payload: { team_name: 't', teammate_name: 'researcher' } }),
+      hookEvent(ago(4000), 'TaskCreated', { payload: { team_name: 't', task_name: 'x' } }),
+      hookEvent(ago(3000), 'TaskCompleted', { agentId: 'phantom', agentType: 'team-lead', payload: { team_name: 't', task_name: 'x' } }),
+      hookEvent(ago(2000), 'SubagentStart', { agentId: 'ghost', agentType: 'team-lead' })]);
+    return [];
+  });
+  const { by, r } = await scanBy(sc);
+  assert.deepEqual(Object.keys(by).sort(), ['mate1', 'sess-g']);
+  assert.equal(by.mate1.title, 'researcher');
+  assert.equal(by.mate1.agentType, 'Explore');
+  assert.equal(r.skipped, 0);
+});
+
+test('effort: from hook payload (effort.level) per agent and per session; absent -> null', async () => {
+  const sc = completionScenario(({ ago, sub, proj }) => {
+    sub('e1', [rec.user(ago(70000), proj), rec.tool(ago(60000), 'Read', { file_path: 'x' })], 5000);
+    sub('e2', [rec.user(ago(70000), proj), rec.tool(ago(60000), 'Read', { file_path: 'x' })], 5000);
+    writeEvents(proj, [hookEvent(ago(61000), 'SubagentStop', { agentId: 'e1', agentType: 'w', payload: { effort: { level: 'xhigh' } } }),
+      hookEvent(ago(50000), 'Stop', { payload: { effort: { level: 'high' } } })]);
+    return [];
+  });
+  const { by } = await scanBy(sc);
+  assert.equal(by.e1.effort, 'xhigh');
+  assert.equal(by.e2.effort, null);
+  assert.equal(by['sess-g'].effort, 'high');
+});
+
+test('CLAUDE_CODE_PROJECT_DIR_NAME: a custom projects/<name> directory is read like any slug (cwd comes from the records)', async () => {
+  const root = tmpDir('desk-cc-dirname-');
+  const proj = path.join(root, 'work', 'Delta');
+  fs.mkdirSync(proj, { recursive: true });
+  const projects = path.join(root, 'tenant-a', 'projects');
+  writeJsonl(path.join(projects, 'work', 'sess-d.jsonl'), [rec.user(T, proj)], { mtimeMs: Date.now() });
+  const env = { now: () => Date.now(), days: 14, platform: process.platform, claudeProjectsDir: projects };
+  const r = await claude.scan(env, { since: null, cache: new Map() });
+  assert.equal(r.sessions[0].projectPath, proj);
 });
