@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SubDeck model policy: show / set / reset the per-role model policy (decision 0025).
+# SubDeck model policy: show / set / reset the per-role model policy.
 #
 #   bash <plugin>/scripts/models.sh [show]                         effective policy + source of each value
 #   bash <plugin>/scripts/models.sh set key=value ... [--project]  write user (default) or project config

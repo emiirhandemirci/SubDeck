@@ -379,7 +379,7 @@ function subBasis(hook, mtimeIso, done, wait, fail = null) {
   return { kind: 'mtime', at: mtimeIso, stateSource: 'mtime' };
 }
 
-// ---- on-demand content (decision 0020): read only when the user opens an agent; never cached, never listed ----
+// ---- on-demand content: read only when the user opens an agent; never cached, never listed ----
 export const PROMPT_MAX = 20000;
 export const REPORT_MAX = 20000;
 export const TOOL_CALLS_MAX = 500;

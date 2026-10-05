@@ -56,7 +56,7 @@ Delete this line and the placeholder list at the end once filled in.
 - `CLAUDE.local.md` (this file, private): personal preferences, local paths, current focus.
 - `CLAUDE.md` (shared, committed): project rules for everyone. Keep it under about 200 lines; use pointers to files or skills instead of copies.
 - Agents `worker-*` and `verifier` use `memory: project`; their notes live under `.claude/agent-memory/<name>/MEMORY.md`. Promote durable lessons into skills or `CLAUDE.md` deliberately.
-- Project-scope memory is meant to be shared: commit `.claude/agent-memory/`, review it, and keep it small (decision 0014).
+- Project-scope memory is meant to be shared: commit `.claude/agent-memory/`, review it, and keep it small.
 
 ## Local notes
 

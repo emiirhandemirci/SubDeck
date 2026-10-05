@@ -69,4 +69,4 @@ node --test "desk/test/*.test.mjs"
 bash plugins/subdeck/tests/test-desk-launcher.sh
 ```
 
-Design: see this README. Design notes, decision records 0015 to 0019 and the smoke check on real data live in `internal/` (private, maintainers only).
+Design: see this README.

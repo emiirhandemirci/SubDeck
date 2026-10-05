@@ -187,7 +187,7 @@ What SubDeck does not do:
 
 ## Status
 
-v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 added notifications, guard rules and the Desk context-usage bar; v0.5 cut the commands to three; v0.6 adds the Desk Settings tab, the branch-aware push guard and state outside the repository. Roadmap and decision records live in `internal/design.md` and `internal/decisions/` (private, maintainers only).
+v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 added notifications, guard rules and the Desk context-usage bar; v0.5 cut the commands to three; v0.6 adds the Desk Settings tab, the branch-aware push guard and state outside the repository. See the [CHANGELOG](CHANGELOG.md) for what changed in each release.
 
 ## License
 
