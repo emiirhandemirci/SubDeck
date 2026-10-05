@@ -1,0 +1,49 @@
+name: Desk adapter feedback
+description: Feedback on a Desk adapter (Codex, Copilot, Gemini, Cline/Roo, OpenCode)
+labels: [adapter]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Support for these tools is newer and some data formats are not yet verified on every platform. Reports of what works and what does not are very useful.
+        **Do not paste secrets or transcripts.** Redact tokens, paths and message content.
+  - type: dropdown
+    id: adapter
+    attributes:
+      label: Adapter
+      options: [Codex, Copilot, Gemini CLI, Cline/Roo, OpenCode, Other]
+    validations:
+      required: true
+  - type: input
+    id: tool-version
+    attributes:
+      label: Tool version
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS and Node version
+      placeholder: macOS 14, Node 22.13
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: What do you see in Desk?
+      options: [Works as expected, Sessions missing, Wrong state or tokens, Wrong project or paths, Errors or crash]
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Where the tool stores its data on your machine (path only) and what differs from what Desk shows.
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Redacted sample of the file shape (optional)
+      description: Keys and structure only, with all values replaced by placeholders.
+      render: json

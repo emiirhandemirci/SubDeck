@@ -8,7 +8,18 @@
     {
       "name": "subdeck",
       "source": "./plugins/subdeck",
-      "description": "Manager plus sub-agents toolkit: agents, skills, and hooks for orchestrating parallel work"
+      "description": "Manager plus sub-agents toolkit: agents, skills, and hooks for orchestrating parallel work",
+      "homepage": "https://github.com/emiirhandemirci/SubDeck#readme",
+      "repository": "https://github.com/emiirhandemirci/SubDeck",
+      "license": "MIT",
+      "keywords": [
+        "subagents",
+        "orchestration",
+        "dashboard",
+        "hooks",
+        "guard"
+      ],
+      "category": "productivity"
     }
   ]
 }
