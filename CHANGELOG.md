@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Desk:** a slow first scan is no longer shown as "no sessions" (sessions appear as they are found, with scan progress), and the first Claude Code scan is faster; Desk now subscribes to changes before the first scan.
+- **Cursor:** sessions are found when `composerHeaders` is missing (falls back to `cursorDiskKV` and per-workspace storage); an unknown layout shows a note instead of an error.
+
 ## 0.6.1
 
 - **Guard hardening:** recursive deletes through PowerShell and cmd, backtick escapes and wrapper commands that take option arguments are now caught; deny/ask messages are neutral and short.
