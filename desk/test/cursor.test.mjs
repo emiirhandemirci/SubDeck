@@ -225,3 +225,71 @@ test('hasBlockingPendingActions true maps to waiting (field)', async () => {
   assert.notEqual(deriveState(by['s-nowait'].stateBasis, sc.NOW).state, 'waiting');
   for (const s of Object.values(by)) assert.deepEqual(validateAdapterSession(s), { ok: true }, s.nativeId);
 });
+
+// ---- schema tolerance: layouts (a) composerHeaders, (b) cursorDiskKV only, (c) workspaceStorage ItemTable ----
+function bareDb(userDir, sub, stmts) {
+  const dir = path.join(userDir, ...sub);
+  fs.mkdirSync(dir, { recursive: true });
+  const db = new DatabaseSync(path.join(dir, 'state.vscdb'));
+  for (const s of stmts) db.exec(s);
+  return db;
+}
+const tmpUser = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'desk-cur2-')), 'User');
+const envOf = (userDir, NOW) => ({ now: () => NOW, days: 14, platform: process.platform, cursorUserDir: userDir });
+
+test('layout (b): no composerHeaders, scans composerData keys in cursorDiskKV', async () => {
+  const NOW = Date.now(), userDir = tmpUser();
+  const db = bareDb(userDir, ['globalStorage'], ['CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)']);
+  const put = (k, v) => db.prepare('INSERT INTO cursorDiskKV VALUES (?,?)').run(k, JSON.stringify(v));
+  put('composerData:n1', { composerId: 'n1', name: 'Newer layout', createdAt: NOW - 5000, lastUpdatedAt: NOW - 1000, status: 'completed', isArchived: false, text: 'BODY_MARKER' });
+  put('composerData:n-old', { composerId: 'n-old', createdAt: NOW - 90 * 86400000, lastUpdatedAt: NOW - 90 * 86400000 });
+  put('composerData:n-bad', { composerId: 'n-bad' });
+  db.prepare('INSERT INTO cursorDiskKV VALUES (?,?)').run('composerData:n-junk', '{oops');
+  db.close();
+  const r = await createCursorAdapter().scan(envOf(userDir, NOW), { since: null, cache: new Map() });
+  assert.deepEqual(r.sessions.map(s => s.nativeId), ['n1']);
+  assert.equal(r.sessions[0].title, 'Newer layout');
+  assert.deepEqual(deriveState(r.sessions[0].stateBasis, NOW), { state: 'finished', stateSource: 'field' });
+  assert.equal(JSON.stringify(r).includes('BODY_MARKER'), false);
+  assert.deepEqual(r.notes, []);
+  assert.equal(validateAdapterSession(r.sessions[0]).ok, true);
+});
+
+test('layout (c): workspaceStorage ItemTable composer.composerData allComposers', async () => {
+  const NOW = Date.now(), userDir = tmpUser();
+  bareDb(userDir, ['globalStorage'], ['CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)']).close();
+  const folder = path.join(path.dirname(userDir), 'proj');
+  fs.mkdirSync(folder, { recursive: true });
+  const db = bareDb(userDir, ['workspaceStorage', 'hash1'], ['CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)']);
+  db.prepare('INSERT INTO ItemTable VALUES (?,?)').run('composer.composerData', JSON.stringify({ allComposers: [
+    { composerId: 'o1', name: 'Old layout', createdAt: NOW - 9000, lastUpdatedAt: NOW - 3000, unifiedMode: 'chat' },
+    { composerId: 'o-old', createdAt: NOW - 60 * 86400000, lastUpdatedAt: NOW - 60 * 86400000 }] }));
+  db.close();
+  fs.writeFileSync(path.join(userDir, 'workspaceStorage', 'hash1', 'workspace.json'), JSON.stringify({ folder: pathToFileURL(folder).href }));
+  const r = await createCursorAdapter().scan(envOf(userDir, NOW), { since: null, cache: new Map() });
+  assert.deepEqual(r.sessions.map(s => s.nativeId), ['o1']);
+  assert.equal(r.sessions[0].title, 'Old layout');
+  assert.equal(path.resolve(r.sessions[0].projectPath), path.resolve(folder));
+  assert.deepEqual(r.notes, []);
+});
+
+test('no known layout: zero sessions and a note, not an error', async () => {
+  const userDir = tmpUser();
+  bareDb(userDir, ['globalStorage'], ['CREATE TABLE ItemTable (key TEXT, value BLOB)']).close();
+  const r = await createCursorAdapter().scan(envOf(userDir, Date.now()), { since: null, cache: new Map() });
+  assert.deepEqual(r.sessions, []);
+  assert.deepEqual(r.notes, ['unsupported Cursor data layout']);
+});
+
+test('composerHeaders with a missing optional column still maps (nulls)', async () => {
+  const NOW = Date.now(), userDir = tmpUser();
+  const db = bareDb(userDir, ['globalStorage'], [
+    'CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)',
+    'CREATE TABLE composerHeaders (composerId TEXT PRIMARY KEY, createdAt INTEGER, lastUpdatedAt INTEGER, value TEXT)']);
+  db.prepare('INSERT INTO composerHeaders VALUES (?,?,?,?)').run('h1', NOW - 5000, NOW - 1000, JSON.stringify({ name: 'No recency col' }));
+  db.close();
+  const r = await createCursorAdapter().scan(envOf(userDir, NOW), { since: null, cache: new Map() });
+  assert.equal(r.sessions.length, 1);
+  assert.equal(r.sessions[0].title, 'No recency col');
+  assert.equal(r.sessions[0].archived, false);
+});
