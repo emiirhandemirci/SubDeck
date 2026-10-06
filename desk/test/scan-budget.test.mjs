@@ -106,14 +106,3 @@ test('rescans get no partial callback; a genuine exception is still an error', a
   assert.equal(src(core).lastError, 'EACCES: permission denied');
   assert.equal(core.snapshot().sessions.length, 1);   // previous data kept
 });
-
-test('changes before the first listener are replayed to it', async () => {
-  const core = createCore({ env, adapters: [adapter(async () => ok([sess('a')]))], now: () => NOW });
-  await core.scanAll();
-  const events = [];
-  core.onChanged(e => events.push(e));
-  await sleep(5);
-  assert.equal(events.length, 1);
-  assert.equal(events[0].sources, true);
-  assert.equal(events[0].projects.length, 1);
-});

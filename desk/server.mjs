@@ -97,6 +97,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (port === null) { console.error(`no free port in ${DEFAULT_PORT}-${DEFAULT_PORT + PORT_TRIES - 1}`); process.exit(1); }
 
+  core.onChanged(ev => api.broadcast(ev));   // before the first scan: a page opened mid-scan gets partial and final results
   await core.scanAll();
   const url = `http://127.0.0.1:${port}/`;
   fs.mkdirSync(rtDir, { recursive: true });
@@ -106,7 +107,6 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(`${s.id}: ${s.detected ? s.health : 'not found'}, ${s.counts.projects} projects, ${s.counts.sessions} sessions${s.lastError ? ` (${s.lastError})` : ''}`);
   }
 
-  core.onChanged(ev => api.broadcast(ev));
   const watcher = createWatcher({
     onChange: tool => { core.scanSources([tool]).then(() => watcher.update(core.watchTargets())).catch(() => {}); },
     onNote: (tool, note) => core.setWatchNote(tool, note),

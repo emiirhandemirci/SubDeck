@@ -34,7 +34,6 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
   let bases = new Map();                           // session id -> stateBasis (never served)
   let projectHashes = new Map();
   let sourcesHash = '';
-  let missed = null;                               // changes emitted before anyone listened, replayed to the first listener
 
   async function runAdapter(a) {
     const src = sources.get(a.tool);
@@ -215,10 +214,6 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
     projectHashes = hashes; sourcesHash = sh;
     if (!changed.length && !sourcesChanged) return;
     const ev = { projects: changed, sources: sourcesChanged, at: new Date(now()).toISOString() };
-    if (!listeners.length) {   // e.g. the server subscribes only after the first scanAll; keep what it would have missed
-      missed = missed ? { projects: [...new Set([...missed.projects, ...changed])], sources: missed.sources || sourcesChanged, at: ev.at } : ev;
-      return;
-    }
     for (const fn of listeners) { try { fn(ev); } catch { /* a listener never breaks scans */ } }
   }
 
@@ -246,10 +241,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
       }
       return out;
     },
-    onChanged(fn) {
-      listeners.push(fn);
-      if (missed) { const ev = missed; missed = null; setImmediate(() => { try { fn(ev); } catch { /* ignore */ } }); }
-    },
+    onChanged(fn) { listeners.push(fn); },
     setWatchNote(tool, note) { if (!sources.has(tool)) return; watchNotes.set(tool, note || null); rebuild(); },
   };
 }
