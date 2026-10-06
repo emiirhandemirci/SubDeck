@@ -85,25 +85,52 @@ async function trackingTitles(mod, env) {
   return out;
 }
 
-function readRows(conn, env) {
+/* Cursor state.vscdb layouts handled here (sources: Cursor forum threads on state.vscdb growth, the toolpath-cursor crate docs,
+ * vltansky/cursor-conversations-mcp research.md, cursor-history, Cursor forum "Exporting chats & prompts"):
+ *  (a) newest: globalStorage table composerHeaders (+ cursorDiskKV composerData:<id>, bubbleId:<id>:<bubble>)
+ *  (b) globalStorage without composerHeaders: only cursorDiskKV composerData:<id> JSON values
+ *  (c) oldest: workspaceStorage/<hash>/state.vscdb ItemTable key composer.composerData -> { allComposers: [...] }
+ * Anything else yields zero sessions plus a note, never an error. */
+const FALLBACK_MAX = 300;
+const CHUNK = 40;
+const yieldLoop = () => new Promise(r => setImmediate(r));
+const HEADER_COLS = ['composerId', 'workspaceId', 'createdAt', 'lastUpdatedAt', 'isArchived', 'isSubagent', 'recency', 'subagentTypeName', 'value'];
+const tableSet = conn => new Set(conn.prepare("SELECT name FROM sqlite_master WHERE type IN ('table','view')").all().map(r => r.name));
+const columnSet = (conn, t) => new Set(conn.prepare(`PRAGMA table_info(${t})`).all().map(r => r.name));
+const archivedFlag = v => (v === true || v === 1 ? 1 : 0);
+
+function composerRow(id, workspaceId, o, extra = {}) {
+  return { h: { composerId: id, workspaceId: workspaceId ?? null, createdAt: Number.isFinite(o.createdAt) ? o.createdAt : null,
+    lastUpdatedAt: Number.isFinite(o.lastUpdatedAt) ? o.lastUpdatedAt : null, isArchived: archivedFlag(o.isArchived), isSubagent: archivedFlag(o.isSubagent),
+    recency: null, subagentTypeName: typeof o.subagentTypeName === 'string' ? o.subagentTypeName : null },
+  hv: pickHeader({ ...o, name: o.name ?? o.title, unifiedMode: o.unifiedMode ?? o.forceMode }), cd: pickComposer(o), toolName: null, ...extra };
+}
+
+/** Layout (a). Missing columns read as NULL so a renamed column degrades instead of throwing. */
+function readHeaders(conn, env, hasKV) {
+  const cols = columnSet(conn, 'composerHeaders');
+  if (!cols.has('composerId')) return null;
   const cutoff = env.now() - env.days * 86400000;
-  const headers = conn.prepare('SELECT composerId, workspaceId, createdAt, lastUpdatedAt, isArchived, isSubagent, recency, subagentTypeName, value FROM composerHeaders WHERE COALESCE(recency, lastUpdatedAt, createdAt, 0) >= ?').all(cutoff);
-  const kv = conn.prepare('SELECT value FROM cursorDiskKV WHERE key = ?');
+  const sel = HEADER_COLS.map(c => (cols.has(c) ? c : `NULL AS ${c}`)).join(', ');
+  const timeCols = ['recency', 'lastUpdatedAt', 'createdAt'].filter(c => cols.has(c));
+  const where = timeCols.length ? ` WHERE COALESCE(${timeCols.join(', ')}, 0) >= ?` : '';
+  const headers = conn.prepare(`SELECT ${sel} FROM composerHeaders${where}`).all(...(timeCols.length ? [cutoff] : []));
+  const kv = hasKV ? conn.prepare('SELECT value FROM cursorDiskKV WHERE key = ?') : null;
   const rows = [];
   let skipped = 0;
   for (const h of headers) {
     try {
       const hv = pickHeader(JSON.parse(text(h.value) || '{}'));
-      const raw = kv.get('composerData:' + h.composerId);
+      const raw = kv && kv.get('composerData:' + h.composerId);
       const cd = raw ? pickComposer(JSON.parse(text(raw.value))) : pickComposer({});
       let toolName = null;
-      if (!cd.last) {
+      if (!cd.last && hasKV) {
         const nb = newestBubble(conn, h.composerId);
         if (nb) {
           cd.last = { bubbleId: nb.bubbleId, type: nb.type, at: nb.at };
           if (cd.generating > 0 && nb.type === 2) toolName = nb.name;
         }
-      } else if (cd.generating > 0 && cd.last && cd.last.type === 2 && cd.last.bubbleId) {
+      } else if (kv && cd.generating > 0 && cd.last && cd.last.type === 2 && cd.last.bubbleId) {
         const b = kv.get(`bubbleId:${h.composerId}:${cd.last.bubbleId}`);
         if (b) { try { const o = JSON.parse(text(b.value)); toolName = o.toolFormerData && typeof o.toolFormerData.name === 'string' ? o.toolFormerData.name : null; } catch { /* body ignored */ } }
       }
@@ -112,6 +139,79 @@ function readRows(conn, env) {
     } catch { skipped++; }
   }
   return { rows, skipped };
+}
+
+/** Layout (b). Cheap timestamp pass over composerData:% keys in chunks (yielding the event loop), then parse only the newest FALLBACK_MAX. */
+async function readComposerData(conn, env) {
+  const cutoff = env.now() - env.days * 86400000;
+  const keys = conn.prepare('SELECT key FROM cursorDiskKV WHERE key >= ? AND key < ?').all('composerData:', 'composerData;').map(r => String(r.key));
+  if (!keys.length) return null;
+  const ts = conn.prepare("SELECT COALESCE(json_extract(value, '$.lastUpdatedAt'), json_extract(value, '$.createdAt')) AS t FROM cursorDiskKV WHERE key = ?");
+  const fresh = [];
+  let skipped = 0;
+  for (let i = 0; i < keys.length; i += CHUNK) {
+    for (const k of keys.slice(i, i + CHUNK)) {
+      try { const t = ts.get(k).t; const n = typeof t === 'number' ? t : Date.parse(t); if (Number.isFinite(n) && n >= cutoff) fresh.push({ k, n }); } catch { skipped++; }
+    }
+    await yieldLoop();
+  }
+  fresh.sort((a, b) => b.n - a.n);
+  const get = conn.prepare('SELECT value FROM cursorDiskKV WHERE key = ?');
+  const rows = [];
+  const top = fresh.slice(0, FALLBACK_MAX);
+  for (let i = 0; i < top.length; i += CHUNK) {
+    for (const { k } of top.slice(i, i + CHUNK)) {
+      try {
+        const o = JSON.parse(text(get.get(k).value));
+        const id = typeof o.composerId === 'string' ? o.composerId : k.slice('composerData:'.length);
+        const row = composerRow(id, o.workspaceId, o);
+        if (!row.cd.last) { const nb = newestBubble(conn, id); if (nb) row.cd.last = { bubbleId: nb.bubbleId, type: nb.type, at: nb.at }; }
+        rows.push(row);
+      } catch { skipped++; }
+    }
+    await yieldLoop();
+  }
+  return { rows, skipped };
+}
+
+/** Layout (c). Workspace-level ItemTable composer.composerData; the workspace folder name is the workspace id. */
+async function readWorkspaceComposers(mod, env) {
+  const root = path.join(env.cursorUserDir, 'workspaceStorage');
+  let dirs = [];
+  try { dirs = await fs.readdir(root); } catch { return null; }
+  const cutoff = env.now() - env.days * 86400000;
+  const rows = [];
+  let skipped = 0, found = false;
+  for (const wsId of dirs) {
+    const db = path.join(root, wsId, 'state.vscdb');
+    if (!(await statOrNull(db))) continue;
+    let conn = null;
+    try {
+      conn = new mod.DatabaseSync(db, { readOnly: true });
+      const r = conn.prepare("SELECT value FROM ItemTable WHERE key = 'composer.composerData'").get();
+      if (!r) continue;
+      const list = JSON.parse(text(r.value)).allComposers;
+      if (!Array.isArray(list)) continue;
+      found = true;
+      for (const o of list) {
+        if (!o || typeof o.composerId !== 'string') { skipped++; continue; }
+        const t = Math.max(...[o.lastUpdatedAt, o.createdAt].filter(Number.isFinite));
+        if (!Number.isFinite(t) || t < cutoff) continue;
+        rows.push(composerRow(o.composerId, wsId, o));
+      }
+    } catch { skipped++; } finally { if (conn) { try { conn.close(); } catch { /* already closed */ } } }
+    await yieldLoop();
+  }
+  rows.sort((a, b) => (b.h.lastUpdatedAt ?? b.h.createdAt ?? 0) - (a.h.lastUpdatedAt ?? a.h.createdAt ?? 0));
+  return found ? { rows: rows.slice(0, FALLBACK_MAX), skipped } : null;
+}
+
+async function readRows(conn, env) {
+  const tables = tableSet(conn);
+  const hasKV = tables.has('cursorDiskKV');
+  let r = tables.has('composerHeaders') ? readHeaders(conn, env, hasKV) : null;
+  if (!r && hasKV) r = await readComposerData(conn, env);
+  return r;
 }
 
 export function createCursorAdapter({ loadSqlite = () => import('node:sqlite'), sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
@@ -130,12 +230,17 @@ export function createCursorAdapter({ loadSqlite = () => import('node:sqlite'), 
       let conn = null;
       try {
         conn = new mod.DatabaseSync(dbPath, { readOnly: true });
-        read = readRows(conn, env);
+        read = await readRows(conn, env);
         break;
       } catch (e) {
         if (!isBusy(e) || attempt >= RETRY_DELAYS.length) throw e;
         await sleep(RETRY_DELAYS[attempt]);
       } finally { if (conn) { try { conn.close(); } catch { /* already closed */ } } }
+    }
+    let viaWorkspace = false;
+    if (!read) { read = await readWorkspaceComposers(mod, env); viaWorkspace = !!read; }
+    if (!read) {
+      return { sessions: [], skipped: 0, notes: ['unsupported Cursor data layout'] };
     }
     const tracked = await trackingTitles(mod, env);
     const parentOf = new Map();
@@ -168,7 +273,7 @@ export function createCursorAdapter({ loadSqlite = () => import('node:sqlite'), 
       });
     }
     const value = { sessions, skipped: read.skipped, notes: [] };
-    cache.set('result', { fp, value });
+    if (!viaWorkspace) cache.set('result', { fp, value });   // workspace DBs are not in the fingerprint
     return value;
   }
   return {
