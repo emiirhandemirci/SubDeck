@@ -205,3 +205,18 @@ export function lineDiff(a, b) {
   for (const s of x.slice(x.length - t)) out.push({ t: ' ', s });
   return out;
 }
+
+/** Header badge status of a detected source: "scanning…" while a first or slow scan is still running, else its health. */
+export function sourceStatus(s) { return s && s.scanning ? 'scanning…' : (s && s.health) || 'ok'; }
+
+/** Text for an empty project list. A source that is still scanning or failed is never reported as "no sessions". */
+export function emptyProjectsText(sources, days) {
+  const all = Array.isArray(sources) ? sources : [];
+  if (!all.length) return 'Scanning…';
+  const scanning = all.filter(s => s.detected && s.scanning);
+  if (scanning.length) return `Scanning ${scanning.map(s => s.label).join(', ')} history…`;
+  const failed = all.filter(s => s.health === 'error');
+  if (failed.length) return failed.map(s => `${s.label}: ${s.lastError || 'error'}`).join('; ');
+  if (!all.some(s => s.detected)) return 'No supported AI coding tool data found (looked for: ' + all.map(s => s.label).join(', ') + ').';
+  return `No sessions in the last ${days} days.`;
+}

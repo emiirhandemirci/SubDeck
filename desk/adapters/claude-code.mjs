@@ -41,9 +41,8 @@ function usageSum(u) {
 
 const firstLine = s => String(s).split('\n').find(l => l.trim()) || '';
 
-function assistantActivity(r) {
+function assistantActivity(r, at = toIso(r.timestamp)) {
   const c = r.message.content;
-  const at = toIso(r.timestamp);
   if (typeof c === 'string') return { at, kind: 'assistant', toolName: null, summary: clip(firstLine(c), 80) };
   if (!Array.isArray(c) || !c.length) return null;
   const last = c[c.length - 1];
@@ -56,10 +55,9 @@ function assistantActivity(r) {
   return { at, kind: 'assistant', toolName: null, summary: null };
 }
 
-function userActivity(r) {
+function userActivity(r, at = toIso(r.timestamp)) {
   if (r.isMeta) return null;
   const c = r.message.content;
-  const at = toIso(r.timestamp);
   if (Array.isArray(c) && c.some(b => b && b.type === 'tool_result')) return { at, kind: 'tool', toolName: null, summary: null };
   return { at, kind: 'user', toolName: null, summary: null };   // user prompts are never summarized
 }
@@ -75,20 +73,21 @@ export function summarizeRecords(records, { fromStart = true } = {}) {
   const out = { tokens: null, model: null, customTitle: null, aiTitle: null, lastActivity: null, runStartedAt: null, ended: null, pending: null, stamps: [] };
   let prevEnded = fromStart;   // true: the next prompt-like user record starts a new run
   for (const r of records) {
+    const ts = r.timestamp === undefined ? null : toIso(r.timestamp);   // once per record: Date parsing dominates this loop
     if (r.type === 'user' || r.type === 'assistant' || (r.type === 'attachment' && r.attachment && r.attachment.type === 'queued_command')) {
-      const sa = toIso(r.timestamp);
+      const sa = ts;
       if (sa) out.stamps.push(sa);   // timestamps only; used to see whether work continued after a Stop hook
     }
     if (r.type === 'user' && r.message && typeof r.message === 'object') out.pending = null;   // any answer or new prompt clears a pending question
     else if (r.type === 'assistant' && r.message && typeof r.message === 'object') {
       const c = r.message.content;
       const last = Array.isArray(c) && c.length ? c[c.length - 1] : null;
-      out.pending = last && last.type === 'tool_use' && BLOCKING_TOOLS.has(last.name) && toIso(r.timestamp) ? { at: toIso(r.timestamp), name: last.name } : null;
+      out.pending = last && last.type === 'tool_use' && BLOCKING_TOOLS.has(last.name) && ts ? { at: ts, name: last.name } : null;
     }
     if (r.type === 'user' && r.message && typeof r.message === 'object' && !isToolResultUser(r.message.content)) {
-      if (prevEnded) { out.runStartedAt = toIso(r.timestamp); out.ended = null; prevEnded = false; }
+      if (prevEnded) { out.runStartedAt = ts; out.ended = null; prevEnded = false; }
     } else if (r.type === 'assistant' && r.message && typeof r.message === 'object') {
-      const at = toIso(r.timestamp);
+      const at = ts;
       if (r.isApiErrorMessage === true) { out.ended = at ? { state: 'failed', at } : null; prevEnded = true; }
       else if (r.message.stop_reason === 'end_turn') { out.ended = at ? { state: 'finished', at } : null; prevEnded = true; }
       else { out.ended = null; prevEnded = false; }
@@ -99,10 +98,10 @@ export function summarizeRecords(records, { fromStart = true } = {}) {
       const t = usageSum(r.message.usage);
       if (t !== null) out.tokens = t;
       if (typeof r.message.model === 'string') out.model = r.message.model;
-      const a = assistantActivity(r);
+      const a = assistantActivity(r, ts);
       if (a) out.lastActivity = a;
     } else if (r.type === 'user' && r.message && typeof r.message === 'object') {
-      const a = userActivity(r);
+      const a = userActivity(r, ts);
       if (a) out.lastActivity = a;
     }
   }
@@ -176,6 +175,24 @@ export function completionsOf(o) {
   return out;
 }
 
+const NEEDLES = [Buffer.from('task-notification'), Buffer.from('"toolUseResult"')];
+
+/** Complete lines of all[0, end) that contain a needle, in file order. Byte search first: only matching lines are decoded. */
+function candidateLines(all, end) {
+  const ranges = new Map();   // line start -> line end
+  for (const n of NEEDLES) {
+    let i = all.indexOf(n);
+    while (i !== -1 && i < end) {
+      const s = all.lastIndexOf(0x0a, i) + 1;
+      let e = all.indexOf(0x0a, i);
+      if (e < 0 || e > end) e = end;
+      ranges.set(s, e);
+      i = all.indexOf(n, e);
+    }
+  }
+  return [...ranges].sort((a, b) => a[0] - b[0]).map(([s, e]) => all.toString('utf8', s, e));
+}
+
 /** Incremental parent/agent transcript scan (cache key c:<file>): completions per agent id plus ids of agents it spawned. */
 async function scanSpawns(file, st, cache) {
   const key = 'c:' + file;
@@ -186,16 +203,16 @@ async function scanSpawns(file, st, cache) {
     try {
       let pos = c.offset;
       let carry = Buffer.alloc(0);
+      const buf = Buffer.allocUnsafe(Math.min(CHUNK, st.size - pos));
       while (pos < st.size) {
-        const len = Math.min(CHUNK, st.size - pos);
-        const buf = Buffer.alloc(len);
+        const len = Math.min(buf.length, st.size - pos);
         const { bytesRead } = await fh.read(buf, 0, len, pos);
         if (!bytesRead) break;
         pos += bytesRead;
         const all = carry.length ? Buffer.concat([carry, buf.subarray(0, bytesRead)]) : buf.subarray(0, bytesRead);
         const nl = all.lastIndexOf(0x0a);
         if (nl < 0) { carry = Buffer.from(all); continue; }
-        for (const line of all.subarray(0, nl).toString('utf8').split('\n')) {
+        for (const line of candidateLines(all, nl)) {
           if (!line.includes('task-notification') && !(line.includes('"toolUseResult"') && line.includes('"agentId"'))) continue;
           let o; try { o = JSON.parse(line); } catch { continue; }
           if (!o || typeof o !== 'object') continue;
@@ -602,131 +619,200 @@ export async function readTeams(dir) {
 }
 const isLead = (agentType, member) => agentType === 'team-lead' || (member && member.agentType === 'team-lead');
 
-async function scan(env, { cache }) {
+export const SUB_GRACE_MS = 86400000;   // a session whose own transcript is older than cutoff - 1 day is skipped without looking at its sub-agents
+const IO_LIMIT = 8;          // concurrent file operations per level
+const SLUG_LIMIT = 4;        // project folders scanned at once
+const FULL_LIMIT = 4;        // whole-transcript completion scans at once (8 MB buffer each)
+const PARTIAL_EVERY_MS = 250;
+export const scanStats = { lastFirstPhaseMs: null, lastMs: null };   // test observable
+
+/** Runs fn over items with at most `limit` in flight; results keep the input order. */
+export async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const k = next++; out[k] = await fn(items[k], k); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+const yieldLoop = () => new Promise(r => setImmediate(r));
+
+/** Phase 1 for one session file: stat, sub-agent listing, transcript heads/tails. null when outside the window. */
+async function readGroup(slugDir, slugName, fileName, cutoff, cache) {
+  const uuid = fileName.slice(0, -'.jsonl'.length);
+  const file = path.join(slugDir, fileName);
+  const st = await statOrNull(file);
+  if (!st || st.mtimeMs < cutoff - SUB_GRACE_MS) return null;
+  const subDir = path.join(slugDir, uuid, 'subagents');
+  const subEnts = (await readdirSafe(subDir)).map(s => ({ s, m: /^agent-(.+)\.jsonl$/.exec(s.name) })).filter(x => x.m && x.s.isFile());
+  const subs = (await mapLimit(subEnts, IO_LIMIT, async ({ s, m }) => {
+    const f = path.join(subDir, s.name);
+    const sst = await statOrNull(f);
+    return sst ? { agentId: m[1], file: f, st: sst } : null;
+  })).filter(Boolean);
+  if (subs.reduce((mx, x) => Math.max(mx, x.st.mtimeMs), st.mtimeMs) < cutoff) return null;
+  const top = await readTranscript(file, st, cache, { growIfNoUsage: false });
+  await mapLimit(subs, IO_LIMIT, async x => {
+    x.tr = await readTranscript(x.file, x.st, cache, { growIfNoUsage: true });
+    x.meta = await readMeta(x.file.replace(/\.jsonl$/, '.meta.json'), cache);
+    x.spawned = new Set(); x.comps = new Map(); x.parentAgent = null;
+  });
+  const projectPath = top.cwd || (subs.find(x => x.tr.cwd) || {}).tr?.cwd || null;
+  return { uuid, file, st, top, subs, completions: new Map(), byAgent: new Map(subs.map(x => [x.agentId, x])), projectPath, projectLabel: projectPath ? null : slugName };
+}
+
+const SPAWN_MARGIN_MS = 10000;   // clock and mtime granularity slack
+/** p may have spawned c: c started after p started and no later than p's last write. Unknown start times never rule it out. */
+export function mayHaveSpawned(p, c) {
+  const ps = Date.parse(p.tr && p.tr.createdAt), cs = Date.parse(c.tr && c.tr.createdAt);
+  if (!Number.isFinite(ps) || !Number.isFinite(cs)) return true;
+  return cs >= ps - SPAWN_MARGIN_MS && cs <= p.st.mtimeMs + SPAWN_MARGIN_MS;
+}
+
+/** Phase 2 for one group: whole-transcript completion records and nested sub-agent parents (incremental after the first scan). */
+async function resolveSpawns(g, cache) {
+  if (!g.subs.length) return;
+  g.completions = await readCompletions(g.file, g.st, cache);
+  // nested sub-agents: the transcript that spawned an agent (Agent tool result / task notification) is its real parent.
+  // With a single sub-agent there is no other sub-agent to be its parent, so its own transcript need not be scanned.
+  // A sub-agent can only have spawned another one that started within its own lifetime; others are not read at all.
+  if (g.subs.length > 1) {
+    await mapLimit(g.subs, IO_LIMIT, async s => {
+      if (!g.subs.some(c => c !== s && mayHaveSpawned(s, c))) return;
+      s.spawned = await readSpawned(s.file, s.st, cache);
+      s.comps = await readCompletions(s.file, s.st, cache);
+    });
+  }
+  for (const s of g.subs) {
+    s.parentAgent = null;
+    for (const p of g.subs) if (p !== s && p.spawned.has(s.agentId)) { s.parentAgent = p.agentId; break; }
+  }
+  for (const s of g.subs) {   // a cycle (should never happen) falls back to the session as parent
+    const seenIds = new Set([s.agentId]);
+    for (let p = s.parentAgent; p; p = g.byAgent.get(p).parentAgent) {
+      if (seenIds.has(p)) { s.parentAgent = null; break; }
+      seenIds.add(p);
+    }
+  }
+}
+
+/** Builds the adapter sessions of one group (the session and its sub-agents). */
+function groupSessions(g, hookInfo, teams) {
+  const sessions = [];
+  const hooks = hookInfo ? hookInfo.agents : new Map();
+  const notifs = hookInfo ? hookInfo.notifs : new Map();
+  const notifTypes = hookInfo ? hookInfo.notifTypes : new Map();
+  const fails = hookInfo ? hookInfo.fails : new Map();
+  const efforts = hookInfo ? hookInfo.efforts : new Map();
+  const base = { tool: 'claude-code', projectPath: g.projectPath, projectLabel: g.projectLabel, archived: false };
+  const mt = msToIso(g.st.mtimeMs);
+  const title = clip(g.top.customTitle, 120) ? { title: clip(g.top.customTitle, 120), titleSource: 'explicit' }
+    : clip(g.top.aiTitle, 120) ? { title: clip(g.top.aiTitle, 120), titleSource: 'summary' }
+    : { title: `Session ${g.uuid.slice(0, 8)}`, titleSource: 'fallback' };
+  sessions.push({ ...base, nativeId: g.uuid, parentNativeId: null, depth: 0, ...title, agentType: null, model: g.top.model, effort: efforts.get('s:' + g.uuid) || null,
+    createdAt: g.top.createdAt || msToIso(g.st.birthtimeMs || g.st.mtimeMs), updatedAt: mt, endedAt: null,
+    tokens: { context: g.top.tokens, total: null }, lastActivity: g.top.lastActivity,
+    refs: { file: g.file, db: null, key: null }, ...(failedBasis(fails.get('s:' + g.uuid), g.st.mtimeMs) ? { failure: hookFailure(fails.get('s:' + g.uuid)) } : {}),
+    stateBasis: failedBasis(fails.get('s:' + g.uuid), g.st.mtimeMs) || waitingBasis(g.top.pending, notifs.get('s:' + g.uuid), g.st.mtimeMs, mt, notifTypes.get('s:' + g.uuid)) || { kind: 'mtime', at: mt, stateSource: 'mtime' } });
+  const seen = new Set();
+  for (const s of g.subs) {
+    seen.add(s.agentId);
+    const member = teams.get(s.agentId) || null;
+    if (isLead(s.meta && s.meta.agentType, member)) continue;   // the team lead is the main session, not an agent
+    const rawHook = hooks.get(s.agentId);
+    const resumed = resumedAfterStop(rawHook, s.tr.stamps);
+    const hook = resumed ? { ...rawHook, stop: null } : rawHook;
+    const smt = msToIso(s.st.mtimeMs);
+    const parentSub = s.parentAgent ? g.byAgent.get(s.parentAgent) : null;
+    let notif = [g.completions.get(s.agentId), parentSub && parentSub.comps.get(s.agentId)].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+    if (resumed && notif && Date.parse(notif.at) < Date.parse(resumed)) notif = null;   // belongs to the run before the resume
+    let done = latestCompletion(s.tr, notif);
+    if (resumed && done && Date.parse(done.at) < Date.parse(resumed)) done = null;   // that end belongs to the run before the resume
+    const runStartedAt = (hook && hook.stop) ? null : (resumed && !(done && done.state)) ? resumed : ((done && done.runStartedAt) || (resumed) || s.tr.runStartedAt || null);
+    const fail = fails.get('a:' + s.agentId);
+    const failB = failedBasis(fail, s.st.mtimeMs);
+    sessions.push({ ...base, nativeId: s.agentId, parentNativeId: s.parentAgent || g.uuid, depth: 1, ...(member && member.name ? { title: clip(member.name, 120), titleSource: 'meta' } : subTitle(s.meta, s.agentId)),
+      agentType: (s.meta && s.meta.agentType) || (hook && hook.agentType) || (member && member.agentType) || null,
+      effort: efforts.get('a:' + s.agentId) || null,
+      model: s.tr.model || (s.meta && s.meta.model) || null,
+      createdAt: earlier(s.tr.createdAt, hook && hook.start) || smt, updatedAt: smt, endedAt: (hook && hook.stop) || (done && done.at) || null,
+      ...(runStartedAt ? { runStartedAt } : {}),
+      tokens: { context: s.tr.tokens, total: null }, lastActivity: s.tr.lastActivity,
+      refs: { file: s.file, db: null, key: null }, failure: failB && (!s.tr.failure || s.tr.failure.kind === 'unknown') ? hookFailure(fail) : s.tr.failure,
+      stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt, notifTypes.get('a:' + s.agentId)), failB) });
+  }
+  for (const [agentId, hook] of hooks) {
+    if (seen.has(agentId) || hook.sessionId !== g.uuid) continue;
+    // Stop-only hook events with no start, no agent type and no transcript file (seen is built from the files on disk) are not agents
+    if (!hook.start && !hook.agentType) continue;
+    const member = teams.get(agentId) || null;
+    if (isLead(hook.agentType, member)) continue;   // lead events carry no sub-agent of their own
+    const derived = hook.transcriptPath ? path.join(path.dirname(hook.transcriptPath), g.uuid, 'subagents', `agent-${agentId}.jsonl`) : null;
+    sessions.push({ ...base, nativeId: agentId, parentNativeId: g.uuid, depth: 1,
+      ...(member && member.name ? { title: clip(member.name, 120), titleSource: 'meta' } : { title: clip(hook.agentType, 120) || `agent ${agentId.slice(0, 8)}`, titleSource: 'fallback' }),
+      agentType: hook.agentType || (member && member.agentType) || null, effort: efforts.get('a:' + agentId) || null, model: null, createdAt: hook.start || hook.stop, updatedAt: hook.stop || hook.start,
+      endedAt: hook.stop || null, tokens: { context: null, total: null }, lastActivity: null,
+      refs: { file: derived, db: null, key: null }, ...(fails.get('a:' + agentId) ? { failure: hookFailure(fails.get('a:' + agentId)) } : {}),
+      stateBasis: subBasis(hook, null, null, null, failedBasis(fails.get('a:' + agentId), 0)) });
+  }
+  return sessions;
+}
+
+/**
+ * Two phases. Phase 1 reads only stats and transcript heads/tails, project by project, yielding to the event loop between
+ * projects; when the caller passes ctx.partial, sessions found so far are handed to it (throttled). Phase 2 scans whole
+ * transcripts of sessions with sub-agents for completion records (incremental, so cheap after the first scan).
+ */
+async function scan(env, ctx = {}) {
+  const { cache } = ctx;
+  const partial = typeof ctx.partial === 'function' ? ctx.partial : null;
+  const t0 = Date.now();
   const cutoff = env.now() - env.days * 86400000;
   let skipped = 0;
-  const groups = [];   // { top, subs, projectPath, projectLabel }
-  for (const slug of await readdirSafe(env.claudeProjectsDir)) {
-    if (!slug.isDirectory()) continue;
-    const slugDir = path.join(env.claudeProjectsDir, slug.name);
-    for (const e of await readdirSafe(slugDir)) {
-      if (!e.isFile() || !e.name.endsWith('.jsonl')) continue;
-      const uuid = e.name.slice(0, -'.jsonl'.length);
-      const file = path.join(slugDir, e.name);
-      const st = await statOrNull(file);
-      if (!st) continue;
-      const subDir = path.join(slugDir, uuid, 'subagents');
-      const subs = [];
-      for (const s of await readdirSafe(subDir)) {
-        const m = /^agent-(.+)\.jsonl$/.exec(s.name);
-        if (!m || !s.isFile()) continue;
-        const f = path.join(subDir, s.name);
-        const sst = await statOrNull(f);
-        if (sst) subs.push({ agentId: m[1], file: f, st: sst });
-      }
-      if (Math.max(st.mtimeMs, ...subs.map(s => s.st.mtimeMs)) < cutoff) continue;
-      const top = await readTranscript(file, st, cache, { growIfNoUsage: false });
-      skipped += top.bad;
-      const completions = subs.length ? await readCompletions(file, st, cache) : new Map();
-      const byAgent = new Map(subs.map(s => [s.agentId, s]));
-      for (const s of subs) {
-        // nested sub-agents: the transcript that spawned an agent (Agent tool result / task notification) is its real parent
-        s.spawned = await readSpawned(s.file, s.st, cache);
-        s.comps = await readCompletions(s.file, s.st, cache);
-      }
-      for (const s of subs) {
-        s.parentAgent = null;
-        for (const p of subs) if (p !== s && p.spawned.has(s.agentId)) { s.parentAgent = p.agentId; break; }
-      }
-      for (const s of subs) {   // a cycle (should never happen) falls back to the session as parent
-        const seenIds = new Set([s.agentId]);
-        for (let p = s.parentAgent; p; p = byAgent.get(p).parentAgent) {
-          if (seenIds.has(p)) { s.parentAgent = null; break; }
-          seenIds.add(p);
-        }
-      }
-      for (const s of subs) {
-        s.tr = await readTranscript(s.file, s.st, cache, { growIfNoUsage: true });
-        s.meta = await readMeta(s.file.replace(/\.jsonl$/, '.meta.json'), cache);
-        skipped += s.tr.bad;
-      }
-      const projectPath = top.cwd || (subs.find(s => s.tr.cwd) || {}).tr?.cwd || null;
-      groups.push({ uuid, file, st, top, subs, completions, byAgent, projectPath, projectLabel: projectPath ? null : slug.name });
-    }
-  }
-  // hook events, once per project
-  const hooksByKey = new Map();
+  const hooksByKey = new Map();   // project key -> Promise<hook info>, once per project
   const watchExtra = [];
-  for (const g of groups) {
-    if (!g.projectPath) continue;
+  const hooksFor = g => {
+    if (!g.projectPath) return null;
     const key = projectKey(g.projectPath, env.platform);
-    if (hooksByKey.has(key)) continue;
-    const h = await readHooks(g.projectPath, cache, env);
-    hooksByKey.set(key, h);
-    skipped += h.bad;
-    for (const d of h.dirs) watchExtra.push(d);
-  }
+    if (!hooksByKey.has(key)) {
+      hooksByKey.set(key, readHooks(g.projectPath, cache, env).then(h => { skipped += h.bad; for (const d of h.dirs) watchExtra.push(d); return h; }));
+    }
+    return hooksByKey.get(key);
+  };
   const teams = await readTeams(path.join(path.dirname(env.claudeProjectsDir), 'teams'));
+  const slugs = (await readdirSafe(env.claudeProjectsDir)).filter(e => e.isDirectory());
+  const perSlug = new Array(slugs.length);
+  let done = 0, lastPartial = 0;
+  const publish = force => {
+    if (!partial) return;
+    const t = Date.now();
+    if (!force && t - lastPartial < PARTIAL_EVERY_MS) return;
+    lastPartial = t;
+    const sessions = [];
+    for (const list of perSlug) if (list) for (const g of list) sessions.push(...g.sessions);
+    partial({ sessions, skipped, notes: [], watchExtra: [...watchExtra], progress: { projects: done, total: slugs.length } });
+  };
+  await mapLimit(slugs, SLUG_LIMIT, async (slug, i) => {
+    const slugDir = path.join(env.claudeProjectsDir, slug.name);
+    const names = (await readdirSafe(slugDir)).filter(e => e.isFile() && e.name.endsWith('.jsonl')).map(e => e.name);
+    const groups = (await mapLimit(names, IO_LIMIT, n => readGroup(slugDir, slug.name, n, cutoff, cache))).filter(Boolean);
+    for (const g of groups) {
+      skipped += g.top.bad;
+      for (const s of g.subs) skipped += s.tr.bad;
+      g.hookInfo = await hooksFor(g);
+      if (partial) g.sessions = groupSessions(g, g.hookInfo, teams);
+    }
+    perSlug[i] = groups;
+    done++;
+    publish(false);
+    await yieldLoop();   // keep the server responsive between projects
+  });
+  publish(true);
+  scanStats.lastFirstPhaseMs = Date.now() - t0;
+  const groups = perSlug.flat();
+  await mapLimit(groups, FULL_LIMIT, g => resolveSpawns(g, cache));
   const sessions = [];
-  for (const g of groups) {
-    const hookInfo = g.projectPath ? hooksByKey.get(projectKey(g.projectPath, env.platform)) : null;
-    const hooks = hookInfo ? hookInfo.agents : new Map();
-    const notifs = hookInfo ? hookInfo.notifs : new Map();
-    const notifTypes = hookInfo ? hookInfo.notifTypes : new Map();
-    const fails = hookInfo ? hookInfo.fails : new Map();
-    const efforts = hookInfo ? hookInfo.efforts : new Map();
-    const base = { tool: 'claude-code', projectPath: g.projectPath, projectLabel: g.projectLabel, archived: false };
-    const mt = msToIso(g.st.mtimeMs);
-    const title = clip(g.top.customTitle, 120) ? { title: clip(g.top.customTitle, 120), titleSource: 'explicit' }
-      : clip(g.top.aiTitle, 120) ? { title: clip(g.top.aiTitle, 120), titleSource: 'summary' }
-      : { title: `Session ${g.uuid.slice(0, 8)}`, titleSource: 'fallback' };
-    sessions.push({ ...base, nativeId: g.uuid, parentNativeId: null, depth: 0, ...title, agentType: null, model: g.top.model, effort: efforts.get('s:' + g.uuid) || null,
-      createdAt: g.top.createdAt || msToIso(g.st.birthtimeMs || g.st.mtimeMs), updatedAt: mt, endedAt: null,
-      tokens: { context: g.top.tokens, total: null }, lastActivity: g.top.lastActivity,
-      refs: { file: g.file, db: null, key: null }, ...(failedBasis(fails.get('s:' + g.uuid), g.st.mtimeMs) ? { failure: hookFailure(fails.get('s:' + g.uuid)) } : {}),
-      stateBasis: failedBasis(fails.get('s:' + g.uuid), g.st.mtimeMs) || waitingBasis(g.top.pending, notifs.get('s:' + g.uuid), g.st.mtimeMs, mt, notifTypes.get('s:' + g.uuid)) || { kind: 'mtime', at: mt, stateSource: 'mtime' } });
-    const seen = new Set();
-    for (const s of g.subs) {
-      seen.add(s.agentId);
-      const member = teams.get(s.agentId) || null;
-      if (isLead(s.meta && s.meta.agentType, member)) continue;   // the team lead is the main session, not an agent
-      const rawHook = hooks.get(s.agentId);
-      const resumed = resumedAfterStop(rawHook, s.tr.stamps);
-      const hook = resumed ? { ...rawHook, stop: null } : rawHook;
-      const smt = msToIso(s.st.mtimeMs);
-      const parentSub = s.parentAgent ? g.byAgent.get(s.parentAgent) : null;
-      let notif = [g.completions.get(s.agentId), parentSub && parentSub.comps.get(s.agentId)].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
-      if (resumed && notif && Date.parse(notif.at) < Date.parse(resumed)) notif = null;   // belongs to the run before the resume
-      let done = latestCompletion(s.tr, notif);
-      if (resumed && done && Date.parse(done.at) < Date.parse(resumed)) done = null;   // that end belongs to the run before the resume
-      const runStartedAt = (hook && hook.stop) ? null : (resumed && !(done && done.state)) ? resumed : ((done && done.runStartedAt) || (resumed) || s.tr.runStartedAt || null);
-      const fail = fails.get('a:' + s.agentId);
-      const failB = failedBasis(fail, s.st.mtimeMs);
-      sessions.push({ ...base, nativeId: s.agentId, parentNativeId: s.parentAgent || g.uuid, depth: 1, ...(member && member.name ? { title: clip(member.name, 120), titleSource: 'meta' } : subTitle(s.meta, s.agentId)),
-        agentType: (s.meta && s.meta.agentType) || (hook && hook.agentType) || (member && member.agentType) || null,
-        effort: efforts.get('a:' + s.agentId) || null,
-        model: s.tr.model || (s.meta && s.meta.model) || null,
-        createdAt: earlier(s.tr.createdAt, hook && hook.start) || smt, updatedAt: smt, endedAt: (hook && hook.stop) || (done && done.at) || null,
-        ...(runStartedAt ? { runStartedAt } : {}),
-        tokens: { context: s.tr.tokens, total: null }, lastActivity: s.tr.lastActivity,
-        refs: { file: s.file, db: null, key: null }, failure: failB && (!s.tr.failure || s.tr.failure.kind === 'unknown') ? hookFailure(fail) : s.tr.failure,
-        stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt, notifTypes.get('a:' + s.agentId)), failB) });
-    }
-    for (const [agentId, hook] of hooks) {
-      if (seen.has(agentId) || hook.sessionId !== g.uuid) continue;
-      // Stop-only hook events with no start, no agent type and no transcript file (seen is built from the files on disk) are not agents
-      if (!hook.start && !hook.agentType) continue;
-      const member = teams.get(agentId) || null;
-      if (isLead(hook.agentType, member)) continue;   // lead events carry no sub-agent of their own
-      const derived = hook.transcriptPath ? path.join(path.dirname(hook.transcriptPath), g.uuid, 'subagents', `agent-${agentId}.jsonl`) : null;
-      sessions.push({ ...base, nativeId: agentId, parentNativeId: g.uuid, depth: 1,
-        ...(member && member.name ? { title: clip(member.name, 120), titleSource: 'meta' } : { title: clip(hook.agentType, 120) || `agent ${agentId.slice(0, 8)}`, titleSource: 'fallback' }),
-        agentType: hook.agentType || (member && member.agentType) || null, effort: efforts.get('a:' + agentId) || null, model: null, createdAt: hook.start || hook.stop, updatedAt: hook.stop || hook.start,
-        endedAt: hook.stop || null, tokens: { context: null, total: null }, lastActivity: null,
-        refs: { file: derived, db: null, key: null }, ...(fails.get('a:' + agentId) ? { failure: hookFailure(fails.get('a:' + agentId)) } : {}),
-        stateBasis: subBasis(hook, null, null, null, failedBasis(fails.get('a:' + agentId), 0)) });
-    }
-  }
+  for (const g of groups) sessions.push(...groupSessions(g, g.hookInfo, teams));
+  scanStats.lastMs = Date.now() - t0;
   return { sessions, skipped, notes: [], watchExtra };
 }
 

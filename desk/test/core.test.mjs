@@ -77,9 +77,15 @@ test('timeout and throw are isolated; previous sessions kept', async () => {
   const src = Object.fromEntries(s.sources.map(x => [x.id, x]));
   assert.equal(src['claude-code'].health, 'error');
   assert.equal(src['claude-code'].lastError, 'boom');
-  assert.equal(src.cursor.health, 'error');
-  assert.equal(src.cursor.lastError, 'scan timed out after 5 s');
+  assert.equal(src.cursor.health, 'degraded');   // a slow rescan is a warning, not an error
+  assert.equal(src.cursor.lastError, 'slow scan, still running; showing previous data');
+  assert.equal(src.cursor.scanning, true);
   assert.equal(s.sessions.length, 1); // cursor session from the first scan kept
+  await new Promise(r => setTimeout(r, 300));   // the slow scan finishes in the background and publishes itself
+  const after = Object.fromEntries(core.snapshot().sources.map(x => [x.id, x]));
+  assert.equal(after.cursor.health, 'ok');
+  assert.equal(after.cursor.scanning, false);
+  assert.equal(after['claude-code'].health, 'error');
 });
 
 test('not detected and disabled adapters', async () => {

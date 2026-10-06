@@ -1,6 +1,6 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
-import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff } from './format.js';
+import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText } from './format.js';
 import { initSettings } from './settings.js';
 
 const $ = id => document.getElementById(id);
@@ -213,7 +213,7 @@ function renderSrcPanel() {
   if (!det.length) box.append(el('p', 'pop-empty', 'No supported tool found yet.'));
   for (const s of det) {
     const r = el('div', 'pop-row');
-    const head = el('div', 'pop-name'); head.append(el('span', `pop-dot ${s.health}`), el('span', null, `${s.label}: ${s.health}`));
+    const head = el('div', 'pop-name'); head.append(el('span', `pop-dot ${s.health}`), el('span', null, `${s.label}: ${sourceStatus(s)}`));
     r.append(head);
     for (const line of sourceTip(s).split('\n')) r.append(el('div', 'pop-sub', line));
     box.append(r);
@@ -273,7 +273,7 @@ function renderSources() {
   box.replaceChildren();
   for (const s of S.sources.filter(x => x.detected)) {
     const b = el('span', `badge src ${s.health} tool-${s.id}`);
-    b.append(document.createTextNode(`${s.label}: ${s.health}`));
+    b.append(document.createTextNode(`${s.label}: ${sourceStatus(s)}`));
     b.title = sourceTip(s);
     b.setAttribute('aria-label', b.title.split('\n').join('. '));
     box.append(b);
@@ -286,6 +286,7 @@ function renderSources() {
   const notices = $('notices');
   notices.replaceChildren();
   for (const s of S.sources) if (s.health === 'error') notices.append(el('div', 'notice error', `${s.label}: ${s.lastError || 'error'}`));
+  for (const s of S.sources) if (s.health !== 'error' && s.detected && s.scanning) notices.append(el('div', 'notice', `${s.label}: ${s.lastError || 'scanning…'}`));
 }
 
 // ---------- projects ----------
@@ -295,8 +296,7 @@ function renderProjectsInner() {
   const scroll = box.scrollTop;
   box.replaceChildren();
   const now = Date.now();
-  if (!S.sources.some(s => s.detected)) { box.append(el('p', 'empty', 'No supported AI coding tool data found (looked for: ' + S.sources.map(s => s.label).join(', ') + ').')); return; }
-  if (!S.projects.length) { box.append(el('p', 'empty', `No sessions in the last ${S.server ? S.server.days : 14} days.`)); return; }
+  if (!S.projects.length) { box.append(el('p', 'empty', emptyProjectsText(S.sources, S.server ? S.server.days : 14))); return; }
   const list = filterProjects(S.projects, { text: S.filter, onlyActive: S.onlyActive, showTemp: S.showTemp }, now);
   if (!list.length) { box.append(el('p', 'empty', 'No projects match.')); return; }
   for (const g of groupProjects(list, now)) {

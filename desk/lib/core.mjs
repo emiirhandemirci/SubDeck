@@ -4,22 +4,29 @@ import { projectKey, baseName, isInside } from './paths.mjs';
 import { deriveState, validateAdapterSession, makeSource, sessionIdOf, projectIdOf } from './model.mjs';
 
 const FAILURE_KINDS = ['test', 'permission', 'api', 'quota', 'timeout', 'tool', 'stuck', 'unknown'];
-const TIMEOUT_MSG = 'scan timed out after 5 s';
 
-function withTimeout(promise, ms) {
+function withTimeout(promise, ms, what) {
   let timer;
-  const t = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(TIMEOUT_MSG)), ms); });
+  const t = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} timed out after ${Math.round(ms / 1000)} s`)), ms); });
   return Promise.race([promise, t]).finally(() => clearTimeout(timer));
 }
 const firstLine = e => String((e && e.message) || e).split('\n')[0].slice(0, 200);
 
-export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) {
+/**
+ * Scan budgets: a scan that outlives its budget is not an error and its work is not thrown away. The caller stops waiting,
+ * the source keeps its previous result (or the partial result of a first scan) and shows a warning, and the scan goes on in
+ * the background and publishes its result when it ends. Only an adapter exception (or a hung detect) is an error.
+ * timeoutMs: budget of a rescan; firstTimeoutMs: budget of a source's first scan (cold caches, whole history).
+ * Adapters may report progress during a first scan through ctx.partial({ sessions, skipped, notes, progress: { projects } }).
+ */
+export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, firstTimeoutMs = 60000, publishMs = 1000 }) {
   const active = adapters.filter(a => !(env.disabled || []).includes(a.tool));
-  const sources = new Map(active.map(a => [a.tool, makeSource(a)]));
+  const sources = new Map(active.map(a => [a.tool, { ...makeSource(a), scanning: false, slow: false, scanProgress: null }]));
   const results = new Map();                       // tool -> last good AdapterResult
+  const partials = new Map();                      // tool -> partial AdapterResult of a first scan still running
   const caches = new Map(active.map(a => [a.tool, new Map()]));
   const lastScanStart = new Map();
-  const running = new Map();                       // tool -> in-flight Promise
+  const running = new Map();                       // tool -> in-flight Promise (scan loop, may outlive its waiters)
   const pending = new Set();                       // tools with a follow-up scan requested
   const listeners = [];
   const watchNotes = new Map();                    // tool -> note from the watcher (e.g. polling fallback)
@@ -27,32 +34,60 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
   let bases = new Map();                           // session id -> stateBasis (never served)
   let projectHashes = new Map();
   let sourcesHash = '';
+  let missed = null;                               // changes emitted before anyone listened, replayed to the first listener
 
   async function runAdapter(a) {
     const src = sources.get(a.tool);
     const t0 = now();
+    const first = !results.has(a.tool);
+    const budget = first ? firstTimeoutMs : timeoutMs;
+    let lastPublish = 0;
+    const ctx = { since: lastScanStart.get(a.tool) ?? null, cache: caches.get(a.tool) };
+    if (first) {
+      ctx.partial = r => {   // first scan only: show what was found so far
+        if (!r || results.has(a.tool)) return;
+        partials.set(a.tool, { ...r, sessions: r.sessions || [], skipped: r.skipped || 0, notes: r.notes || [] });
+        const n = r.progress && Number.isFinite(r.progress.projects) ? r.progress.projects : null;
+        if (n !== null) src.scanProgress = n;
+        const t = Date.now();
+        if (t - lastPublish >= publishMs) { lastPublish = t; rebuild(); }
+      };
+    }
     try {
-      src.detected = !!(await withTimeout(Promise.resolve(a.detect(env)), timeoutMs));
-      const r = src.detected
-        ? await withTimeout(a.scan(env, { since: lastScanStart.get(a.tool) ?? null, cache: caches.get(a.tool) }), timeoutMs)
-        : { sessions: [], skipped: 0, notes: [] };
+      src.detected = !!(await withTimeout(Promise.resolve(a.detect(env)), budget, 'detection'));
+      if (src.detected && first) { src.scanning = true; rebuild(); }
+      const r = src.detected ? await a.scan(env, ctx) : { sessions: [], skipped: 0, notes: [] };
       results.set(a.tool, { ...r, sessions: r.sessions || [], skipped: r.skipped || 0, notes: r.notes || [] });
+      partials.delete(a.tool);
       src.health = 'ok'; src.lastError = null;
     } catch (e) {
       src.health = 'error';
       src.lastError = firstLine(e);
     }
+    const late = src.slow;   // the waiters gave up: nobody else rebuilds for this result
+    src.scanning = false; src.slow = false; src.scanProgress = null;
     lastScanStart.set(a.tool, t0);
     src.lastScanAt = new Date(now()).toISOString();
     src.scanMs = now() - t0;
+    if (late) rebuild();
   }
 
+  /** Resolves when the scan loop of `a` ends or its budget runs out, whichever is first; never rejects. */
   function scanOne(a) {
-    if (running.has(a.tool)) { pending.add(a.tool); return running.get(a.tool); }
-    const p = (async () => { do { pending.delete(a.tool); await runAdapter(a); } while (pending.has(a.tool)); })()
-      .finally(() => running.delete(a.tool));
-    running.set(a.tool, p);
-    return p;
+    if (running.has(a.tool)) pending.add(a.tool);
+    else {
+      const p = (async () => { do { pending.delete(a.tool); await runAdapter(a); } while (pending.has(a.tool)); })()
+        .finally(() => running.delete(a.tool));
+      running.set(a.tool, p);
+    }
+    const loop = running.get(a.tool);
+    const budget = results.has(a.tool) ? timeoutMs : firstTimeoutMs;
+    let timer;
+    const t = new Promise(res => { timer = setTimeout(() => {
+      if (running.get(a.tool) === loop) { const src = sources.get(a.tool); src.slow = true; src.scanning = true; }
+      res();
+    }, budget); });
+    return Promise.race([loop, t]).finally(() => clearTimeout(timer));
   }
 
   function rebuild() {
@@ -62,7 +97,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
     const skippedByTool = new Map();
     const nativeIndex = new Map();
     for (const a of active) {
-      const r = results.get(a.tool);
+      const r = results.get(a.tool) || partials.get(a.tool);
       if (!r) continue;
       let skipped = r.skipped || 0;
       for (const s of r.sessions) {
@@ -116,16 +151,23 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
         running: own.filter(s => s.state === 'running').length, waiting: own.filter(s => s.state === 'waiting').length, skipped };
       if (src.health !== 'error') {
         const parts = [];
+        if (src.scanning) parts.push(scanNote(src, results.has(tool)));
         if (skipped > 0) parts.push(`${skipped} malformed item(s) skipped`);
-        parts.push(...(results.get(tool)?.notes || []));
+        parts.push(...((results.get(tool) || partials.get(tool))?.notes || []));
         if (watchNotes.get(tool)) parts.push(watchNotes.get(tool));
-        src.health = skipped > 0 ? 'degraded' : 'ok';
+        src.health = skipped > 0 || src.scanning ? 'degraded' : 'ok';   // a slow or unfinished scan is a warning, not an error
         src.lastError = parts.length ? parts.join('; ') : null;
       }
     }
     const lastScanAt = [...sources.values()].map(s => s.lastScanAt).filter(Boolean).sort().pop() || null;
     snap = { lastScanAt, sources: [...sources.values()].map(s => ({ ...s, counts: { ...s.counts } })), projects: projList, sessions };
     emitDiff();
+  }
+
+  function scanNote(src, hasPrevious) {
+    const so = src.scanProgress !== null ? ` (${src.scanProgress} project${src.scanProgress === 1 ? '' : 's'} so far)` : '';
+    if (!src.slow) return `scanning…${so}`;
+    return hasPrevious ? 'slow scan, still running; showing previous data' : `slow scan, still running; showing partial data${so}`;
   }
 
   function applyStates(sessions, t) {
@@ -168,11 +210,15 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
     const changed = [];
     for (const [id, h] of hashes) if (projectHashes.get(id) !== h) changed.push(id);
     for (const id of projectHashes.keys()) if (!hashes.has(id)) changed.push(id);
-    const sh = JSON.stringify(snap.sources.map(s => [s.id, s.detected, s.health, s.lastError, s.counts]));
+    const sh = JSON.stringify(snap.sources.map(s => [s.id, s.detected, s.health, s.lastError, s.counts, s.scanning, s.slow, s.scanProgress]));
     const sourcesChanged = sh !== sourcesHash;
     projectHashes = hashes; sourcesHash = sh;
     if (!changed.length && !sourcesChanged) return;
     const ev = { projects: changed, sources: sourcesChanged, at: new Date(now()).toISOString() };
+    if (!listeners.length) {   // e.g. the server subscribes only after the first scanAll; keep what it would have missed
+      missed = missed ? { projects: [...new Set([...missed.projects, ...changed])], sources: missed.sources || sourcesChanged, at: ev.at } : ev;
+      return;
+    }
     for (const fn of listeners) { try { fn(ev); } catch { /* a listener never breaks scans */ } }
   }
 
@@ -200,7 +246,10 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000 }) 
       }
       return out;
     },
-    onChanged(fn) { listeners.push(fn); },
+    onChanged(fn) {
+      listeners.push(fn);
+      if (missed) { const ev = missed; missed = null; setImmediate(() => { try { fn(ev); } catch { /* ignore */ } }); }
+    },
     setWatchNote(tool, note) { if (!sources.has(tool)) return; watchNotes.set(tool, note || null); rebuild(); },
   };
 }
