@@ -85,7 +85,8 @@ export function parseTask(text, id, { archived = false, file = null } = {}) {
   const handoff = parseHandoff(sections.handoff);
   const task = {
     id, title: fm.title || id, status, owner: fm.owner || '', agent: fm.agent || '', session: fm.session || '', transcript: fm.transcript || '',
-    blockedBy: parseList(fm['blocked-by']), writable: parseList(fm.writable), created: fm.created || '', updated: fm.updated || '',
+    blockedBy: parseList(fm['blocked-by']), writable: parseList(fm.writable),
+    role: fm.role || '', tool: fm.tool || '', model: fm.model || '', branch: fm.branch || '', worktree: fm.worktree || '', run: fm.run || '', created: fm.created || '', updated: fm.updated || '',
     archived, invalid, file,
   };
   return { task, body: body.length > BODY_CAP ? body.slice(0, BODY_CAP) : body, handoff };
@@ -130,7 +131,7 @@ export function mapBeads(raw, projectPath) {
     const deps = Array.isArray(b.dependencies) ? b.dependencies.filter(d => typeof d === 'string' || (d && typeof d === 'object' && (d.type === undefined || BEADS_BLOCKING.has(d.type)))).map(d => (typeof d === 'string' ? d : d.depends_on_id || d.id)).filter(x => typeof x === 'string') : [];
     out.push({ task: {
       id: b.id, title: String(b.title || b.id).slice(0, 200), status: st || 'open', owner: typeof b.assignee === 'string' ? b.assignee : '', agent: '', session: '', transcript: '',
-      blockedBy: deps, writable: [], created: typeof b.created_at === 'string' ? b.created_at : '', updated: typeof b.updated_at === 'string' ? b.updated_at : (typeof b.created_at === 'string' ? b.created_at : ''),
+      blockedBy: deps, writable: [], role: '', tool: '', model: '', branch: '', worktree: '', run: '', created: typeof b.created_at === 'string' ? b.created_at : '', updated: typeof b.updated_at === 'string' ? b.updated_at : (typeof b.created_at === 'string' ? b.created_at : ''),
       archived: (st || 'open') === 'done', invalid: !st, file: null, source: 'beads',
     }, body: typeof b.description === 'string' ? b.description.slice(0, BODY_CAP) : '', handoff: null });
   }

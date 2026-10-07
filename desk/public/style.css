@@ -387,3 +387,41 @@ button.danger:hover { background: var(--danger-bg); filter: brightness(1.1); }
 .linklike { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
 .linklike:hover { text-decoration: underline; }
 @media (max-width: 900px) { .tcols { grid-template-columns: repeat(6, 220px); } }
+
+/* Runs: badges, run-log view, roles table */
+.tag.runbadge { font-family: var(--mono); font-size: 11px; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); max-width: 100%; overflow-wrap: anywhere; }
+.badge.tool.tool-subdeck-run { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.tcard-run, .tcard-lastrun { display: flex; gap: 6px 8px; flex-wrap: wrap; align-items: center; font-size: 12px; min-width: 0; }
+.tcard-branch { overflow-wrap: anywhere; }
+.tag.runstatus { font-weight: 600; }
+.tag.rs-ok { color: var(--running); }
+.tag.rs-running { color: var(--accent); }
+.tag.rs-failed, .tag.rs-quota, .tag.rs-auth, .tag.rs-timeout, .tag.rs-violation, .tag.rs-cancelled { color: var(--failed); }
+.runlog { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; margin-top: var(--s2); }
+.runlog-bar { display: flex; gap: var(--s2); flex-wrap: wrap; align-items: center; font-size: 12px; }
+.runlog-bar select { font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 2px 6px; }
+.runlog-part { min-width: 0; }
+.runlog-pre { margin: 2px 0 0; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12px; background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 6px 8px; }
+.runlog-pre.final { max-height: 200px; }
+.tcard-runlog { min-width: 0; }
+.rprivacy { margin: 0 0 var(--s2); }
+.rwrap { overflow-x: auto; max-width: 100%; }
+.rtable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rtable th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.rtable td { padding: 6px; border-top: 1px solid var(--border); vertical-align: middle; }
+.rtable select, .rtable input { width: 100%; min-width: 80px; font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--border-strong); border-radius: var(--r-sm); padding: 5px 7px; }
+.rtable input[type=number] { min-width: 72px; }
+.rtable select { min-width: 118px; }
+.rtable :disabled { opacity: .6; }
+.rname { font-weight: 600; }
+.rnote { display: block; font-size: 11px; }
+.radd { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s3); }
+.radd input { flex: 1 1 200px; min-width: 0; font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--border-strong); border-radius: var(--r-sm); padding: 5px 7px; }
+@media (max-width: 700px) {
+  .rwrap { overflow: visible; }
+  .rtable, .rtable tbody, .rtable tr, .rtable td { display: block; width: 100%; }
+  .rtable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .rtable tr { border: 1px solid var(--border); border-radius: var(--r-sm); padding: 6px 8px; margin-bottom: var(--s2); }
+  .rtable td { border: 0; padding: 3px 0; display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 6px; align-items: center; }
+  .rtable td::before { content: attr(data-label); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+}

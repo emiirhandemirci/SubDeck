@@ -3,7 +3,7 @@
 
 export const GROUPS = [
   ['models', 'Models'], ['notify', 'Notifications'], ['push', 'Push'], ['guard', 'Guard rules'],
-  ['protect', 'Protected paths'], ['resources', 'Protected resources'], ['tasks', 'Tasks'], ['context', 'Context window'], ['statusline', 'Status line'],
+  ['protect', 'Protected paths'], ['resources', 'Protected resources'], ['tasks', 'Tasks'], ['roles', 'Roles'], ['context', 'Context window'], ['statusline', 'Status line'],
 ];
 export const THEMES = [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']];
 
@@ -36,6 +36,35 @@ export function groupItems(settings) {
   return GROUPS.map(([id, title]) => ({ id, title, items: settings.filter(s => s.group === id) }))
     .concat([{ id: 'other', title: 'Other', items: settings.filter(s => !known.has(s.group)) }])
     .filter(g => g.items.length);
+}
+
+// ---- roles: settings.sh rows roles.<role>.<field> shown as one table row per role ----
+export const ROLE_KEY_RE = /^roles\.([a-z][a-z0-9-]{0,23})\.(tool|model|args|cmd|timeout)$/;
+export const ROLE_FIXED = ['manager', 'worker', 'worker-heavy', 'researcher', 'verifier'];
+export const ROLE_NAME_RE = /^[a-z][a-z0-9-]{0,23}$/;
+export const ROLE_PRIVACY = "Code a mapped role works on is sent to that tool's provider.";
+export const ROLE_MANAGER_NOTE = 'informational: start this CLI yourself';
+/** [{ role, fields: {tool, model, args, cmd, timeout}, source }] in settings order (fixed roles first as settings.sh lists them). */
+export function roleRows(settings) {
+  const by = new Map();
+  for (const it of settings || []) {
+    const m = ROLE_KEY_RE.exec(String(it.key || ''));
+    if (!m) continue;
+    if (!by.has(m[1])) by.set(m[1], { role: m[1], fields: {}, source: 'default' });
+    const r = by.get(m[1]);
+    r.fields[m[2]] = it;
+    if (m[2] === 'tool') r.source = it.source || 'default';
+  }
+  return [...by.values()];
+}
+/** Problem with a draft/typed value of one role field, or null. */
+export function roleFieldError(field, v) {
+  const s = String(v);
+  if (field === 'timeout') { const n = Number(s); return Number.isInteger(n) && n >= 60 && n <= 86400 ? null : 'timeout must be 60-86400 seconds'; }
+  if (field === 'model') return s === '' || /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/.test(s) ? null : 'model has characters that are not allowed';
+  if (field === 'args') return s.length <= 300 && !/["'\\\u0000-\u001f]/.test(s) ? null : 'args: max 300 characters, no quotes, backslashes or control characters';
+  if (field === 'cmd') return s.length <= 500 && s.includes('{prompt_file}') && !/[\u0000-\u001f]/.test(s) ? null : 'cmd must contain {prompt_file}';
+  return null;
 }
 
 export function applyTheme(t) {
@@ -97,21 +126,24 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
   async function save(item, next) {
     const need = confirmText(item, next);
     if (need && !(await confirmDialog(need))) { render(); return; }
-    st.busy = true; st.gen++; st.msg = { bad: false, text: `Saving ${item.key}…` }; render();
+    return post({ [item.key]: next }, item.key, () => {
+      item.value = item.type === 'list' ? listValue(next) : item.type === 'int' ? Number(next) : next;   // optimistic; the silent reload below confirms it
+      item.source = st.scope;
+      if (item.key === 'notify' && st.scope === 'user' && onNotify) onNotify(isOn(next));   // keep the header bell in step
+    });
+  }
+  /** One POST /api/settings with one or more keys; `ok` runs after a successful save (optimistic update). */
+  async function post(set, label, ok) {
+    st.busy = true; st.gen++; st.msg = { bad: false, text: `Saving ${label}…` }; render();
     try {
       const meta = document.querySelector('meta[name="subdeck-token"]');
       const p = project();
       const r = await fetch('/api/settings', { method: 'POST', cache: 'no-store',
         headers: { 'Content-Type': 'application/json', 'X-SubDeck-Token': meta ? meta.content : '' },
-        body: JSON.stringify({ set: { [item.key]: next }, project: st.scope === 'project' && p ? p.id : null }) });
+        body: JSON.stringify({ set, project: st.scope === 'project' && p ? p.id : null }) });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) st.msg = { bad: true, text: body.error || `Save failed (${r.status})` };
-      else {
-        st.msg = { bad: false, text: `Saved ${item.key}` };
-        item.value = item.type === 'list' ? listValue(next) : item.type === 'int' ? Number(next) : next;   // optimistic; the silent reload below confirms it
-        item.source = st.scope;
-        if (item.key === 'notify' && st.scope === 'user' && onNotify) onNotify(isOn(next));   // keep the header bell in step
-      }
+      else { st.msg = { bad: false, text: `Saved ${label}` }; if (ok) ok(); }
     } catch { st.msg = { bad: true, text: 'Save failed: Desk is unreachable' }; }
     st.busy = false;
     render();
@@ -220,6 +252,110 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
     return r;
   }
 
+  // ---- roles table ----
+  const draft = new Map();   // role -> { tool, cmd } not saved yet (a new role, or tool custom waiting for its cmd)
+  function roleCell(label, node) { const td = el('td'); td.dataset.label = label; if (node) td.append(node); return td; }
+  function roleInput(r, field, type) {
+    const it = r.fields[field];
+    const i = el('input'); i.type = type; i.disabled = st.busy; i.setAttribute('aria-label', `${r.role} ${field}`);
+    if (type === 'number') { i.min = '60'; i.max = '86400'; i.step = '60'; }
+    i.value = String(it ? it.value ?? '' : '');
+    const commit = () => {
+      if (!it || i.value === String(it.value ?? '')) return;
+      const bad = roleFieldError(field, i.value);
+      if (bad) { st.msg = { bad: true, text: bad }; render(); return; }
+      save(it, field === 'timeout' ? Number(i.value) : i.value);
+    };
+    i.addEventListener('change', commit);
+    i.addEventListener('keydown', e => { if (e.key === 'Enter') commit(); });
+    return i;
+  }
+  function roleRow(r) {
+    const d = draft.get(r.role) || null;
+    const toolItem = r.fields.tool;
+    const saved = toolItem ? String(toolItem.value || '') : '';
+    const tool = d ? d.tool : saved;
+    const tr = el('tr');
+    const name = el('span', 'mono rname', r.role);
+    const rc = roleCell('Role', name);
+    if (r.role === 'manager') rc.append(el('span', 'rnote muted', ROLE_MANAGER_NOTE));
+    tr.append(rc);
+    const sel = el('select'); sel.disabled = st.busy; sel.setAttribute('aria-label', `${r.role} tool`);
+    const none = el('option', null, '(in-session)'); none.value = ''; sel.append(none);
+    for (const o of toolItem && Array.isArray(toolItem.options) ? toolItem.options : []) { const op = el('option', null, o); op.value = o; sel.append(op); }
+    sel.value = tool;
+    sel.addEventListener('change', () => {
+      const v = sel.value;
+      if (v === 'custom' && saved !== 'custom') { draft.set(r.role, { tool: 'custom', cmd: '' }); render(); return; }   // custom needs its cmd in the same save
+      draft.delete(r.role);
+      if (v === saved) { render(); return; }
+      save(toolItem, v);
+    });
+    tr.append(roleCell('Tool', sel));
+    const has = tool !== '';
+    const mi = roleInput(r, 'model', 'text'); mi.disabled = st.busy || !has || !!d; mi.placeholder = 'tool default';
+    tr.append(roleCell('Model', mi));
+    const ti = roleInput(r, 'timeout', 'number'); ti.disabled = st.busy || !has || !!d;
+    tr.append(roleCell('Timeout (s)', ti));
+    const ai = roleInput(r, 'args', 'text'); ai.disabled = st.busy || !has || !!d; ai.placeholder = 'extra flags';
+    tr.append(roleCell('Args', ai));
+    const cc = roleCell('Command', null);
+    if (tool === 'custom') {
+      const ci = d ? el('input') : roleInput(r, 'cmd', 'text');
+      if (d) { ci.type = 'text'; ci.value = d.cmd; ci.setAttribute('aria-label', `${r.role} cmd`); ci.addEventListener('input', () => { d.cmd = ci.value; }); }
+      ci.placeholder = 'mytool --in {prompt_file}';
+      cc.append(ci);
+    } else cc.append(el('span', 'muted', '-'));
+    tr.append(cc);
+    const ac = roleCell('Source', null);
+    ac.append(el('span', `tag ${saved && r.source !== 'default' ? 'src-' + r.source : ''}`, saved ? r.source : (d ? 'unsaved' : 'default')));
+    if (d) {
+      const ok = el('button', null, 'Apply'); ok.type = 'button'; ok.disabled = st.busy;
+      ok.addEventListener('click', () => {
+        const bad = roleFieldError('cmd', d.cmd);
+        if (bad) { st.msg = { bad: true, text: bad }; render(); return; }
+        post({ [`roles.${r.role}.tool`]: 'custom', [`roles.${r.role}.cmd`]: d.cmd }, `roles.${r.role}`, () => draft.delete(r.role));
+      });
+      const no = el('button', null, 'Cancel'); no.type = 'button'; no.addEventListener('click', () => { draft.delete(r.role); render(); });
+      ac.append(ok, no);
+    } else if (saved && r.source !== 'default') {
+      const cl = el('button', null, 'Clear'); cl.type = 'button'; cl.disabled = st.busy; cl.title = `Remove the ${r.source} mapping of ${r.role}`;
+      cl.addEventListener('click', () => save(toolItem, ''));
+      ac.append(cl);
+    }
+    tr.append(ac);
+    return tr;
+  }
+  function rolesSection(settings) {
+    const rows = roleRows(settings);
+    if (!rows.length) return null;
+    for (const [role, d] of draft) if (!rows.some(r => r.role === role)) rows.push({ role, fields: { tool: { key: `roles.${role}.tool`, options: (rows[0].fields.tool || {}).options || [], value: '' } }, source: 'default', _draft: d });
+    const sec = el('section', 'sgroup'); sec.append(el('h3', null, 'Roles'));
+    sec.append(el('p', 'sdesc muted', 'Map a role to another CLI so run.sh starts it headless instead of an in-session sub-agent. Unmapped roles stay in-session.'));
+    sec.append(el('p', 'sdesc muted rprivacy', ROLE_PRIVACY));
+    const wrap = el('div', 'rwrap');
+    const table = el('table', 'rtable');
+    const head = el('thead'); const hr = el('tr');
+    for (const h of ['Role', 'Tool', 'Model', 'Timeout (s)', 'Args', 'Command', 'Source']) { const th = el('th', null, h); th.scope = 'col'; hr.append(th); }
+    head.append(hr); table.append(head);
+    const body = el('tbody');
+    for (const r of rows) body.append(roleRow(r));
+    table.append(body); wrap.append(table); sec.append(wrap);
+    // add a free role
+    const add = el('div', 'radd');
+    const ni = el('input'); ni.type = 'text'; ni.placeholder = 'new role, e.g. ui-worker'; ni.setAttribute('aria-label', 'New role name'); ni.disabled = st.busy;
+    const nb = el('button', null, 'Add role'); nb.type = 'button'; nb.disabled = st.busy;
+    const go = () => {
+      const n = ni.value.trim();
+      if (!ROLE_NAME_RE.test(n)) { st.msg = { bad: true, text: 'Role name: lower case letters, digits and "-", starting with a letter (max 24).' }; render(); return; }
+      if (!rows.some(r => r.role === n)) draft.set(n, { tool: '', cmd: '' });
+      render();
+    };
+    nb.addEventListener('click', go); ni.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+    add.append(ni, nb); sec.append(add);
+    return sec;
+  }
+
   function render() {
     const keepTop = $('settingsView').scrollTop;
     renderInner();
@@ -252,6 +388,7 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
     if (st.error) { const m = el('p', 'notice error', st.error); m.setAttribute('role', 'alert'); box.append(m); return; }
     if (!st.data) { const e = el('div', 'empty'); e.append(el('strong', 'empty-title', 'Loading settings…'), el('span', 'empty-hint', 'Reading the configuration can take a few seconds.')); box.append(e); return; }
     for (const g of groupItems(st.data.settings)) {
+      if (g.id === 'roles') { const rs = rolesSection(st.data.settings); if (rs) box.append(rs); continue; }
       const sec = el('section', 'sgroup'); sec.append(el('h3', null, g.title));
       for (const item of g.items) sec.append(row(item));
       box.append(sec);

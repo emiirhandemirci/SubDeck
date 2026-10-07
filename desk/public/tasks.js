@@ -1,4 +1,5 @@
 // desk/public/tasks.js
+import { runBadgeText, RUN_STATUS_LABEL, mountRunLog } from './runs.js';
 // Tasks tab: one card per task file (and Beads item), columns by status. Read-only; data only via textContent.
 
 export const COLUMNS = [
@@ -31,7 +32,7 @@ export function tabLabel(projects) {
 }
 
 export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessions, closeOthers }) {
-  const st = { open: false, data: null, error: null, project: '', expanded: new Set(), bodies: new Map(), gen: 0 };
+  const st = { open: false, data: null, error: null, project: '', expanded: new Set(), bodies: new Map(), gen: 0, runLogs: new Set(), mounts: [], pending: [] };
 
   function projectsWithTasks() { return (st.data ? st.data.projects : []).filter(p => p.tasks.length); }
 
@@ -43,6 +44,13 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
     if (t.source === 'beads') head.append(el('span', 'tag', 'Beads'));
     if (t.invalid) { const b = el('span', 'tag conflict', 'invalid'); b.title = 'Unreadable or unknown status; shown as open'; head.append(b); }
     c.append(head, el('div', 'tcard-title', t.title));
+    const rb = runBadgeText(t);
+    if (rb || t.branch) {
+      const rl = el('div', 'tcard-run');
+      if (rb) { const b = el('span', 'tag runbadge', rb); b.title = `Last producer: ${rb}`; rl.append(b); }
+      if (t.branch) { const b = el('span', 'mono muted tcard-branch', t.branch); b.title = t.worktree ? `Branch ${t.branch}, worktree ${t.worktree}` : `Branch ${t.branch}`; rl.append(b); }
+      c.append(rl);
+    }
     const meta = el('div', 'tcard-meta muted');
     if (t.owner) meta.append(el('span', 'mono', t.owner));
     if (t.agent) {
@@ -59,6 +67,25 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
     const hs = handoffSummary(t);
     if (hs) c.append(el('div', 'tcard-handoff', hs));
     if (t.writable.length) c.append(el('div', 'tcard-paths mono muted', t.writable.join(', ')));
+    if (t.lastRun) {
+      const lr = t.lastRun, rk = `${key}/${lr.ts}`;
+      const line = el('div', 'tcard-lastrun muted');
+      line.append(el('span', `tag runstatus rs-${lr.status}`, RUN_STATUS_LABEL[lr.status] || lr.status), el('span', null, `last run ${lr.ts.replace(/^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d).*$/, '$1-$2-$3 $4:$5')}`));
+      const lb = el('button', 'linklike', st.runLogs.has(rk) ? 'Hide run log' : 'Run log'); lb.type = 'button';
+      lb.setAttribute('aria-expanded', String(st.runLogs.has(rk)));
+      lb.addEventListener('click', () => { if (st.runLogs.has(rk)) st.runLogs.delete(rk); else st.runLogs.add(rk); render(); });
+      line.append(lb);
+      {
+        const ob = el('button', 'linklike', 'Open as agent'); ob.type = 'button';
+        ob.addEventListener('click', () => { showSessions(); openSession(p.projectId, `run.${t.id}.${lr.ts}`); });
+        line.append(ob);
+      }
+      c.append(line);
+      if (st.runLogs.has(rk)) {
+        const holder = el('div', 'tcard-runlog'); c.append(holder);
+        st.pending.push(() => st.mounts.push(mountRunLog(holder, { el, getJSON, projectId: p.projectId, taskId: t.id, ts: lr.ts, running: lr.status === 'running' })));
+      }
+    }
     const open = st.expanded.has(key);
     const tog = el('button', 'linklike', open ? 'Hide details' : 'Details'); tog.type = 'button';
     tog.setAttribute('aria-expanded', String(open));
@@ -82,6 +109,8 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
   function render() {
     const box = $('tasksBody');
     const top = box.scrollTop;
+    for (const m of st.mounts) m.stop();
+    st.mounts = []; st.pending = [];
     box.replaceChildren();
     const sel = $('tasksProject');
     const pl = projectsWithTasks();
@@ -118,6 +147,8 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
       cols.append(col);
     }
     box.append(cols);
+    for (const f of st.pending) f();
+    st.pending = [];
     box.scrollTop = top;
   }
 

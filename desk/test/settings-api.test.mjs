@@ -167,6 +167,6 @@ test('real settings.sh: json shape, validated set (exit 2, nothing written), the
     assert.equal(by('worker').value, 'opus'); assert.equal(by('worker').source, 'user');
     assert.equal(by('context').value, 123000);
     assert.ok(Array.isArray(by('protect-branches').value));
-    for (const s of d.settings) assert.ok(['models', 'notify', 'push', 'guard', 'protect', 'resources', 'tasks', 'context', 'statusline'].includes(s.group), s.key);
+    for (const s of d.settings) assert.ok(['models', 'notify', 'push', 'guard', 'protect', 'resources', 'tasks', 'roles', 'context', 'statusline'].includes(s.group), s.key);
   } finally { if (saved !== undefined) process.env.SUBDECK_STATE_DIR = saved; fs.rmSync(home, { recursive: true, force: true }); }
 });

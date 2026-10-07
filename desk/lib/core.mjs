@@ -5,6 +5,19 @@ import { deriveState, validateAdapterSession, makeSource, sessionIdOf, projectId
 
 const FAILURE_KINDS = ['test', 'permission', 'api', 'quota', 'timeout', 'tool', 'stuck', 'unknown'];
 
+const RUN_STR = ['taskId', 'ts', 'role', 'class', 'tool', 'model', 'status', 'branch', 'worktree', 'base', 'writableCheck'];
+/** Run metadata of a SubDeck run session (adapter subdeck-run): known fields only, bounded. */
+function cleanRun(r) {
+  const o = {};
+  for (const k of RUN_STR) o[k] = typeof r[k] === 'string' ? r[k].slice(0, 500) : '';
+  o.exit = Number.isInteger(r.exit) ? r.exit : null;
+  o.cliExit = Number.isInteger(r.cliExit) ? r.cliExit : null;
+  o.experimental = r.experimental === true;
+  o.violations = Array.isArray(r.violations) ? r.violations.filter(x => typeof x === 'string').slice(0, 50).map(x => x.slice(0, 300)) : [];
+  o.sessionId = typeof r.sessionId === 'string' ? r.sessionId.slice(0, 200) : null;
+  return o;
+}
+
 function withTimeout(promise, ms, what) {
   let timer;
   const t = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} timed out after ${Math.round(ms / 1000)} s`)), ms); });
@@ -127,6 +140,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
           const i = s.interrupted;
           out.interrupted = { at: i.at, task: typeof i.task === 'string' ? i.task : null, errorType: typeof i.errorType === 'string' ? i.errorType : 'unknown', files: Number.isInteger(i.files) ? i.files : null };
         }
+        if (s.run && typeof s.run === 'object') out.run = cleanRun(s.run);
         if (s.taskId !== undefined) out.taskId = typeof s.taskId === 'string' ? s.taskId : null;
         Object.defineProperty(out, '_parentNative', { value: s.parentNativeId ?? null, enumerable: false });
         if (s.failure && FAILURE_KINDS.includes(s.failure.kind)) Object.defineProperty(out, '_failure', { value: { kind: s.failure.kind, detail: String(s.failure.detail || '').slice(0, 80) }, enumerable: false });

@@ -18,9 +18,10 @@ import copilot from './adapters/copilot.mjs';
 import gemini from './adapters/gemini.mjs';
 import cline from './adapters/cline.mjs';
 import opencode from './adapters/opencode.mjs';
+import subdeckRun from './adapters/subdeck-run.mjs';
 
 export const VERSION = '0.7.0';
-export const ADAPTERS = [claudeCode, cursor, codex, copilot, gemini, cline, opencode];
+export const ADAPTERS = [claudeCode, cursor, codex, copilot, gemini, cline, opencode, subdeckRun];
 const DEFAULT_PORT = 4917;
 const PORT_TRIES = 20;
 
@@ -116,7 +117,9 @@ export async function main(argv = process.argv.slice(2)) {
   watcher.update(core.watchTargets());
   const taskWatcher = createTasksWatcher({ reader: tasks, getProjects: () => core.snapshot().projects, onChange: ids => api.broadcastTasks(ids) });
   core.onChanged(() => taskWatcher.update());
-  const timers = [setInterval(() => core.refreshStates(), 15000), setInterval(() => api.heartbeat(), 15000)];
+  const timers = [setInterval(() => core.refreshStates(), 15000), setInterval(() => api.heartbeat(), 15000),
+    // runs appear under a state dir that may not exist yet (not watched until detected): look again now and then
+    setInterval(() => { const s = core.snapshot().sources.find(x => x.id === 'subdeck-run'); if (s && !s.detected) core.scanSources(['subdeck-run']).then(() => watcher.update(core.watchTargets())).catch(() => {}); }, 30000)];
 
   let stopping = false;
   function cleanup() {

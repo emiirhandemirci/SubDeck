@@ -36,7 +36,7 @@ test('labels', () => {
   assert.equal(f.SOURCE_LABEL.mtime, 'estimated from file activity');
   assert.equal(f.SOURCE_LABEL.hook, 'from hook');
   assert.equal(f.TOOL_BADGE['claude-code'], 'Claude');
-  assert.deepEqual(Object.keys(f.TOOL_BADGE), ['claude-code', 'cursor', 'codex', 'copilot', 'gemini', 'cline', 'opencode']);
+  assert.deepEqual(Object.keys(f.TOOL_BADGE), ['claude-code', 'cursor', 'codex', 'copilot', 'gemini', 'cline', 'opencode', 'subdeck-run']);
   assert.equal(f.SOURCE_LABEL.lock, 'from lock file');
 });
 

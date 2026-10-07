@@ -61,6 +61,13 @@ The **Tasks** tab shows the SubDeck task files of every known project in six col
 - Agents that stopped without the required report get the badge "stopped without report"; interrupted agents get "interrupted". Both are also listed in the waiting list (`waitingKind` `no-report` / `interrupted`); their state is unchanged.
 - Beads (optional, off by default): set `SUBDECK_BEADS=1` and, for a project with a `.beads/` folder, `bd list --json` items (5 s timeout) appear on the same board, marked "Beads". `bd` (or the absolute path in `SUBDECK_BD`) is looked up in PATH only, never in the project or the working directory; entries of PATH inside the project are skipped. bd needs the project as its working directory to find its database, so Desk runs it there with `BEADS_DOLT_AUTO_START=0` (bd does not start its own Dolt server; if none is running, no Beads items show); this is the one place Desk starts another program, which is why it is opt-in.
 
+## SubDeck runs and roles
+
+Headless runs started by `run.sh` (roles mapped to another CLI) appear as sessions of the source "SubDeck runs", read from `<state dir>/<project>/runs/<task>/<ts>.json`. Each shows a badge `<role> · <tool>/<model>` (`exp` for experimental tools), task cards show the branch and the last run, and the run-log view (agent detail or task card) shows the final message and the `.log`/`.out` tails, refreshing while the run is active.
+
+- API: `GET /api/runs[?project=<id>]` (newest first, max 200) and `GET /api/runs/<projectId>/<taskId>/<ts>/log[?lines=N]` (N default 200, max 2000; 404 with `--no-content`). `/api/tasks` entries gain `role tool model branch worktree run lastRun`.
+- Settings tab, group Roles: one table row per role (tool, model, timeout, args, command for `custom`); "Clear" removes the mapping at the selected scope. Writes go through `settings.sh` only. Code a mapped role works on is sent to that tool's provider.
+
 ## Settings and theme
 
 The page fills the window; each pane (projects, agent map, detail) scrolls independently with thin themed scrollbars, and scroll positions survive re-renders. A sub-agent resumed after a Stop is shown as running again (a later Start, or transcript records newer than the Stop).

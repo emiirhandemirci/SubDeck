@@ -21,6 +21,7 @@ const STATIC = {
   '/theme.js': ['theme.js', 'text/javascript; charset=utf-8'],
   '/settings.js': ['settings.js', 'text/javascript; charset=utf-8'],
   '/tasks.js': ['tasks.js', 'text/javascript; charset=utf-8'],
+  '/runs.js': ['runs.js', 'text/javascript; charset=utf-8'],
 };
 const CSP = "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:";
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -100,6 +101,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
 
   // ---- tasks (read-only): files of the tasks dir, optional Beads items ----
   async function tasksList(res, snap, only) {
+    runsNow = lastRuns(snap);
     const projs = snap.projects.filter(p => p.path && (!only || p.id === only));
     if (only && !projs.length) return json(res, 404, { error: 'not found' });
     const out = [];
@@ -107,21 +109,82 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       let r;
       try { r = await reader.read(p.path); } catch { r = { dir: reader.dir(p.path), tasks: [] }; }
       const bySession = new Map(snap.sessions.filter(x => x.projectId === p.id && x.parentId).map(x => [x.nativeId, x.id]));
-      out.push({ projectId: p.id, projectName: p.name, dir: r.dir, tasks: r.tasks.map(t => taskOut(t, bySession)) });
+      out.push({ projectId: p.id, projectName: p.name, dir: r.dir, tasks: r.tasks.map(t => taskOut(t, bySession, p.id)) });
     }
     return json(res, 200, { generatedAt: iso(), projects: out });
   }
-  function taskOut(t, bySession) {
-    return { ...t.task, agentSessionId: (t.task.agent && bySession.get(t.task.agent)) || null, handoff: t.handoff || null };
+  // newest run of each task (project id + task id -> run session), from the subdeck-run source
+  function lastRuns(snap) {
+    const m = new Map();
+    for (const s of snap.sessions) {
+      if (s.tool !== 'subdeck-run' || !s.run) continue;
+      const k = `${s.projectId}/${s.run.taskId}`;
+      const was = m.get(k);
+      if (!was || s.run.ts > was.ts) m.set(k, s.run);
+    }
+    return m;
+  }
+  let runsNow = new Map();
+  function taskOut(t, bySession, pid) {
+    const r = runsNow.get(`${pid}/${t.task.id}`);
+    return { ...t.task, agentSessionId: (t.task.agent && bySession.get(t.task.agent)) || null, handoff: t.handoff || null,
+      lastRun: r ? { ts: r.ts, status: r.status, role: r.role, tool: r.tool, model: r.model } : null };
+  }
+  // ---- runs (read-only): metas come from the subdeck-run source; logs are read on demand ----
+  const RUN_TASK_RE = /^t-[0-9a-f]{4,12}$/, RUN_TS_RE = /^\d{8}T\d{6}Z$/;
+  function runsList(res, snap, only) {
+    if (only && !snap.projects.some(p => p.id === only)) return json(res, 404, { error: 'not found' });
+    const runs = snap.sessions.filter(s => s.tool === 'subdeck-run' && s.run && (!only || s.projectId === only))
+      .sort((a, b) => b.run.ts.localeCompare(a.run.ts) || String(a.run.taskId).localeCompare(String(b.run.taskId))).slice(0, 200)
+      .map(s => ({ projectId: s.projectId, taskId: s.run.taskId, ts: s.run.ts, role: s.run.role, tool: s.run.tool, model: s.run.model, status: s.run.status,
+        exit: s.run.exit, startedAt: s.runStartedAt, endedAt: s.endedAt, branch: s.run.branch, sessionId: s.id }));
+    return json(res, 200, { generatedAt: iso(), runs });
+  }
+  async function tailLines(file, n) {
+    let fh;
+    try {
+      const st = await fs.lstat(file);
+      if (!st.isFile()) return { text: '', truncated: false };
+      fh = await fs.open(file, 'r');
+      const cap = 512 * 1024, len = Math.min(st.size, cap), buf = Buffer.alloc(len);
+      await fh.read(buf, 0, len, st.size - len);
+      let lines = buf.toString('utf8').split('\n');
+      let truncated = st.size > len;
+      if (truncated) lines.shift();   // first line is probably cut
+      if (lines.length && lines[lines.length - 1] === '') lines.pop();
+      if (lines.length > n) { lines = lines.slice(-n); truncated = true; }
+      return { text: lines.join('\n'), truncated };
+    } catch { return { text: '', truncated: false }; }
+    finally { if (fh) await fh.close().catch(() => {}); }
+  }
+  async function runLog(res, snap, projectId, taskId, ts, linesParam) {
+    if (!contentEnabled) return json(res, 404, { error: 'content disabled' });
+    if (!RUN_TASK_RE.test(taskId) || !RUN_TS_RE.test(ts)) return json(res, 404, { error: 'not found' });
+    const s = snap.sessions.find(x => x.tool === 'subdeck-run' && x.projectId === projectId && x.run && x.run.taskId === taskId && x.run.ts === ts);
+    const meta = s && s.refs && s.refs.file;
+    if (!meta) return json(res, 404, { error: 'not found' });
+    let n = Number(linesParam === null || linesParam === undefined || linesParam === '' ? 200 : linesParam);
+    if (!Number.isInteger(n) || n < 1) n = 200;
+    n = Math.min(n, 2000);
+    const base = meta.replace(/\.json$/, '');   // <dir>/<ts>
+    const [log, out] = await Promise.all([tailLines(`${base}.log`, n), tailLines(`${base}.out`, n)]);
+    let final = null;
+    try {
+      const f = `${base}.final.txt`;
+      const st = await fs.lstat(f);
+      if (st.isFile()) final = (await fs.readFile(f, 'utf8')).slice(0, 65536);
+    } catch { /* no final message */ }
+    return json(res, 200, { log: log.text, out: out.text, final, truncated: log.truncated || out.truncated });
   }
   async function taskDetail(res, snap, projectId, taskId) {
     if (!contentEnabled) return json(res, 404, { error: 'content disabled' });
     const p = snap.projects.find(x => x.id === projectId);
     if (!p || !p.path) return json(res, 404, { error: 'not found' });
+    runsNow = lastRuns(snap);
     const t = await reader.get(p.path, taskId);
     if (!t) return json(res, 404, { error: 'not found' });
     const bySession = new Map(snap.sessions.filter(x => x.projectId === p.id && x.parentId).map(x => [x.nativeId, x.id]));
-    return json(res, 200, { task: { ...taskOut(t, bySession), body: t.body } });
+    return json(res, 200, { task: { ...taskOut(t, bySession, p.id), body: t.body } });
   }
 
   function sessionDetail(snap, id) {
@@ -368,6 +431,9 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       let m;
       if (p === '/api/sources') return json(res, 200, { generatedAt: iso(), server: { version, startedAt, days }, home: (env && env.home) || os.homedir(), sources: snap.sources });
       if (p === '/api/tasks') { const q = url.searchParams.get('project'); return await tasksList(res, snap, q === null ? null : q); }
+      if (p === '/api/runs') return runsList(res, snap, url.searchParams.get('project') || null);
+      m = /^\/api\/runs\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)\/log$/.exec(p);
+      if (m) return await runLog(res, snap, m[1], m[2], m[3], url.searchParams.get('lines'));
       m = /^\/api\/tasks\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/.exec(p);
       if (m) return await taskDetail(res, snap, m[1], m[2]);
       if (p === '/api/waiting') return json(res, 200, waitingList(snap));

@@ -3,6 +3,7 @@
 import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText } from './format.js';
 import { initSettings } from './settings.js';
 import { initTasks } from './tasks.js';
+import { runBadgeText, RUN_STATUS_LABEL, mountRunLog } from './runs.js';
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -212,6 +213,7 @@ const ABSENT_HINT = {
   gemini: 'Looks for ~/.gemini',
   cline: 'Looks for ~/.cline or the Cline/Roo extension storage in VS Code',
   opencode: 'Looks for the OpenCode data folder (XDG data home)',
+  'subdeck-run': 'Looks for headless runs started by run.sh (<state dir>/<project>/runs)',
 };
 function sourceTip(s) {
   const extra = [s.experimental ? `${s.label}: data format not yet verified on every platform` : '', s.lastError || ''].filter(Boolean);
@@ -363,7 +365,9 @@ function sessionLine(s, cls) {
   const was = S.prevState.get(s.id);
   if (was !== undefined && was !== s.state) line.classList.add('changed');   // one short pulse; the animation ends by itself
   S.prevState.set(s.id, s.state);
-  if (s.agentType && cls === 'agent') line.append(el('span', 'tag mono', s.agentType));
+  const rb = s.run ? runBadgeText(s.run) : null;
+  if (rb) { const b = el('span', 'tag runbadge', rb); b.title = `Headless run: ${rb}`; line.append(b); }
+  else if (s.agentType && cls === 'agent') line.append(el('span', 'tag mono', s.agentType));
   const u = contextUsage(s, S.ctxWindow);
   line.append(el('span', 'meta-line muted', u ? `${formatDuration(s.durationMs)} · ${u.pct === null ? u.text : `${formatTokens(u.tokens)} · ${u.pct}%`}` : formatDuration(s.durationMs)));
   if (u && u.pct !== null) line.append(usageBar(u));
@@ -429,6 +433,7 @@ async function loadDetail() {
   if (!S.selectedSession) { S.detail = null; renderDetail(); return; }
   try { S.detail = (await getJSON(`/api/sessions/${encodeURIComponent(S.selectedSession)}`)).session; } catch { S.detail = null; }
   renderDetail();
+  if (S.detail && S.detail.run) return;   // runs have their own log view, no transcript content
   loadContent();
   loadChanges();
 }
@@ -639,6 +644,7 @@ function renderContent() {
 }
 
 let detailShown = null;
+let runLogMount = null;
 function renderDetail() {
   const box = $('detail');
   const keepTop = detailShown && S.detail && detailShown === S.detail.id ? box.scrollTop : 0;
@@ -674,6 +680,14 @@ function renderDetailInner(box) {
   const fd = failureBadge(s); if (fd) row('Failure', fd);
   const nbs = noticeBadges(s); if (nbs.length) { const w = el('span', 'refs'); for (const nb of nbs) w.append(nb, document.createTextNode(' ')); row('Notice', w); }
   if (s.taskId) row('Task', s.taskId);
+  if (s.run) {
+    const rb = runBadgeText(s.run);
+    if (rb) row('Run', rb);
+    row('Run status', `${RUN_STATUS_LABEL[s.run.status] || s.run.status}${s.run.exit !== null ? `, exit ${s.run.exit}` : ''}${s.run.cliExit !== null && s.run.cliExit !== s.run.exit ? ` (CLI exit ${s.run.cliExit})` : ''}`);
+    if (s.run.branch) row('Branch', s.run.branch);
+    if (s.run.worktree) row('Worktree', tildify(s.run.worktree, S.home));
+    if (s.run.violations.length) row('Violations', T(s.run.violations.join(', ')));
+  }
   row('Started', when(s.createdAt));
   if (s.runStartedAt) row('Latest run started', when(s.runStartedAt));
   row('Updated', when(s.updatedAt));
@@ -701,13 +715,22 @@ function renderDetailInner(box) {
     row('Data', wrap);
   }
   box.append(dl);
+  if (s.run && s.run.taskId && s.run.ts) {
+    const rl = el('div', 'content'); rl.id = 'runLog';
+    const h = el('h4', 'subhead', 'Run log'); rl.append(h);
+    box.append(rl);
+    if (runLogMount) runLogMount.stop();
+    runLogMount = mountRunLog(rl, { el, getJSON, projectId: s.projectId, taskId: s.run.taskId, ts: s.run.ts, running: s.run.status === 'running' });
+  } else if (runLogMount) { runLogMount.stop(); runLogMount = null; }
   const content = el('div', 'content'); content.id = 'content';
   box.append(content);
-  renderContent();
-  const ch = el('div', 'content'); ch.id = 'changes';
-  box.append(ch);
-  renderChanges();
-  renderConflicts();
+  if (!s.run) renderContent();
+  if (!s.run) {
+    const ch = el('div', 'content'); ch.id = 'changes';
+    box.append(ch);
+    renderChanges();
+    renderConflicts();
+  }
   box.dataset.createdAt = s.createdAt || '';
 }
 
