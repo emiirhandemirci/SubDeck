@@ -1,0 +1,5 @@
+[subdeck] run run-t-0b02-20261007T093000Z role=worker class=worker tool=gemini model=gemini-2.5-pro
+[subdeck] cwd=/w/state/proj-00000000/worktrees/t-0b02 branch=subdeck/t-0b02 base=0123456789abcdef0123456789abcdef01234567 timeout=1800
+Error: 429 Too Many Requests: rate limit exceeded
+[subdeck] --- stdout ---
+[subdeck] end status=quota cliExit=1 exit=7 commits=0 uncommitted=1 writable=ok

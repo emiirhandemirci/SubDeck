@@ -1,0 +1,7 @@
+[subdeck] run run-t-0b02-20261007T090000Z role=worker class=worker tool=codex model=gpt-5-codex
+[subdeck] cwd=/w/state/proj-00000000/worktrees/t-0b02 branch=subdeck/t-0b02 base=0123456789abcdef0123456789abcdef01234567 timeout=1800
+codex progress on stderr
+[subdeck] --- stdout ---
+{"type":"thread.started","thread_id":"fake-thread-0001"}
+{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}
+[subdeck] end status=ok cliExit=0 exit=0 commits=1 uncommitted=0 writable=ok

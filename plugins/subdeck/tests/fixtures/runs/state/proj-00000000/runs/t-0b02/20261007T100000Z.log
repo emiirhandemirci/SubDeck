@@ -1,0 +1,13 @@
+[subdeck] run run-t-0b02-20261007T100000Z role=worker class=worker tool=opencode model=anthropic/claude-sonnet-4
+[subdeck] cwd=/w/state/proj-00000000/worktrees/t-0b02 branch=subdeck/t-0b02 base=0123456789abcdef0123456789abcdef01234567 timeout=1800
+[subdeck] --- stdout ---
+fake-worker · done
+Result: Did the fake work.
+Evidence: fake run
+Tested: ran `true` -> ok
+Commits: none
+Detail: none
+Decision: none
+Stop: done - fake run finished
+[subdeck] writable violation: src/other.js package.json
+[subdeck] end status=violation cliExit=0 exit=5 commits=1 uncommitted=0 writable=violation
