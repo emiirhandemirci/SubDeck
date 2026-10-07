@@ -104,6 +104,25 @@ Update: build a newer bundle, unzip it and run the installer again. Remove: `.\i
 
 That is the whole user-facing surface: three commands. The manager rulebook (delegation, task template, git rules, the pre-push checklist and approval gate) loads automatically and can also be opened with `/subdeck:orchestrator`. You launch agents and ask for pushes by talking to the manager.
 
+## 4a. Tasks and verification
+
+Behind the scenes, the manager uses `tasks.sh` to keep one small file per delegated job. These live in your project's SubDeck state folder by default (customizable with `/subdeck:settings set tasks.dir=...`). The `tasks.sh` CLI is also available to you:
+
+| Command | What it does |
+|---|---|
+| `tasks.sh new "<title>" --owner <agent-type> --writable <paths>` | Create a task file. Returns the task id (e.g. `t-3f9a`). |
+| `tasks.sh list` | List all tasks: id, status, owner/agent, title. |
+| `tasks.sh ready` | List tasks ready to launch (status `open` or `blocked`). Warns if quota limit is hit in the last 60 minutes. |
+| `tasks.sh show <id>` | Display the whole task file, or `--section report` / `--section verification` for one section. |
+| `tasks.sh link <id> <agentId>` | Link an agent to a task (set the agent field and session). Use when an agent started without `Task:` in its prompt. |
+| `tasks.sh verify <id>[,<id>...] --verdict <Approved\|Needs-fixes\|Escalate> --by <agentId> [--fingerprint <cksum>]` | Write a verification result (one verifier per wave; use `--covers` to verify multiple tasks together). |
+| `tasks.sh grant <id> <path>[,<path>...] --reason <text>` | Grant a path extension to a task (when the worker needs just one more file outside its writable set). |
+| `tasks.sh pack <wave> --from <file> [--section <text>...] [--map <path>...] [--tasks <id>,...]` | Build a context pack for a wave (contract excerpt, file map, task list). |
+| `tasks.sh writable <id>` | List the effective writable paths for a task (union of `writable` and `grants`). |
+| `tasks.sh done <id>[,<id>...]` | Mark a task done (only after its latest verdict is Approved). |
+
+These commands are for the manager and integrate with the hooks; they are not for agents.
+
 **What replaced the old commands (migration from 0.4).**
 
 | Old command | Now |
@@ -114,6 +133,22 @@ That is the whole user-facing surface: three commands. The manager rulebook (del
 | `/subdeck:notify on`, `events ...` | `/subdeck:settings set notify=on notify.events=waiting,done` (or the toggle in Desk) |
 | `/subdeck:guard set push=off` | `/subdeck:settings set push=off` (`guard=on` or `guard=off` for the whole guard) |
 | `/subdeck:statusline` | `/subdeck:settings set statusline=on` (or `off`) |
+
+## 4c. Light model and context packs (0.8.1)
+
+**Light model.** For small, deterministic tasks—packaging, copying, version bumps, documentation-only edits—SubDeck uses the `light` model (default `haiku`). Change it with `/subdeck:settings set light=sonnet` (valid values: `sonnet`, `opus`, `haiku`, `fable`, `inherit`, or a full model id). The manager passes the `light` model explicitly when launching an agent for these tasks; regular code work and verification always use the `worker` and `verifier` models.
+
+**Context packs.** Instead of re-describing the task context in every prompt, the manager can build a context pack per wave (a group of related tasks) with `tasks.sh pack <wave> --from <contract-file> [--section <text>...] [--map <file>...] [--tasks <id>,...]`. It writes `packs/<wave>.md` with the contract excerpt, a file map (or git ls-files output for directories), decisions, and the task list. The manager then points the launch prompt at the pack file instead of repeating the context.
+
+**Auto-bind.** When an agent starts with no prior task (no `Task:` line in the prompt), the hook creates one automatically (status `in-progress`, `auto: true`). This tracks work that was not explicitly delegated but still ran. The task needs no verifier verdict to be marked done.
+
+**Not tracked.** When an agent runs with no task (and auto-bind is off, or it is an Explore / other agent class), the agent is "not tracked" in Desk (neutral badge, no report-missing notification). This differs from "stopped without report" (a tracked agent that ended without a `Stop:` line).
+
+**Guard warnings.** Two new guard rules (default `warn`; turn off with `/subdeck:settings set commit-pathspec=off` or `commit-scope=off`):
+- `commit-pathspec`: warns when a commit argument is a directory name (would sweep in other agents' files).
+- `commit-scope`: warns when staged files are outside a task's writable paths.
+
+These are warnings only, never denials; read the exact paths and fix them. Do not ignore them repeatedly: the rules catch common mistakes that lead to other agents' work being clobbered.
 
 ## 5. SubDeck Desk
 

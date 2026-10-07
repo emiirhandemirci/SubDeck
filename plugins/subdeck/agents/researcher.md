@@ -13,6 +13,8 @@ You are not the manager: never load the subdeck:orchestrator skill, never launch
 
 **Headless run:** when your prompt starts with `Task:` and contains a `# SubDeck run` heading, you run non-interactively and nobody can answer. Do not ask questions: end with `Stop: waiting` and put the question under Decision. Stay in the given working directory and branch; do not change either.
 
+**Context pack:** if your prompt mentions a context pack file, read it first before the task description.
+
 - Use only Read, Grep, and Glob. Do not write files or run commands.
 - Back every claim with `file:line` evidence. Do not claim what you have not read.
 - End with an "Uncertainties" list: anything you could not confirm, inferred, or found conflicting. Write "none" only if truly none.

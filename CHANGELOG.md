@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Task files:** new keys `auto` (hook-created tasks), `pack` (wave context pack), `grants` (writable-path extensions), `covers` (batch verification IDs). `tasks.sh verify --covers` checks a whole wave together; `done` requires the latest verdict = Approved.
+- **New tasks.sh commands:** `link` (set agent + session), `verify` (write verdict + fingerprint + covers), `grant` (add path extension with reason), `pack` (write context pack from contract/decisions/file map/tasks), `writable` (list effective paths), `show --section` (read task sections).
+- **Task list output:** terse default format; `--tsv` for scripts.
+- **Auto-bind:** tasks without an explicit manager launch are auto-created by the hook (status in-progress, `auto: true`). "Not tracked" agents have no task.
+- **Guard warnings:** new `commit-pathspec` (directory in commit args) and `commit-scope` (file outside writable paths) rules (default `warn`).
+- **Light model:** new `light` setting in model policy for packaging, copying, version bumps, doc-only edits (default haiku); pass it explicitly as Agent model.
+- **Metering:** `tasks_cli` events log every CLI call's byte count; `ready` watches quota resets in the last 60 minutes and warns before launch.
+- **Quota events:** `quota_recent` logged by hooks and `run.sh` with reset time parsed from `reset <HH:MM>[am|pm]` or ISO timestamps; `ready` warns in stderr.
+- **Report length:** logs `report_too_long` (lines > 9) but does not truncate or change task status; re-instruct the agent, not re-read.
+- **Desk:** tasks board shows wave grouping (smallest pack name or covers relation), task auto/grants/covers/verdict info, agent not-tracked and long-report badges, tokens per task and wave, context packs in project info, quota banner with last 24h CLI call counts, `reportMissing` only for tracked agents.
+- **Rulebook:** 12 concrete items for verifiers, agents and skills (verify-checks per wave, batch small work, context packs, guard warnings, light model, `light` key docs, control-char checks, metering, quota warning, report-length retraining).
+
 ## 0.8.0 - 2026-10-07
 
 - **Any model, any role (opt-in):** map a role to another CLI with `roles.<role>.tool|model|args|cmd|timeout` (`claude`, `codex`, `gemini`, `agy` experimental, `opencode`, `copilot`, `custom`). New `scripts/run.sh` runs a role headlessly from its task file, in a git worktree on branch `subdeck/<task>` for workers, with a timeout, a writable-path check afterwards and a push blocker. Exit codes classify auth, quota, timeout and violations; `run.sh roles|tail|cleanup` inspect and clean up. Flags per CLI live in `scripts/run-profiles.txt`. Unmapped roles stay in-session sub-agents; without a `roles` setting nothing changes.
