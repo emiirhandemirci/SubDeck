@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 - 2026-10-07
 
 - **Tasks:** the manager keeps a task file per delegated job (`tasks.sh`: new, set, append, done, list, ready, show). Files live in the project's state folder by default; `tasks.dir` moves them. Hooks set the status from the agent's start, stop and failure events; `done` needs an approved verifier verdict. Desk gets a Tasks tab.
 - **Report watchdog:** a worker, researcher or verifier that stops without the required `Stop:` / `Tested:` / `Verdict:` line is logged as `report_missing`, notified and shown in Desk as "stopped without report". Agents may no longer end a turn waiting on a background job. Setting `report-check`.
