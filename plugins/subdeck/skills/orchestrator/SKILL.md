@@ -206,7 +206,7 @@ When the user decides something (name, approach, tradeoff, rejected option), wri
 
 The agents, verifier and skills must understand these constraints:
 
-1. **One verifier per wave.** Launch the verifier with `--covers <ids>` to check all tasks of a wave together; finish with `tasks.sh done <ids>`. Fix rounds verify only the delta + affected suites; full suites and negative controls only in the first pass.
+1. **One verifier per wave.** Launch one verifier for all tasks of a wave, record its verdict once with `tasks.sh verify --covers <ids> --verdict <v> --by <agent>`, then finish with `tasks.sh done <ids>`. Fix rounds verify only the delta + affected suites; full suites and negative controls only in the first pass.
 2. **Batch small work.** Docs, IDE warnings, small fixes into one task when paths do not collide. Use the `light` model for packaging, copying, version bumps, doc-only edits (pass it as Agent model); code and verification always use worker/verifier models.
 3. **Reuse with context.** Follow-up messages to an agent resume its context unless it is full or the topic changed. Do not spawn a fresh agent for follow-ups.
 4. **Researcher reads-only.** Researchers do pure research/planning without follow-up code; for anything else the worker reads. Pass researchers questions, not jobs.
