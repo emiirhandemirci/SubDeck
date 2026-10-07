@@ -1,0 +1,2 @@
+{"type":"thread.started","thread_id":"fake-thread-0001"}
+{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}

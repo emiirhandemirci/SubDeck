@@ -1,0 +1,7 @@
+agy
+-p
+<prompt>
+--model
+gemini-3-pro
+--mode
+accept-edits

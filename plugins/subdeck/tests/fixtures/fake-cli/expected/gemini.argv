@@ -1,0 +1,9 @@
+gemini
+-p
+
+-m
+gemini-2.5-pro
+--approval-mode
+auto_edit
+-o
+json

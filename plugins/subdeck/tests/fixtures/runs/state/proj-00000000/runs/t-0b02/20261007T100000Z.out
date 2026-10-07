@@ -1,0 +1,8 @@
+fake-worker · done
+Result: Did the fake work.
+Evidence: fake run
+Tested: ran `true` -> ok
+Commits: none
+Detail: none
+Decision: none
+Stop: done - fake run finished

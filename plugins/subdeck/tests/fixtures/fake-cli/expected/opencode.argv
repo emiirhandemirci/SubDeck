@@ -1,0 +1,7 @@
+opencode
+run
+--dir
+<cwd>
+-m
+anthropic/claude-sonnet-4
+<prompt>

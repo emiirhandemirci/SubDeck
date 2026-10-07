@@ -1,0 +1,14 @@
+copilot
+-C
+<cwd>
+-p
+<prompt>
+--model
+gpt-5
+--allow-all-tools
+--deny-tool
+shell(git push)
+--deny-tool
+shell(git push:*)
+--no-ask-user
+-s

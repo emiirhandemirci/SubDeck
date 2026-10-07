@@ -1,0 +1,3 @@
+Checked the fake claims.
+Fingerprint: HEAD=0000000 state=0
+Verdict: Approved

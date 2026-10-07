@@ -137,7 +137,7 @@ console.log(j.tasks.map(x=>[x.id,x.status,x.blockedBy.join(","),x.writable.join(
 WANT="$(tail -n +2 "$FIX/expected.tsv" | sort)"
 check "$GOT" "$WANT" "fixtures match expected.tsv (non-hex t-0g07 ignored, CRLF + bare lists + weird status)"
 check "$(SUBDECK_TASKS_DIR="$FIX" t ready | cut -f1 | tr '\n' ' ')" "t-0a01 " "ready on fixtures"
-check "$(SUBDECK_TASKS_DIR="$FIX" t list | cut -f1 | sort | tr '\n' ' ')" "t-0a01 t-0b02 t-0c03 t-0d04 t-0e05 t-1a1a " "live fixtures listed, archive and non-hex ignored"
+check "$(SUBDECK_TASKS_DIR="$FIX" t list | cut -f1 | sort | tr '\n' ' ')" "t-0a01 t-0b02 t-0c03 t-0d04 t-0e05 t-1a1a t-2b2b " "live fixtures listed, archive and non-hex ignored"
 t show t-0g07 2>/dev/null; check "$?" "1" "show of a non-id exits 1"
 SUBDECK_TASKS_DIR="$FIX" t show t-0d04 | grep -q 'interrupted (rate_limit)' && ok "show prints a fixture verbatim" || bad "show prints a fixture verbatim"
 # CRLF fixture is only read, never rewritten by a read command

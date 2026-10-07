@@ -1,0 +1,14 @@
+claude
+-p
+--output-format
+json
+--model
+opus
+--permission-mode
+acceptEdits
+--permission-prompts
+none
+--allowedTools
+Bash
+--disallowedTools
+Bash(git push:*)

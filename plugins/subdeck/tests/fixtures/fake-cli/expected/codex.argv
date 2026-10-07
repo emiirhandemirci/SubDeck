@@ -1,0 +1,12 @@
+codex
+exec
+-C
+<cwd>
+-m
+gpt-5-codex
+-s
+workspace-write
+--json
+-o
+<last_file>
+-
