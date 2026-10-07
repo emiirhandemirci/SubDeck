@@ -32,3 +32,12 @@ test('bell and settings switch share state both ways', () => {
   assert.match(app, /onNotify: on =>/);
   assert.match(app, /settingsUi\.setNotify\(S\.notify\)/);
 });
+
+test('tasks.dir has a placeholder and the read-only hint is not repeated', async () => {
+  const { placeholderFor, readOnlyHint } = await import('../public/settings.js');
+  assert.equal(placeholderFor({ key: 'tasks.dir' }), 'default: state dir');
+  assert.equal(placeholderFor({ key: 'x' }), '');
+  assert.equal(readOnlyHint({ key: 'statusline', description: 'counts (read-only here; the skill edits settings.json)' }), null);
+  assert.match(readOnlyHint({ key: 'statusline', description: 'counts' }), /^Read-only here/);
+  assert.equal(readOnlyHint({ key: 'push', description: '' }), null);
+});

@@ -220,3 +220,8 @@ export function emptyProjectsText(sources, days) {
   if (!all.some(s => s.detected)) return 'No supported AI coding tool data found (looked for: ' + all.map(s => s.label).join(', ') + ').';
   return `No sessions in the last ${days} days.`;
 }
+
+/** Text when filters leave no project; mentions temporary projects hidden by the toggle. */
+export function noMatchText(hiddenTemp) {
+  return hiddenTemp > 0 ? `No projects match. ${hiddenTemp} temporary project${hiddenTemp === 1 ? ' is' : 's are'} hidden (tick "Show temporary projects").` : 'No projects match.';
+}

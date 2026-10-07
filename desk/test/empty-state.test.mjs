@@ -28,3 +28,10 @@ test('app.js uses the helpers for the empty list and the badges', () => {
   assert.ok(!/`No sessions in the last \$\{/.test(app), 'the plain "no sessions" text is not hard-coded in app.js anymore');
   assert.match(app, /\$\{s\.label\}: \$\{sourceStatus\(s\)\}/);
 });
+
+test('noMatchText mentions hidden temporary projects', async () => {
+  const { noMatchText } = await import('../public/format.js');
+  assert.equal(noMatchText(0), 'No projects match.');
+  assert.match(noMatchText(1), /1 temporary project is hidden/);
+  assert.match(noMatchText(3), /3 temporary projects are hidden/);
+});

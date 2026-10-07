@@ -348,3 +348,13 @@ test('runBd spawns exactly the PATH-resolved bd, not the planted one in the proj
   const r = await runBd(proj, { cmd: 'bd', pathVar: `${proj}:${bin}` });
   assert.deepEqual(r.map(x => x.id), ['bd-real']);
 });
+
+test('tab label shows the total and a separate attention marker', async () => {
+  const { tabLabel } = await import('../public/tasks.js');
+  const P = (...st) => ({ tasks: st.map(status => ({ status })) });
+  assert.deepEqual(tabLabel([]), { text: 'Tasks', title: '' });
+  assert.equal(tabLabel([P('open', 'done')]).text, 'Tasks (2)');
+  const l = tabLabel([P('open', 'blocked'), P('interrupted', 'done', 'review')]);
+  assert.equal(l.text, 'Tasks (5) !2');
+  assert.equal(l.title, '5 tasks, 2 blocked or interrupted');
+});

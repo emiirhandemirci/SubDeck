@@ -26,6 +26,10 @@ export function confirmText(item, next) {
   if (item.key === 'push' && next === 'off') return 'Turn off the push gate? Agents will be able to push to any branch without asking.';
   return null;
 }
+/** Placeholder for an empty free-text setting. */
+export const placeholderFor = item => (item.key === 'tasks.dir' ? 'default: state dir' : '');
+/** Read-only hint, unless the item's own description already says so. */
+export const readOnlyHint = item => (isReadOnly(item) && !/read-only/i.test(item.description || '') ? 'Read-only here. Change it from Claude Code with /subdeck:settings.' : null);
 export const isReadOnly = item => item.key === 'statusline';
 export function groupItems(settings) {
   const known = new Set(GROUPS.map(g => g[0]));
@@ -196,7 +200,7 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
       }
       return { node: wrap, id, wide: true };
     }
-    const t = el('input'); t.type = 'text'; t.id = id; t.disabled = dis; t.value = String(item.value ?? '');
+    const t = el('input'); t.type = 'text'; t.id = id; t.disabled = dis; { const ph = placeholderFor(item); if (ph) t.placeholder = ph; } t.value = String(item.value ?? '');
     t.addEventListener('change', () => save(item, t.value));
     return { node: t, id };
   }
@@ -207,7 +211,8 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
     const lab = el('label', 'slabel'); lab.htmlFor = id;
     lab.append(el('span', 'skey', item.key));
     if (item.description) lab.append(el('span', 'sdesc muted', item.description));
-    if (isReadOnly(item)) lab.append(el('span', 'sdesc muted', 'Read-only here. Change it from Claude Code with /subdeck:settings.'));
+    const hint = readOnlyHint(item);
+    if (hint) lab.append(el('span', 'sdesc muted', hint));
     r.append(lab);
     if (item.source && item.source !== 'default') r.append(el('span', `tag src-${item.source}`, item.source));
     else r.append(el('span', 'tag', 'default'));

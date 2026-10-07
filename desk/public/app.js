@@ -1,6 +1,6 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
-import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText } from './format.js';
+import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText } from './format.js';
 import { initSettings } from './settings.js';
 import { initTasks } from './tasks.js';
 
@@ -311,7 +311,10 @@ function renderProjectsInner() {
   const now = Date.now();
   if (!S.projects.length) { box.append(el('p', 'empty', emptyProjectsText(S.sources, S.server ? S.server.days : 14))); return; }
   const list = filterProjects(S.projects, { text: S.filter, onlyActive: S.onlyActive, showTemp: S.showTemp }, now);
-  if (!list.length) { box.append(el('p', 'empty', 'No projects match.')); return; }
+  if (!list.length) {
+    const hidden = S.showTemp ? 0 : filterProjects(S.projects, { text: S.filter, onlyActive: S.onlyActive, showTemp: true }, now).length;
+    box.append(el('p', 'empty', noMatchText(hidden))); return;
+  }
   for (const g of groupProjects(list, now)) {
     box.append(el('div', 'group-label', g.label));
     for (const p of g.items) {

@@ -21,6 +21,15 @@ export function handoffSummary(t) {
   return `interrupted: ${n} uncommitted file${n === 1 ? '' : 's'}`;
 }
 
+/** Tab label: the total task count, plus "!N" when N tasks are blocked or interrupted. */
+export function tabLabel(projects) {
+  let total = 0, attn = 0;
+  for (const p of projects || []) for (const t of p.tasks || []) { total++; if (t.status === 'interrupted' || t.status === 'blocked') attn++; }
+  if (!total) return { text: 'Tasks', title: '' };
+  const title = `${total} task${total === 1 ? '' : 's'}${attn ? `, ${attn} blocked or interrupted` : ''}`;
+  return { text: attn ? `Tasks (${total}) !${attn}` : `Tasks (${total})`, title };
+}
+
 export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessions, closeOthers }) {
   const st = { open: false, data: null, error: null, project: '', expanded: new Set(), bodies: new Map(), gen: 0 };
 
@@ -122,10 +131,10 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
   }
 
   function updateTab() {
-    const n = st.data ? st.data.projects.reduce((a, p) => a + p.tasks.filter(t => t.status === 'interrupted' || t.status === 'blocked').length, 0) : 0;
+    const l = tabLabel(st.data ? st.data.projects : []);
     const b = $('tabTasks');
-    b.textContent = n > 0 ? `Tasks (${n})` : 'Tasks';
-    b.title = n > 0 ? `${n} blocked or interrupted` : '';
+    b.textContent = l.text;
+    b.title = l.title;
   }
 
   function show(on) {
