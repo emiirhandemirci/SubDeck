@@ -5,7 +5,7 @@
 #   bash <plugin>/scripts/settings.sh help                            the 3 commands, every key with options
 #   bash <plugin>/scripts/settings.sh json [--project [<dir>]]        every setting as one JSON object (Desk reads this)
 #   bash <plugin>/scripts/settings.sh set k=v [k=v ...] [--project [<dir>]]   validate all, then write (all or nothing)
-#   bash <plugin>/scripts/settings.sh reset [--project]               reset models, guard, notifications, context, tasks
+#   bash <plugin>/scripts/settings.sh reset [--project]               reset models, guard, notifications, context, tasks, roles
 # A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
 # Keys: mode|worker|escalation|researcher|verifier|explore -> models.sh
 #       notify=on|off, notify.events=waiting,done,agent,idle -> notify.sh
@@ -17,6 +17,7 @@
 #       protect-ports|protect-hosts|protect-procs=<list>    -> guard.sh cli ports|hosts|procs (replaces; empty clears)
 #       tasks.dir=<path>, empty = the state dir             -> config key tasks.dir (written here; \ stored as /)
 #       report-check=on|off                                 -> config key tasks.reportCheck (written here)
+#       roles.<role>.tool|model|args|cmd|timeout=<v>        -> config member "roles" (written here; per role the whole object of one scope wins)
 #       statusline=on|off                                   -> not written here (the skill edits settings.json)
 # Exit codes: show/help/reset always 0. json 0 (2 on a bad argument). set: 0 on success, 2 + one-line
 # error on stderr for any invalid key/value (nothing is written if any pair is invalid).
@@ -26,6 +27,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_KEYS="mode worker escalation researcher verifier explore"
 STATIC_RULES="git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources"
 EVENT_KINDS="waiting done agent idle"
+ROLE_TOOLS="claude codex gemini agy opencode copilot custom"
 US=$'\037'
 
 CMD=""; SCOPE=""; PROJECT=""; PAIRS=(); BAD=()
@@ -188,6 +190,11 @@ meta() {
     report-check) MG=tasks; MT=bool; MO="on off"; MD="flag sub-agents that stop without a report (Stop:/Tested: lines)" ;;
     context)      MG=context; MT=int; MD="context window in tokens for models whose size is unknown; 0 = auto" ;;
     statusline)   MG=statusline; MT=bool; MO="on off"; MD="agent counts in the Claude Code status line (read-only here; the skill edits settings.json)" ;;
+    roles.*.tool)    MG=roles; MT=enum; MO="$ROLE_TOOLS"; MD="CLI that runs this role instead of an in-session sub-agent; empty removes the role mapping at this scope" ;;
+    roles.*.model)   MG=roles; MT=string; MD="model passed to the CLI as is; empty = the tool's own default" ;;
+    roles.*.args)    MG=roles; MT=string; MD="extra CLI flags, split on spaces ({sp} = a literal space); auto-approve flags are refused" ;;
+    roles.*.cmd)     MG=roles; MT=string; MD="command for tool custom; must contain {prompt_file}" ;;
+    roles.*.timeout) MG=roles; MT=int; MD="seconds before the run is stopped, 60-86400 (default 1800)" ;;
     *)            MG=guard; MT=enum; MO="deny ask off"; MD="guard rule" ;;
   esac
 }
@@ -269,6 +276,34 @@ END {
   if (sv("context/window") && EV ~ /^[0-9]+$/) out("context", EV + 0, ES); else out("context", 0, "default")
   if (sv("tasks/dir")) out("tasks.dir", EV, ES); else out("tasks.dir", "", "default")
   if (sv("tasks/reportCheck", "true false")) out("report-check", (EV == "true") ? "on" : "off", ES); else out("report-check", "on", "default")
+  roles_out()
+}
+# roles: per role the whole object of the first scope (project, legacy project, user) that has it
+function roles_out(   key, a, r, nr, i, j, t, sc, f, fv, src, v, order) {
+  split("manager worker worker-heavy researcher verifier", FX, " ")
+  for (i = 1; i <= 5; i++) { RL[FX[i]] = 1; order[i] = FX[i] }
+  nr = 5; nf = 0
+  for (key in S) {
+    split(key, a, SUBSEP)
+    if (split(a[2], pp, "/") >= 3 && pp[1] == "roles" && pp[2] ~ /^[a-z][a-z0-9-]*$/ && length(pp[2]) <= 24) {
+      RP[a[1], pp[2]] = 1
+      if (!(pp[2] in RL)) { RL[pp[2]] = 1; FR[++nf] = pp[2] }
+    }
+  }
+  for (i = 2; i <= nf; i++) { t = FR[i]; for (j = i - 1; j >= 1 && FR[j] > t; j--) FR[j + 1] = FR[j]; FR[j + 1] = t }
+  for (i = 1; i <= nf; i++) order[5 + i] = FR[i]
+  for (i = 1; i <= 5 + nf; i++) {
+    r = order[i]; sc = ""; src = "default"
+    for (j = 1; j <= 3; j++) { t = substr("plu", j, 1); if ((t, r) in RP) { sc = t; src = (t == "u") ? "user" : "project"; break } }
+    for (j = 1; j <= 5; j++) {
+      f = (j == 1) ? "tool" : (j == 2) ? "model" : (j == 3) ? "args" : (j == 4) ? "cmd" : "timeout"
+      v = (sc != "" && ((sc, "roles/" r "/" f) in S)) ? S[sc, "roles/" r "/" f] : ""
+      if (f == "tool" && v !~ /^(claude|codex|gemini|agy|opencode|copilot|custom)$/) v = ""
+      if (f == "model" && v != "" && (v !~ /^[A-Za-z0-9][A-Za-z0-9._:\/@+-]*$/ || length(v) > 128)) v = ""
+      if (f == "timeout") { if (v ~ /^[0-9]+$/ && v + 0 >= 60 && v + 0 <= 86400) v = v + 0; else v = 1800 }
+      out("roles." r "." f, v, src)
+    }
+  }
 }'
 collect() {
   local k v s files=() out sl="" c
@@ -313,7 +348,7 @@ json() {
 }
 
 show() {
-  local k v s g t o d cur=""
+  local k v s g t o d cur="" rn m
   collect
   echo "SubDeck settings"
   while IFS="$US" read -r k v s g t o d; do
@@ -322,7 +357,19 @@ show() {
       cur="$g"
       case "$g" in models) echo "Models" ;; notify) echo "Notifications" ;; push) echo "Push" ;; guard) echo "Guard" ;;
         protect) echo "Protected files" ;; resources) echo "Protected resources" ;; context) echo "Context" ;;
-        tasks) echo "Tasks" ;; statusline) echo "Status line" ;; esac
+        tasks) echo "Tasks" ;; roles) echo "Roles" ;; statusline) echo "Status line" ;; esac
+    fi
+    if [ "$g" = roles ]; then
+      case "$k" in
+        *.tool)
+          rn="${k#roles.}"; rn="${rn%.tool}"
+          if [ -z "$v" ]; then printf '  %-19s %s\n' "$rn" "(in-session)"
+          else
+            m="$(printf '%s\n' "$REC" | awk -F "$US" -v k="roles.$rn.model" '$1 == k { print $2; exit }')"
+            printf '  %-19s %s  %s\n' "$rn" "$v${m:+ $m}" "${s/default/}"
+          fi ;;
+      esac
+      continue
     fi
     case "$k" in protect|protect-*) [ -n "$v" ] || v="(none)" ;; context) [ "$v" = 0 ] && v="0 (auto)" ;; tasks.dir) [ -n "$v" ] || v="(state dir)" ;; esac
     [ "$s" = default ] && s=""
@@ -339,7 +386,7 @@ SubDeck settings: three commands
 
   /subdeck:settings                      show the current settings (short table)
   /subdeck:settings set key=value ...    change one or more settings; add --project to store them for this project only
-  /subdeck:settings reset [--project]    back to defaults (models, guard, notifications, context, tasks)
+  /subdeck:settings reset [--project]    back to defaults (models, guard, notifications, context, tasks, roles)
   (also: json prints every setting as JSON, for tools such as the Desk)
 
 Values come from built-in defaults, then your user config, then the project config (the last one wins).
@@ -350,6 +397,7 @@ EOF
   collect
   while IFS="$US" read -r k v s g t o d; do
     [ -n "$k" ] || continue
+    [ "$g" = roles ] && continue
     case "$t" in
       int) r="a number (tokens)" ;;
       string) r="a path (empty = default)" ;;
@@ -359,6 +407,12 @@ EOF
     printf '  %-19s %s\n' "$k" "$r"
     printf '  %-19s %s\n' "" "$d"
   done <<< "$REC"
+  printf '  %-19s %s\n' "roles.<role>.tool" "${ROLE_TOOLS// /|} (empty = in-session, removes the role)"
+  printf '  %-19s %s\n' "roles.<role>.model" "model id passed to the CLI (empty = the tool's default)"
+  printf '  %-19s %s\n' "roles.<role>.args" "extra CLI flags (max 300 chars, {sp} = space; auto-approve flags refused)"
+  printf '  %-19s %s\n' "roles.<role>.cmd" "command for tool custom, must contain {prompt_file}"
+  printf '  %-19s %s\n' "roles.<role>.timeout" "seconds, 60-86400 (default 1800)"
+  printf '  %-19s %s\n' "" "roles: manager worker worker-heavy researcher verifier, or your own name (a-z, 0-9, -)"
   cat <<'EOF'
 
 Examples
@@ -371,11 +425,49 @@ Examples
   /subdeck:settings set attribution=deny git-add-all=ask
   /subdeck:settings set protect-ports=8080,9000 protect-procs=redis --project
   /subdeck:settings set tasks.dir=docs/tasks report-check=off --project
+  /subdeck:settings set roles.worker.tool=codex roles.worker.model=gpt-5-codex --project
   /subdeck:settings reset --project
 EOF
 }
 
 die() { echo "error: $1" >&2; exit 2; }
+
+ROLE_FIXED=" manager worker worker-heavy researcher verifier "
+DENY_EXACT=" -y --auto --allow-all --allow-all-paths --no-sandbox "
+role_name_ok() { case "$ROLE_FIXED" in *" $1 "*) return 0 ;; esac; [[ $1 =~ ^[a-z][a-z0-9-]{0,23}$ ]]; }
+deny_token() { # token -> 0 when it is on the deny list
+  local t="$1"; lower "$t"
+  case "$DENY_EXACT" in *" $t "*) return 0 ;; esac
+  case "$LOW" in *dangerously*|*bypasspermissions*|*yolo*|*danger-full-access*) return 0 ;; esac
+  return 1
+}
+jstr_esc() { JS="${1//\\/\\\\}"; JS="${JS//\"/\\\"}"; }
+role_raw() { # file role -> raw JSON object of roles.<role> in that file (empty when absent)
+  local r; r="$(member_value "$1" roles)"
+  case "$r" in "{"*) printf '%s' "$r" | obj_members "^\"$2\"[ \t]*:" value ;; esac
+}
+rfield() { printf '%s' "$1" | obj_members "^\"$2\"[ \t]*:" value 2>/dev/null; }   # object field -> raw value
+runq() { RQ="${1#\"}"; RQ="${RQ%\"}"; }
+# roles_write file: apply the role objects computed in RJ_<id> (object text or "-" = remove) to the "roles" member
+roles_write() {
+  local f="$1" raw members m n rid body="" seen=" " line
+  raw="$(member_value "$f" roles)"
+  case "$raw" in "{"*) members="$(printf '%s' "$raw" | obj_members '^$' except)" ;; *) members="" ;; esac
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
+    n="$(printf '%s' "$m" | sed 's/^"\([^"]*\)".*/\1/')"; rid="${n//-/_}"
+    case "$ROLELIST" in *" $n "*)
+      seen="$seen$n "; eval "line=\${RJ_$rid}"
+      [ "$line" = "-" ] || body="$body\"$n\":$line," ;;
+    *) body="$body$m," ;; esac
+  done <<< "$members"
+  for n in $ROLELIST; do
+    case "$seen" in *" $n "*) continue ;; esac
+    rid="${n//-/_}"; eval "line=\${RJ_$rid}"
+    [ "$line" = "-" ] || body="$body\"$n\":$line,"
+  done
+  if [ -z "$body" ]; then member_write "$f" roles remove; else member_write "$f" roles "{${body%,}}"; fi
+}
 
 for b in "${BAD[@]}"; do
   case "$CMD" in set|json) die "unknown argument '$b' (run: settings.sh help)" ;; *) echo "warning: ignored argument '$b'" ;; esac
@@ -389,7 +481,7 @@ case "$CMD" in
     [ ${#PAIRS[@]} -gt 0 ] || die "set needs key=value pairs, e.g. set notify=on worker=opus"
     RULES=" $STATIC_RULES push "; RE_MODEL="^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$"; RE_NUM="^[0-9]{1,9}$"
     MP=(); GP=(); NV=""; NE=""; GE=""; SL=""; PUSH=""; PB=""; PBSET=0; PRSET=0; PR=""; UP=""; CX=""
-    TDOP=keep; TD=""; RCOP=keep; RC=""; RES=()
+    TDOP=keep; TD=""; RCOP=keep; RC=""; RES=(); ROLELIST=" "
     for kv in "${PAIRS[@]}"; do
       k="${kv%%=*}"; v="${kv#*=}"; lower "$v"; lv="$LOW"
       case "$k" in
@@ -444,6 +536,33 @@ case "$CMD" in
             RL="$RL${RL:+,}$it"
           done
           RES+=("${k#protect-}$US$RL") ;;
+        roles.*)
+          rest="${k#roles.}"; rn="${rest%.*}"; fld="${rest##*.}"
+          [ "$rest" != "$fld" ] || die "unknown key '$k' (run: settings.sh help)"
+          case "$fld" in tool|model|args|cmd|timeout) ;; *) die "unknown key '$k' (run: settings.sh help)" ;; esac
+          role_name_ok "$rn" || die "$k: invalid role name '$rn' (manager worker worker-heavy researcher verifier, or a-z 0-9 - up to 24 chars)"
+          case "$v" in *[[:cntrl:]]*) die "$k: control characters are not allowed" ;; esac
+          case "$fld" in
+            tool) case "$lv" in ""|claude|codex|gemini|agy|opencode|copilot|custom) v="$lv" ;; *) die "$k must be one of ${ROLE_TOOLS// /, } (got '$v')" ;; esac ;;
+            model) { [ -z "$v" ] || [[ $v =~ ^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$ ]]; } || die "$k: invalid model id '$v' (letters, digits, . _ : / @ + -; max 128)" ;;
+            args)
+              [ ${#v} -le 300 ] || die "$k: at most 300 characters"
+              case "$v" in *\"*|*\'*|*\\*) die "$k: quotes and backslashes are not allowed (use {sp} for a space inside a token)" ;; esac
+              IFS=' ' read -ra ATOK <<< "$v"; nv=""
+              for it in ${ATOK[@]+"${ATOK[@]}"}; do
+                deny_token "$it" && die "$k: '$it' is not allowed (it disables the tool's approval or sandbox)"
+                nv="$nv${nv:+ }$it"
+              done
+              v="$nv" ;;
+            cmd)
+              [ ${#v} -le 500 ] || die "$k: at most 500 characters"
+              [ -z "$v" ] || case "$v" in *"{prompt_file}"*) ;; *) die "$k must contain {prompt_file}" ;; esac ;;
+            timeout)
+              if [ -n "$v" ]; then { [[ $v =~ ^[0-9]{1,6}$ ]] && [ $((10#$v)) -ge 60 ] && [ $((10#$v)) -le 86400 ]; } || die "$k must be 60-86400 seconds (got '$v')"; v=$((10#$v)); fi ;;
+          esac
+          rid="${rn//-/_}"
+          case "$ROLELIST" in *" $rn "*) ;; *) ROLELIST="$ROLELIST$rn " ;; esac
+          printf -v "RF_${rid}_$fld" '%s' "$v"; printf -v "RS_${rid}_$fld" '%s' 1 ;;
         statusline)
           case "$lv" in on|install) SL=on ;; off|remove) SL=off ;; *) die "statusline must be on or off (got '$v')" ;; esac ;;
         *)
@@ -451,6 +570,42 @@ case "$CMD" in
             case "$lv" in deny|ask|off) GP+=("$k=$lv") ;; *) die "$k must be deny, ask or off (got '$v')" ;; esac
           else die "unknown key '$k' (run: settings.sh help)"; fi ;;
       esac
+    done
+    # roles: resolve every touched role against the target scope before anything is written
+    for rn in $ROLELIST; do
+      rid="${rn//-/_}"
+      for fld in tool model args cmd timeout; do eval "RSET_$fld=\${RS_${rid}_$fld:-}; RVAL_$fld=\${RF_${rid}_$fld:-}"; done
+      if ! ctx_members "$TARGET" >/dev/null; then die "$TARGET is not a valid JSON object; left untouched"; fi
+      obj="$(role_raw "$TARGET" "$rn")"
+      if [ -n "$RSET_tool" ] && [ -z "$RVAL_tool" ]; then
+        { [ -n "$RSET_model" ] || [ -n "$RSET_args" ] || [ -n "$RSET_cmd" ] || [ -n "$RSET_timeout" ]; } && die "roles.$rn: cannot set other keys while removing roles.$rn.tool"
+        printf -v "RJ_$rid" '%s' "-"; continue
+      fi
+      etool=""; emodel=""; eargs=""; ecmd=""; etimeout=""; extra=""
+      if [ -n "$obj" ]; then
+        runq "$(rfield "$obj" tool)"; etool="$RQ"; runq "$(rfield "$obj" model)"; emodel="$RQ"; runq "$(rfield "$obj" args)"; eargs="$RQ"
+        runq "$(rfield "$obj" cmd)"; ecmd="$RQ"; runq "$(rfield "$obj" timeout)"; etimeout="$RQ"
+        extra="$(printf '%s' "$obj" | obj_members '^"(tool|model|args|cmd|timeout)"[ \t]*:' except 2>/dev/null | tr '\n' ',')"; extra="${extra%,}"
+      fi
+      ftool="$etool"; [ -z "$RSET_tool" ] || ftool="$RVAL_tool"
+      [ -n "$ftool" ] || die "set roles.$rn.tool first"
+      fmodel="$emodel"; [ -z "$RSET_model" ] || fmodel="$RVAL_model"
+      fargs="$eargs"; [ -z "$RSET_args" ] || fargs="$RVAL_args"
+      ftimeout="$etimeout"; [ -z "$RSET_timeout" ] || ftimeout="$RVAL_timeout"
+      fcmd="$ecmd"; if [ -n "$RSET_cmd" ]; then jstr_esc "$RVAL_cmd"; fcmd="$JS"; fi
+      if [ "$ftool" = custom ]; then
+        [ -n "$fcmd" ] || die "roles.$rn.cmd is required with tool custom (it must contain {prompt_file})"
+      else
+        [ -z "$RSET_cmd" ] || [ -z "$RVAL_cmd" ] || die "roles.$rn.cmd only works with tool custom"
+        fcmd=""
+      fi
+      body="\"tool\":\"$ftool\""
+      [ -z "$fmodel" ] || body="$body,\"model\":\"$fmodel\""
+      [ -z "$fargs" ] || body="$body,\"args\":\"$fargs\""
+      [ -z "$fcmd" ] || body="$body,\"cmd\":\"$fcmd\""
+      [ -z "$ftimeout" ] || body="$body,\"timeout\":$ftimeout"
+      [ -z "$extra" ] || body="$body,$extra"
+      printf -v "RJ_$rid" '%s' "{$body}"
     done
     # a corrupt target file must not leave a half-applied set
     if { [ -n "$CX" ] || [ $TDOP != keep ] || [ $RCOP != keep ]; } && ! ctx_members "$TARGET" >/dev/null; then die "$TARGET is not a valid JSON object; left untouched"; fi
@@ -480,6 +635,9 @@ case "$CMD" in
     if [ -z "$ERRLINE" ] && { [ $TDOP != keep ] || [ $RCOP != keep ]; }; then
       if l="$(tasks_write "$TARGET" $TDOP "$TD" $RCOP "$RC")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
     fi
+    if [ -z "$ERRLINE" ] && [ "$ROLELIST" != " " ]; then
+      if l="$(roles_write "$TARGET")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
+    fi
     if [ -n "$ERRLINE" ]; then
       if [ $SNAPSET -eq 1 ]; then printf "%s" "$SNAP" > "$TARGET"; else rm -f "$TARGET" 2>/dev/null; fi
       die "${ERRLINE#error: } (nothing written)"
@@ -494,6 +652,7 @@ case "$CMD" in
     N events waiting,done $SCOPE | head -1
     ctx_write "$TARGET" remove >/dev/null
     member_write "$TARGET" tasks remove >/dev/null
+    member_write "$TARGET" roles remove >/dev/null
     echo; show ;;
 esac
 exit 0

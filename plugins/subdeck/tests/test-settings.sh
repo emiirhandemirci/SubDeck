@@ -19,7 +19,7 @@ CFG="$H/.subdeck/config.json"
 # ---- compact table ----
 out="$(run)"; rc=$?
 [ $rc -eq 0 ] && ok "show exits 0" || bad "show exit $rc"
-for g in Models Notifications Push Guard "Protected files" "Protected resources" Context Tasks "Status line"; do has "$out" "^$g\$" "group: $g"; done
+for g in Models Notifications Push Guard "Protected files" "Protected resources" Context Tasks Roles "Status line"; do has "$out" "^$g\$" "group: $g"; done
 has "$out" '^ +worker +sonnet *$' "table: worker default (no source noise)"
 has "$out" '^ +escalation +opus *$' "table: escalation default"
 has "$out" '^ +mode +auto *$' "table: mode"
@@ -35,7 +35,7 @@ has "$out" '^ +tasks.dir +\(state dir\)' "table: tasks.dir default"
 has "$out" '^ +report-check +on *$' "table: report-check default on"
 has "$out" '^More: /subdeck:settings help$' "table: help pointer"
 hasnt "$out" '->' "table: no resolved-model rows"
-[ "$(printf '%s\n' "$out" | wc -l)" -le 40 ] && ok "table stays short" || bad "table too long"
+[ "$(printf '%s\n' "$out" | wc -l)" -le 48 ] && ok "table stays short" || bad "table too long"
 
 # ---- help ----
 out="$(run help)"; rc=$?
@@ -266,6 +266,120 @@ has "$out" '^ +context +0 \(auto\)' "reset: context auto"
 has "$out" '^ +push +branches' "reset: push default"
 run reset --project >/dev/null
 has "$(run)" '^ +worker +sonnet *$' "reset --project exits cleanly"
+
+# ---- roles (config member "roles"; per role the whole object of one scope wins) ----
+rm -f "$CFG"; rm -rf "${SS:?}"/*
+out="$(run)"
+has "$out" '^ +worker +\(in-session\)$' "roles: unmapped worker shows (in-session)"
+has "$out" '^ +manager +\(in-session\)$' "roles: manager listed"
+j="$(run json)"
+has "$j" '"key":"roles.worker.tool","value":"","source":"default","group":"roles","type":"enum","options":\["claude","codex","gemini","agy","opencode","copilot","custom"\]' "roles json: default tool row"
+has "$j" '"key":"roles.worker.timeout","value":1800,"source":"default","group":"roles","type":"int"' "roles json: timeout default 1800"
+[ "$(printf '%s' "$j" | grep -o '"group":"roles"' | wc -l)" -eq 25 ] && ok "roles json: 5 fixed roles x 5 fields" || bad "roles json row count"
+[ "$(printf '%s' "$j" | grep -o '"key":"roles.manager.tool"' | wc -l)" -eq 1 ] && ok "roles json: manager row once" || bad "manager row count"
+case "$j" in *'"key":"report-check"'*'"key":"roles.manager.tool"'*) ok "roles json: group after tasks" ;; *) bad "roles group order" ;; esac
+out="$(run set roles.worker.tool=codex roles.worker.model=gpt-5-codex 'roles.worker.args=--x{sp}y  -c' roles.worker.timeout=0600 roles.ui-worker.tool=custom 'roles.ui-worker.cmd=mytool "a" --in {prompt_file}' roles.verifier.tool=claude roles.verifier.model=opus)"; rc=$?
+[ $rc -eq 0 ] && ok "roles set exits 0" || bad "roles set exit $rc: $out"
+has "$out" '^ +worker +codex gpt-5-codex +user$' "roles show: mapped worker"
+has "$out" '^ +verifier +claude opus +user$' "roles show: verifier"
+has "$out" '^ +ui-worker +custom +user$' "roles show: free role, custom without model"
+has "$out" '^ +researcher +\(in-session\)$' "roles show: researcher unmapped"
+grep -q '"worker":{"tool":"codex","model":"gpt-5-codex","args":"--x{sp}y -c","timeout":600}' "$CFG" && ok "roles stored (args normalized, timeout number)" || bad "roles config: $(cat "$CFG")"
+grep -q '"cmd":"mytool \\"a\\" --in {prompt_file}"' "$CFG" && ok "cmd stored JSON-escaped" || bad "cmd config: $(cat "$CFG")"
+j="$(run json)"
+has "$j" '"key":"roles.worker.args","value":"--x\{sp\}y -c","source":"user"' "roles json: args value"
+has "$j" '"key":"roles.worker.timeout","value":600,"source":"user"' "roles json: timeout set"
+has "$j" '"key":"roles.ui-worker.cmd","value":"mytool \\"a\\" --in \{prompt_file\}","source":"user","group":"roles","type":"string"' "roles json: cmd escaped, free role row"
+case "$j" in *'"key":"roles.verifier.timeout"'*'"key":"roles.ui-worker.tool"'*) ok "roles json: free roles after fixed" ;; *) bad "free role order" ;; esac
+if command -v node >/dev/null 2>&1; then
+  node -e 'const o=JSON.parse(require("fs").readFileSync(0,"utf8"));const c=o.settings.find(s=>s.key==="roles.ui-worker.cmd");if(c.value!=="mytool \"a\" --in {prompt_file}")process.exit(1)' <<< "$j" && ok "roles json parses, cmd round-trips" || bad "roles json parse"
+fi
+# precedence: whole object per role, never mixed
+out="$(run set roles.worker.tool=gemini --project)"
+has "$out" '^ +worker +gemini +project$' "roles precedence: project object replaces user object (no model mixed in)"
+has "$out" '^ +verifier +claude opus +user$' "roles precedence: other roles stay user"
+jp="$(HOME="$H" bash "$S" json --project "$P")"
+has "$jp" '"key":"roles.worker.model","value":"","source":"project"' "roles json: project wins whole object (model empty)"
+has "$jp" '"key":"roles.worker.timeout","value":1800,"source":"project"' "roles json: project timeout default, not user's 600"
+has "$j" '"key":"roles.worker.tool","value":"codex","source":"user"' "roles json: user view unchanged"
+grep -q '"worker":{"tool":"gemini"}' "$PS/config.json" && ok "roles project file written" || bad "project roles: $(cat "$PS/config.json")"
+run set roles.worker.model=gemini-2.5-pro --project >/dev/null
+grep -q '"worker":{"tool":"gemini","model":"gemini-2.5-pro"}' "$PS/config.json" && ok "roles set merges into the same scope's object" || bad "scope merge: $(cat "$PS/config.json")"
+# other members and unknown role keys survive
+cfg_raw "$CFG" '{"desk":{"days":3},"roles":{"worker":{"tool":"codex","note":"x"},"zed":{"tool":"agy"}}}'
+run set roles.worker.model=m1 roles.new-one.tool=copilot >/dev/null
+grep -q '"desk":{"days":3}' "$CFG" && grep -q '"worker":{"tool":"codex","model":"m1","note":"x"}' "$CFG" && grep -q '"zed":{"tool":"agy"}' "$CFG" && grep -q '"new-one":{"tool":"copilot"}' "$CFG" \
+  && ok "roles write keeps other members, unknown keys and roles" || bad "roles write damaged config: $(cat "$CFG")"
+has "$(run json)" '"key":"roles.zed.tool","value":"agy"' "roles json: unknown-to-set free role listed"
+# empty tool removes the role at that scope
+out="$(run set roles.worker.tool=)"
+grep -q '"worker"' "$CFG" && bad "tool= left the role" || ok "roles.<r>.tool= removes the role object"
+grep -q '"zed":{"tool":"agy"}' "$CFG" && ok "removal keeps other roles" || bad "removal damaged: $(cat "$CFG")"
+has "$out" '^ +worker +gemini gemini-2.5-pro +project$' "roles show: user role removed, project role remains"
+run set roles.zed.tool= roles.new-one.tool= >/dev/null
+grep -q '"roles"' "$CFG" && bad "empty roles member kept" || ok "last role removed drops the roles member"
+# validation (one line, exit 2, nothing written)
+cfg_raw "$CFG" '{"roles":{"worker":{"tool":"codex"}}}'; before="$(cat "$CFG")"
+chk "roles bad tool" "roles.worker.tool must be one of" roles.worker.tool=cursor
+chk "roles bad name" "invalid role name 'Bad'" roles.Bad.tool=codex
+chk "roles name too long" "invalid role name" "roles.a$(printf 'b%.0s' $(seq 24)).tool=codex"
+chk "roles unknown field" "unknown key 'roles.worker.mode'" roles.worker.mode=x
+chk "roles bad model" "roles.worker.model: invalid model id" 'roles.worker.model=-bad'
+chk "roles model with space" "roles.worker.model: invalid model id" 'roles.worker.model=a b'
+chk "roles args too long" "roles.worker.args: at most 300" "roles.worker.args=$(printf 'a%.0s' $(seq 301))"
+chk "roles args quote" "roles.worker.args: quotes and backslashes" 'roles.worker.args=--a "b"'
+chk "roles args single quote" "roles.worker.args: quotes and backslashes" "roles.worker.args=--a 'b'"
+chk "roles args backslash" "roles.worker.args: quotes and backslashes" 'roles.worker.args=--a\b'
+chk "roles args control" "control characters" "roles.worker.args=--a$(printf '\t')b"
+for tok in --dangerously-skip-permissions --permission-mode=bypassPermissions --yolo --sandbox=danger-full-access -y --auto --allow-all --allow-all-paths --no-sandbox; do
+  chk "roles args deny $tok" "roles.worker.args: '$tok' is not allowed" "roles.worker.args=--ok $tok"
+done
+chk "roles args deny among tokens" "is not allowed" 'roles.worker.args=-s workspace-write --yolo'
+chk "roles timeout low" "roles.worker.timeout must be 60-86400" roles.worker.timeout=59
+chk "roles timeout high" "roles.worker.timeout must be 60-86400" roles.worker.timeout=86401
+chk "roles timeout text" "roles.worker.timeout must be 60-86400" roles.worker.timeout=abc
+chk "roles model without tool" "set roles.nobody.tool first" roles.nobody.model=x
+chk "roles timeout without tool" "set roles.nobody.tool first" roles.nobody.timeout=100
+chk "roles cmd with non-custom tool" "only works with tool custom" 'roles.worker.cmd=x {prompt_file}'
+chk "roles custom without cmd" "roles.c.cmd is required with tool custom" roles.c.tool=custom
+chk "roles cmd without placeholder" "roles.c.cmd must contain {prompt_file}" roles.c.tool=custom 'roles.c.cmd=mytool --in x'
+chk "roles cmd too long" "roles.c.cmd: at most 500" roles.c.tool=custom "roles.c.cmd={prompt_file}$(printf 'a%.0s' $(seq 500))"
+chk "roles remove with other keys" "cannot set other keys while removing" roles.worker.tool= roles.worker.model=x
+chk "roles invalid does not write valid pair" "roles.worker.tool must be one of" roles.zz.tool=codex roles.worker.tool=nope
+# tool change away from custom drops the cmd; custom role keeps its cmd on a model change
+run set roles.c.tool=custom 'roles.c.cmd=run {prompt_file}' >/dev/null
+run set roles.c.model=m2 >/dev/null
+grep -q '"c":{"tool":"custom","model":"m2","cmd":"run {prompt_file}"}' "$CFG" && ok "custom role keeps cmd on model change" || bad "custom keep: $(cat "$CFG")"
+run set roles.c.tool=codex >/dev/null
+grep -q '"c":{"tool":"codex","model":"m2"}' "$CFG" && ok "tool change away from custom drops cmd" || bad "custom drop: $(cat "$CFG")"
+# corrupt file refused for roles keys
+cfg_raw "$CFG" '{"roles": {"worker": {"tool": "x"}, oops'; b4="$(cat "$CFG")"
+err="$(run set roles.worker.tool=codex 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 2 ] && [ "$(cat "$CFG")" = "$b4" ] && ok "broken file: roles write refused, file unchanged" || bad "broken roles file: exit $rc"
+# mid-way rejection rolls the roles write back (guard stub rejects branches)
+STUB="$(mktemp -d)"; cp "$HERE/../scripts/"*.sh "$STUB/"
+cat > "$STUB/guard.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+case "$2" in branches) echo "error: stub rejects $2"; exit 0 ;; esac
+exec bash "$REAL_GUARD" "$@"
+STUBEOF
+REAL_GUARD="$HERE/../scripts/guard.sh"; export REAL_GUARD
+cfg_raw "$CFG" '{"roles":{"worker":{"tool":"codex"}}}'; b4="$(cat "$CFG")"
+HOME="$H" bash "$STUB/settings.sh" set roles.worker.model=x roles.verifier.tool=claude protect-branches=main "$P" >/dev/null 2>&1; rc=$?
+[ $rc -eq 2 ] && [ "$(cat "$CFG")" = "$b4" ] && ok "roles write rolled back on a later failure" || bad "roles rollback: exit $rc, $(cat "$CFG")"
+rm -rf "${STUB:?}"
+# show/help/reset
+has "$(run help)" '^  roles\.<role>\.tool +claude\|codex\|gemini\|agy\|opencode\|copilot\|custom' "help: roles.<role>.tool"
+for f in model args cmd timeout; do has "$(run help)" "^  roles\.<role>\.$f " "help: roles.<role>.$f"; done
+has "$(run help)" 'set roles.worker.tool=codex roles.worker.model=gpt-5-codex --project' "help: roles example"
+hasnt "$(run help)" '^  roles\.worker\.' "help: no per-role rows"
+run set roles.worker.tool=codex >/dev/null; run set roles.worker.tool=gemini --project >/dev/null
+run reset >/dev/null
+grep -q '"roles"' "$CFG" 2>/dev/null && bad "reset kept roles" || ok "reset removes the roles member"
+grep -q '"roles"' "$PS/config.json" && ok "reset (user) leaves the project roles" || bad "project roles lost"
+run reset --project >/dev/null
+grep -q '"roles"' "$PS/config.json" 2>/dev/null && bad "reset --project kept roles" || ok "reset --project removes the roles member"
+rm -f "$CFG"; rm -rf "${SS:?}"/*
 
 # ---- skill file ----
 [ -f "$SK" ] && grep -q '^disable-model-invocation: true' "$SK" && ok "skill is user-only" || bad "skill frontmatter"
