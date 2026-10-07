@@ -407,7 +407,7 @@ export function taskFields(info, key, hook, mtimeMs) {
     if (!Number.isFinite(t)) return false;
     if (key.startsWith('s:')) return !(mtimeMs > t + 2000);
     const st = hook && hook.lastStart ? Date.parse(hook.lastStart) : NaN;
-    return !(Number.isFinite(st) && t <= st);
+    return !(Number.isFinite(st) && t < st);   // same second as the start counts as newer: timestamps have 1 s resolution
   };
   const out = {};
   const m = info.missing.get(key), i = info.interrupts.get(key);

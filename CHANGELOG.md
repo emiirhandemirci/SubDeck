@@ -8,6 +8,7 @@
 - **"Tested how?":** worker reports need a `Tested:` line; verifier evidence is typed `read`, `executed` or `live`, and behaviour claims need executed or live evidence. New `scripts/verify-checks.sh` (empty or shrinking tests, claimed commands missing from the transcript).
 - **Protected resources:** new guard rule `protected-resources` (default ask) with `protect-ports`, `protect-hosts`, `protect-procs`; plus a lock-file and leave-as-found rule in the rulebook. A guard rail on obvious command text only.
 - **Missing agent types:** install output, README and the session hint now say to run `/reload-plugins` (or restart) after install or update; the manager tells you once if a `subdeck:` agent type is missing.
+- **Desk, Beads bridge (opt-in):** with `SUBDECK_BEADS=1`, Desk also shows `bd list --json` items of projects that have a `.beads/` folder on the Tasks board, read-only. `bd` (or `SUBDECK_BD`) is resolved from PATH only, never from the project.
 - **Desk:** a slow first scan is no longer shown as "no sessions" (sessions appear as they are found, with scan progress), and the first Claude Code scan is faster; Desk now subscribes to changes before the first scan.
 - **Cursor:** sessions are found when `composerHeaders` is missing (falls back to `cursorDiskKV` and per-workspace storage); an unknown layout shows a note instead of an error.
 

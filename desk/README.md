@@ -59,7 +59,7 @@ The **Tasks** tab shows the SubDeck task files of every known project in six col
 - Directory: `SUBDECK_TASKS_DIR`, else config `tasks.dir` (project config before user config; relative paths are relative to the project), else `<state dir>/tasks`. Done tasks live in `archive/`. Read-only: Desk never writes task files.
 - API: `GET /api/tasks[?project=<id>]` and `GET /api/tasks/<projectId>/<taskId>` (404 with `--no-content`). Changes are pushed as the SSE event `tasks`.
 - Agents that stopped without the required report get the badge "stopped without report"; interrupted agents get "interrupted". Both are also listed in the waiting list (`waitingKind` `no-report` / `interrupted`); their state is unchanged.
-- Beads (optional, read-only): when `bd` is on PATH and `<project>/.beads/` exists, `bd list --json` items (5 s timeout) appear on the same board, marked "Beads".
+- Beads (optional, off by default): set `SUBDECK_BEADS=1` and, for a project with a `.beads/` folder, `bd list --json` items (5 s timeout) appear on the same board, marked "Beads". `bd` (or the absolute path in `SUBDECK_BD`) is looked up in PATH only, never in the project or the working directory; entries of PATH inside the project are skipped. bd needs the project as its working directory to find its database, so Desk runs it there with `BEADS_NO_DAEMON=1`; this is the one place Desk starts another program, which is why it is opt-in.
 
 ## Settings and theme
 

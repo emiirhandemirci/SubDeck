@@ -1,5 +1,5 @@
 // desk/lib/tasks.mjs
-// SubDeck Tasks reader (contract 0.7 sections 1 and 7). Read-only; own tiny frontmatter parser, no YAML.
+// SubDeck Tasks reader. Read-only; own tiny frontmatter parser, no YAML.
 // Task files: <dir>/<id>.md (live), <dir>/archive/<id>.md (done). Dir rule: env SUBDECK_TASKS_DIR, config tasks.dir
 // (project config before user config), else <state dir>/tasks.
 import fs from 'node:fs/promises';
@@ -117,7 +117,7 @@ export function resolveTasksDir(projectPath, env) {
   return abs ? path.normalize(v) : path.join(projectPath, v);
 }
 
-// ---- Beads bridge (OPEN 5): read-only, only when .beads/ exists and `bd` runs ----
+// ---- Beads bridge: opt-in (SUBDECK_BEADS=1), read-only, only when .beads/ exists and `bd` runs ----
 const BEADS_STATUS = { open: 'open', in_progress: 'in-progress', 'in-progress': 'in-progress', blocked: 'blocked', deferred: 'blocked', closed: 'done', done: 'done', review: 'review' };
 export function mapBeads(raw, projectPath) {
   const list = Array.isArray(raw) ? raw : raw && Array.isArray(raw.issues) ? raw.issues : [];
@@ -135,11 +135,33 @@ export function mapBeads(raw, projectPath) {
   return out;
 }
 
-export function runBd(projectPath, { timeoutMs = 5000, cmd = process.env.SUBDECK_BD || 'bd' } = {}) {
+const inside = (p, dir) => { const r = path.relative(path.resolve(dir), path.resolve(p)); return r === '' || (!r.startsWith('..') && !path.isAbsolute(r)); };
+
+/**
+ * Absolute path of the bd executable, or null. An absolute `cmd` (SUBDECK_BD) is used as given; a bare name is looked up in
+ * PATH only: relative PATH entries and entries inside the project are skipped, so a bd in the project or the cwd is never run.
+ */
+export function resolveBd(cmd, { pathVar = process.env.PATH || '', platform = process.platform, projectPath = null, exists = f => { try { return fsSync.statSync(f).isFile(); } catch { return false; } } } = {}) {
+  const c = String(cmd || 'bd');
+  const pp = platform === 'win32' ? path.win32 : path.posix;
+  if (pp.isAbsolute(c)) return projectPath && inside(c, projectPath) ? null : (exists(c) ? c : null);
+  if (/[\\/]/.test(c)) return null;
+  const exts = platform === 'win32' ? ['.exe', '.com'] : [''];
+  for (const d of pathVar.split(platform === 'win32' ? ';' : ':')) {
+    if (!d || !pp.isAbsolute(d) || (projectPath && inside(d, projectPath))) continue;
+    for (const e of exts) { const f = pp.join(d, c + e); if (exists(f)) return f; }
+  }
+  return null;
+}
+
+/** `bd list --json` for one project. The cwd must be the project (bd finds its database from it); BEADS_NO_DAEMON asks bd not to start a daemon. */
+export function runBd(projectPath, { timeoutMs = 5000, cmd = process.env.SUBDECK_BD || 'bd', pathVar, platform } = {}) {
   return new Promise(resolve => {
+    const exe = resolveBd(cmd, { pathVar, platform, projectPath });
+    if (!exe) return resolve(null);
     let out = '', done = false, timer = null, child;
     const end = v => { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
-    try { child = spawn(cmd, ['list', '--json'], { cwd: projectPath, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }); } catch { return resolve(null); }
+    try { child = spawn(exe, ['list', '--json'], { cwd: projectPath, env: { ...process.env, BEADS_NO_DAEMON: '1', BD_NO_DAEMON: '1' }, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }); } catch { return resolve(null); }
     timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } end(null); }, timeoutMs);
     child.stdout.on('data', c => { if (out.length < 4e6) out += c; });
     child.on('error', () => end(null));
@@ -154,7 +176,8 @@ async function lstatOrNull(f) { try { return await fs.lstat(f); } catch { return
  * Reader with a per-file cache (size + mtime). beads: async (projectPath) -> raw bd JSON or null (default: runs `bd list --json`
  * when <project>/.beads exists); beadsTtlMs caches that answer per project.
  */
-export function createTasksReader({ env = null, now = Date.now, beads = runBd, beadsTtlMs = 10000, beadsEnabled = true } = {}) {
+export function createTasksReader({ env = null, now = Date.now, beads = runBd, beadsTtlMs = 10000, beadsEnabled = null } = {}) {
+  const beadsOn = beadsEnabled !== null ? !!beadsEnabled : ((env && env.vars && env.vars.SUBDECK_BEADS) || process.env.SUBDECK_BEADS) === '1';
   const cache = new Map();   // file -> { sig, parsed }
   const beadsCache = new Map();   // project path -> { at, items }
 
@@ -186,7 +209,7 @@ export function createTasksReader({ env = null, now = Date.now, beads = runBd, b
   }
 
   async function beadsItems(projectPath) {
-    if (!beadsEnabled || !beads) return [];
+    if (!beadsOn || !beads) return [];
     const b = await statOrNull(path.join(projectPath, '.beads'));
     if (!b || !b.isDirectory()) return [];
     const hit = beadsCache.get(projectPath);

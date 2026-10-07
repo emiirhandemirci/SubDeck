@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
-import { parseFrontmatter, parseList, parseHandoff, parseTask, resolveTasksDir, createTasksReader, createTasksWatcher, mapBeads } from '../lib/tasks.mjs';
+import { resolveBd, runBd, parseFrontmatter, parseList, parseHandoff, parseTask, resolveTasksDir, createTasksReader, createTasksWatcher, mapBeads } from '../lib/tasks.mjs';
 import { createApi } from '../lib/api.mjs';
 import { readHooks, taskFields } from '../adapters/claude-code.mjs';
 import { groupTasks, handoffSummary, COLUMNS } from '../public/tasks.js';
@@ -244,7 +244,7 @@ test('beads: only with .beads dir, mapped read-only, failure is silent', async (
   assert.deepEqual(mapBeads(raw).map(x => [x.task.id, x.task.status, x.task.source]), [['bd-1a2b', 'in-progress', 'beads']]);
   let calls = 0;
   const env = env0({ vars: { SUBDECK_TASKS_DIR: path.join(proj, 'none') } });
-  const rd = createTasksReader({ env, beads: async () => { calls++; return raw; } });
+  const rd = createTasksReader({ env, beadsEnabled: true, beads: async () => { calls++; return raw; } });
   assert.deepEqual((await rd.read(proj)).tasks, []);   // no .beads
   assert.equal(calls, 0);
   fs.mkdirSync(path.join(proj, '.beads'));
@@ -252,7 +252,7 @@ test('beads: only with .beads dir, mapped read-only, failure is silent', async (
   assert.equal(r.tasks.length, 1); assert.equal(r.tasks[0].task.source, 'beads');
   assert.equal((await rd.get(proj, 'bd-1a2b')).body, 'details');
   await rd.read(proj); assert.equal(calls, 1);   // cached
-  const bad = createTasksReader({ env, beads: async () => { throw new Error('boom'); } });
+  const bad = createTasksReader({ env, beadsEnabled: true, beads: async () => { throw new Error('boom'); } });
   assert.deepEqual((await bad.read(proj)).tasks, []);
 });
 
@@ -295,4 +295,48 @@ test('core passes reportMissing / interrupted / taskId through, state unchanged,
   assert.deepEqual(b.interrupted, { at: '2026-10-07T11:00:00.000Z', task: null, errorType: 'quota', files: 3 }); assert.equal(b.taskId, null);
   assert.equal(c.reportMissing, undefined); assert.equal(c.taskId, undefined);
   assert.equal(s.projects[0].noticeCount, 2);
+});
+
+test('beads: off by default (no spawn), on with SUBDECK_BEADS=1', async () => {
+  const proj = tmp('tk-bo-'); fs.mkdirSync(path.join(proj, '.beads'));
+  let calls = 0;
+  const beads = async () => { calls++; return [{ id: 'bd-1', title: 'x', status: 'open' }]; };
+  const off = createTasksReader({ env: env0({ vars: { SUBDECK_TASKS_DIR: path.join(proj, 'n') } }), beads });
+  assert.deepEqual((await off.read(proj)).tasks, []); assert.equal(calls, 0);
+  const on = createTasksReader({ env: env0({ vars: { SUBDECK_TASKS_DIR: path.join(proj, 'n'), SUBDECK_BEADS: '1' } }), beads });
+  assert.equal((await on.read(proj)).tasks.length, 1); assert.equal(calls, 1);
+});
+
+test('beads: bd is resolved from PATH only, never from the project or a relative PATH entry', () => {
+  const have = new Set(['/usr/bin/bd', '/proj/bd', '/proj/bin/bd', '/work/bd']);
+  const exists = f => have.has(f);
+  const o = { platform: 'linux', exists, projectPath: '/proj' };
+  assert.equal(resolveBd('bd', { ...o, pathVar: '/proj/bin:.:bin:/usr/bin' }), '/usr/bin/bd');
+  assert.equal(resolveBd('bd', { ...o, pathVar: '/proj/bin:.:bin' }), null);
+  assert.equal(resolveBd('./bd', { ...o, pathVar: '/usr/bin' }), null);
+  assert.equal(resolveBd('/proj/bd', { ...o, pathVar: '/usr/bin' }), null);   // absolute but inside the project
+  assert.equal(resolveBd('/work/bd', { ...o, pathVar: '' }), '/work/bd');
+  assert.equal(resolveBd('/nope/bd', { ...o, pathVar: '' }), null);
+  const w = { platform: 'win32', projectPath: 'C:\\proj', exists: f => ['C:\\tools\\bd.exe', 'C:\\proj\\bd.exe'].includes(f) };
+  assert.equal(resolveBd('bd', { ...w, pathVar: 'C:\\proj;bd;C:\\tools' }), 'C:\\tools\\bd.exe');
+  assert.equal(resolveBd('bd', { ...w, pathVar: 'C:\\proj' }), null);
+});
+
+test('beads: a bd planted in the project is never executed', { skip: process.platform === 'win32' }, async () => {
+  const proj = tmp('tk-bp-'); const mark = path.join(proj, 'ran');
+  fs.writeFileSync(path.join(proj, 'bd'), `#!/bin/sh\ntouch "${mark}"\necho '[]'\n`, { mode: 0o755 });
+  assert.equal(await runBd(proj, { cmd: 'bd', pathVar: `${proj}:.` }), null);
+  assert.ok(!fs.existsSync(mark));
+});
+
+test('report_missing / task_interrupted in the same second as the SubagentStart still show', async () => {
+  const root = tmp('tk-ss-'); const proj = '/proj/ss';
+  const env = { platform: process.platform, home: tmp('tk-sh-'), vars: {}, stateRoot: root };
+  const { stateDirs } = await import('../lib/paths.mjs');
+  const sd = stateDirs(proj, env)[0]; fs.mkdirSync(sd, { recursive: true });
+  const ev = (event, agent, payload) => JSON.stringify({ ts: '2026-10-07T09:00:00Z', event, agent_id: agent, agent_type: 'worker-sonnet', session_id: 's1', payload });
+  fs.writeFileSync(path.join(sd, 'events.jsonl'), [ev('SubagentStart', 'a1', {}), ev('report_missing', 'a1', { task: 't-0a01' }), ev('SubagentStart', 'a2', {}), ev('task_interrupted', 'a2', { task: 't-0b02', error_type: 'quota', files: 1 })].join('\n') + '\n');
+  const info = await readHooks(proj, new Map(), env);
+  assert.deepEqual(taskFields(info, 'a:a1', info.agents.get('a1'), 0).reportMissing, { at: '2026-10-07T09:00:00.000Z', task: 't-0a01' });
+  assert.equal(taskFields(info, 'a:a2', info.agents.get('a2'), 0).interrupted.files, 1);
 });
