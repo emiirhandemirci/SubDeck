@@ -111,15 +111,15 @@ Behind the scenes, the manager uses `tasks.sh` to keep one small file per delega
 | Command | What it does |
 |---|---|
 | `tasks.sh new "<title>" --owner <agent-type> --writable <paths>` | Create a task file. Returns the task id (e.g. `t-3f9a`). |
-| `tasks.sh list` | List all tasks: id, status, owner/agent, title. |
-| `tasks.sh ready` | List tasks ready to launch (status `open` or `blocked`). Warns if quota limit is hit in the last 60 minutes. |
-| `tasks.sh show <id>` | Display the whole task file, or `--section report` / `--section verification` for one section. |
-| `tasks.sh link <id> <agentId>` | Link an agent to a task (set the agent field and session). Use when an agent started without `Task:` in its prompt. |
-| `tasks.sh verify <id>[,<id>...] --verdict <Approved\|Needs-fixes\|Escalate> --by <agentId> [--fingerprint <cksum>]` | Write a verification result (one verifier per wave; use `--covers` to verify multiple tasks together). |
-| `tasks.sh grant <id> <path>[,<path>...] --reason <text>` | Grant a path extension to a task (when the worker needs just one more file outside its writable set). |
-| `tasks.sh pack <wave> --from <file> [--section <text>...] [--map <path>...] [--tasks <id>,...]` | Build a context pack for a wave (contract excerpt, file map, task list). |
-| `tasks.sh writable <id>` | List the effective writable paths for a task (union of `writable` and `grants`). |
-| `tasks.sh done <id>[,<id>...]` | Mark a task done (only after its latest verdict is Approved). |
+| `tasks.sh list [--tsv]` | List all tasks: id, status, owner/agent, title. `--tsv` for tab-separated (scripts, tests). |
+| `tasks.sh ready [--tsv] [--json]` | List tasks ready to launch (status `open` or `blocked`). Warns if quota limit is hit in the last 60 minutes. `--tsv` for tab-separated, `--json` for JSON output. |
+| `tasks.sh show <id> [--section task\|done-when\|report\|verification\|handoff]` | Display the whole task file, or only one section. |
+| `tasks.sh link <id> <agentId> [--session <sid>] [--transcript <abs>]` | Link an agent to a task (set agent, session and transcript). Use when an agent started without `Task:` in its prompt. |
+| `tasks.sh verify <id>[,<id>...] --verdict Approved\|Needs-fixes\|Escalate --by <agentId> [--fingerprint <fp>]` or `verify --covers <id>,<id>... --verdict ...` | Write verdict and fingerprint. One verifier per wave; `--covers` checks multiple tasks together. |
+| `tasks.sh grant <id> <path>[,<path>...] --reason <text>` | Grant a path extension to a task (when the worker needs a file outside writable set). |
+| `tasks.sh pack <wave> --from <file> [--section <text>]... [--map <path>,...] [--decisions <file>] [--tasks <id>,...]` | Build a context pack for a wave (contract excerpt, file map, decisions, task list). Wave: lowercase letters, digits, hyphens. |
+| `tasks.sh writable <id>` or `writable --agent <agentId>` | List effective writable paths (union of `writable` and `grants`), or the live task's paths for an agent. |
+| `tasks.sh done <id>[,<id>...]` | Mark a task done (only after latest verdict is Approved). |
 
 These commands are for the manager and integrate with the hooks; they are not for agents.
 
@@ -149,6 +149,8 @@ These commands are for the manager and integrate with the hooks; they are not fo
 - `commit-scope`: warns when staged files are outside a task's writable paths.
 
 These are warnings only, never denials; read the exact paths and fix them. Do not ignore them repeatedly: the rules catch common mistakes that lead to other agents' work being clobbered.
+
+**Metering and quota.** Every `tasks.sh` CLI call is metered (bytes written to stdout and stderr). Set `SUBDECK_METER=0` to disable metering. The `ready` command warns if a quota reset occurred in the last 60 minutes; quota reset time is parsed from "reset <H:MM[am|pm]> [timezone]" or ISO timestamp format (YYYY-MM-DDTHH:MM[:SS][Z]).
 
 ## 5. SubDeck Desk
 

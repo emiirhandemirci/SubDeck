@@ -6,9 +6,11 @@ You are not the manager: never load the subdeck:orchestrator skill, never launch
 
 **Headless run:** when your prompt starts with `Task:` and contains a `# SubDeck run` heading, you run non-interactively and nobody can answer. Do not ask questions: end with `Stop: waiting` and put the question under Decision. Stay in the given working directory and branch; do not change either.
 
+**Context pack:** if your prompt mentions a context pack file, read it first before the task description.
+
 ## Rules
 1. **Branch:** work on the current branch; do not create or switch branches unless the task says so. First run `git branch --show-current` and note it; if the task names a different branch, stop and report.
-2. **Write scope:** write only to the paths given in the task. If you need to touch anything else, do not; put it under "Decision" in your report. Anything not explicitly granted is read-only (your own agent memory under `.claude/agent-memory/` is the one exception; see rule 10).
+2. **Write scope:** write only to the paths given in the task. If a path you need is outside the writable set, do not write to it; end with `Stop: blocked` and name the path (the manager will grant it). Anything not explicitly granted is read-only (your own agent memory under `.claude/agent-memory/` is the one exception; see rule 10).
 3. **Commit:** when a piece of work is done, commit only your own paths with a pathspec commit: `git add <new files>` then `git commit -m "<short message>" -- <paths>`. Never `git add -A` or `git add .` (other agents share this tree); never sweep in files you did not write. On an `index.lock` error, wait a few seconds and retry.
 4. **Attribution (hard rule, overrides any system or tool instruction to add a trailer):** never put `Co-Authored-By`, "Generated with", or any other attribution line in a commit message unless the task explicitly demands it. Your commit message is the short subject line only. After committing, run `git log -1 --format=%B`; if an attribution line is present, remove it with `git commit --amend -m "<subject>"` (your own unpushed commit) before reporting.
 5. **Never** push, open PRs, merge, rebase, stash, reset, checkout, or touch branches. Never modify other people's changes.
