@@ -2,6 +2,7 @@
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
 import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText } from './format.js';
 import { initSettings } from './settings.js';
+import { initTasks } from './tasks.js';
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -18,6 +19,7 @@ const S = {
 };
 
 let settingsUi = null;
+let tasksUi = null;
 const T = x => tildifyText(x, S.home); // display-only home-directory replacement for free text
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined && text !== null) e.textContent = String(text); return e; }
 async function getJSON(url) { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); }
@@ -33,11 +35,22 @@ function failureBadge(s) {
   b.title = `Failure (${kind})${detail}`;
   return b;
 }
+function noticeBadges(s) {   // task watchdog: an agent that ended without the required report, or was cut off mid-task
+  const out = [];
+  if (s && s.reportMissing) { const b = el('span', 'tag notice', 'stopped without report'); b.title = `The agent stopped without a Stop:/Tested: report${s.reportMissing.task ? ` (task ${s.reportMissing.task})` : ''}`; out.push(b); }
+  if (s && s.interrupted) {
+    const f = s.interrupted.files;
+    const b = el('span', 'tag notice', 'interrupted');
+    b.title = `Interrupted (${s.interrupted.errorType || 'unknown'})${Number.isInteger(f) ? `, ${f} uncommitted file${f === 1 ? '' : 's'}` : ''}${s.interrupted.task ? `, task ${s.interrupted.task}` : ''}`;
+    out.push(b);
+  }
+  return out;
+}
 function stateWord(state) { return el('span', `state-word chip ${state}`, STATE_LABEL[state] || state); }
 // Waiting count: server-side per-project counts when available, else what the selected project's tree shows.
 function updateWaiting() {
   const own = S.sessions.reduce((n, s) => n + (s.state === 'waiting') + s.children.filter(c => c.state === 'waiting').length, 0);
-  const total = S.projects.some(p => typeof p.waitingCount === 'number') ? S.projects.reduce((n, p) => n + (p.waitingCount || 0), 0) : own;
+  const total = S.projects.some(p => typeof p.waitingCount === 'number') ? S.projects.reduce((n, p) => n + (p.waitingCount || 0) + (p.noticeCount || 0), 0) : own;
   const b = $('waitingCount');
   b.hidden = total <= 0;
   b.textContent = total > 0 ? `${total} waiting` : '';
@@ -46,7 +59,7 @@ function updateWaiting() {
   b.setAttribute('aria-label', total > 0 ? `${total} waiting for you, open list` : 'Waiting');
 }
 // ---------- waiting list (the header chip opens a compact list of everything blocked on the user) ----------
-const WAIT_KIND = { permission: 'Permission prompt', question: 'Question', plan: 'Plan approval' };
+const WAIT_KIND = { permission: 'Permission prompt', question: 'Question', plan: 'Plan approval', 'no-report': 'Stopped without report', interrupted: 'Interrupted' };
 function waitKindLabel(it) {
   if (WAIT_KIND[it.waitingKind]) return WAIT_KIND[it.waitingKind];
   if (it.stateSource === 'hook') return 'Permission prompt';
@@ -343,6 +356,7 @@ function sessionLine(s, cls) {
   line.setAttribute('aria-selected', String(s.id === S.selectedSession));
   line.append(dot(s.state), el('span', 'title', T(s.title)), stateWord(s.state));
   const fb = failureBadge(s); if (fb) line.append(fb);
+  for (const nb of noticeBadges(s)) line.append(nb);
   const was = S.prevState.get(s.id);
   if (was !== undefined && was !== s.state) line.classList.add('changed');   // one short pulse; the animation ends by itself
   S.prevState.set(s.id, s.state);
@@ -655,6 +669,8 @@ function renderDetailInner(box) {
   const st = el('span'); st.append(dot(s.state), document.createTextNode(` ${STATE_LABEL[s.state]} (${SOURCE_LABEL[s.stateSource]})`));
   row('State', st);
   const fd = failureBadge(s); if (fd) row('Failure', fd);
+  const nbs = noticeBadges(s); if (nbs.length) { const w = el('span', 'refs'); for (const nb of nbs) w.append(nb, document.createTextNode(' ')); row('Notice', w); }
+  if (s.taskId) row('Task', s.taskId);
   row('Started', when(s.createdAt));
   if (s.runStartedAt) row('Latest run started', when(s.runStartedAt));
   row('Updated', when(s.updatedAt));
@@ -742,7 +758,8 @@ async function loadAll() {
 
 function connect() {
   const es = new EventSource('/api/stream');
-  es.addEventListener('hello', () => { S.lastHeartbeat = Date.now(); loadAll().catch(() => {}); });
+  es.addEventListener('hello', () => { S.lastHeartbeat = Date.now(); loadAll().catch(() => {}); if (tasksUi) tasksUi.reload(); });
+  es.addEventListener('tasks', () => { S.lastHeartbeat = Date.now(); if (tasksUi) tasksUi.reload(); });
   es.addEventListener('heartbeat', () => { S.lastHeartbeat = Date.now(); });
   es.addEventListener('changed', async e => {
     S.lastHeartbeat = Date.now();
@@ -762,6 +779,10 @@ settingsUi = initSettings({ $, el, store, getJSON,
   getProject: () => (S.project ? { id: S.project.id, name: S.project.name } : null),
   onNotify: on => { S.notify = on; renderBell(); },
   onWindow: n => { S.ctxWindow = n; renderMap(); if (S.detail) renderDetail(); } });
+tasksUi = initTasks({ $, el, getJSON, relativeTime,
+  openSession: async (projectId, sessionId) => { await selectProject(projectId, false); await selectSession(sessionId, true); },
+  showSessions: () => { settingsUi.show(false); tasksUi.show(false); },
+  closeOthers: () => settingsUi.show(false) });
 renderMap();
 loadNotify();
 connect();

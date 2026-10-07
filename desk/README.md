@@ -52,6 +52,15 @@ Each session and agent row shows a thin context bar: the last known context toke
 
 When the window is unknown, the `context` setting (`context.window`, tokens; 0 = auto) is used as the fallback so those rows get a percentage too. A known window always wins.
 
+## Tasks
+
+The **Tasks** tab shows the SubDeck task files of every known project in six columns (Open, In progress, Blocked, Interrupted, Review, Done). Each card shows the id, title, owner, the agent (a link to its agent detail when Desk knows it), `blocked-by`, the last update and, for an interrupted task, the handoff summary ("interrupted: N uncommitted files"). Details open the task file as plain text.
+
+- Directory: `SUBDECK_TASKS_DIR`, else config `tasks.dir` (project config before user config; relative paths are relative to the project), else `<state dir>/tasks`. Done tasks live in `archive/`. Read-only: Desk never writes task files.
+- API: `GET /api/tasks[?project=<id>]` and `GET /api/tasks/<projectId>/<taskId>` (404 with `--no-content`). Changes are pushed as the SSE event `tasks`.
+- Agents that stopped without the required report get the badge "stopped without report"; interrupted agents get "interrupted". Both are also listed in the waiting list (`waitingKind` `no-report` / `interrupted`); their state is unchanged.
+- Beads (optional, read-only): when `bd` is on PATH and `<project>/.beads/` exists, `bd list --json` items (5 s timeout) appear on the same board, marked "Beads".
+
 ## Settings and theme
 
 The page fills the window; each pane (projects, agent map, detail) scrolls independently with thin themed scrollbars, and scroll positions survive re-renders. A sub-agent resumed after a Stop is shown as running again (a later Start, or transcript records newer than the Stop).

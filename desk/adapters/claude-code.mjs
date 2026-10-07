@@ -282,9 +282,12 @@ export async function readHooks(projectPath, cache, env) {
   const notifTypes = new Map();   // same keys -> notification_type of that latest one
   const fails = new Map();   // same keys -> latest StopFailure { ts, errorType }
   const efforts = new Map();   // same keys -> latest effort level seen in a hook payload
+  const missing = new Map();   // same keys -> latest report_missing { at, task }
+  const interrupts = new Map();   // same keys -> latest task_interrupted { at, task, errorType, files }
+  const taskIds = new Map();   // same keys -> latest task_status { ts, task }
   const dirs = [];
   for (const d of candidates) { const st = await statOrNull(d); if (st && st.isDirectory()) dirs.push(d); }
-  if (!dirs.length) return { agents, notifs, notifTypes, fails, efforts, bad: 0, dir: null, dirs };
+  if (!dirs.length) return { agents, notifs, notifTypes, fails, efforts, missing, interrupts, taskIds, bad: 0, dir: null, dirs };
   const files = [];
   for (const dir of dirs) {
     files.push(path.join(dir, 'events.jsonl'));
@@ -318,12 +321,22 @@ export async function readHooks(projectPath, cache, env) {
       const failed = p.records.filter(e => e.event === 'StopFailure' && toIso(e.ts) && keyOf(e))
         .map(e => ({ key: keyOf(e), ts: toIso(e.ts), errorType: e.payload && typeof e.payload.error_type === 'string' ? e.payload.error_type : null }));
       const effs = p.records.filter(e => toIso(e.ts) && keyOf(e) && effortOf(e.payload)).map(e => ({ key: keyOf(e), ts: toIso(e.ts), level: effortOf(e.payload) }));
-      c = { sig, events, notes, failed, effs, bad: p.bad };
+      const tasks = p.records.filter(e => (e.event === 'report_missing' || e.event === 'task_interrupted' || e.event === 'task_status') && toIso(e.ts) && e.payload && typeof e.payload === 'object')
+        .map(e => { const k = keyOf({ agent_id: e.agent_id || e.payload.agent_id, session_id: e.session_id || e.payload.session_id }); return k ? { key: k, ev: e.event, ts: toIso(e.ts), pl: e.payload } : null; }).filter(Boolean);
+      c = { sig, events, notes, failed, effs, tasks, bad: p.bad };
       cache.set('h:' + f, c);
     }
     bad += c.bad;
     for (const n of c.notes) if (!notifs.get(n.key) || n.ts > notifs.get(n.key)) { notifs.set(n.key, n.ts); notifTypes.set(n.key, n.type); }
     for (const f of c.failed) if (!fails.get(f.key) || f.ts > fails.get(f.key).ts) fails.set(f.key, { ts: f.ts, errorType: f.errorType });
+    for (const t of c.tasks) {
+      const taskId = typeof t.pl.task === 'string' && t.pl.task ? t.pl.task.slice(0, 40) : null;
+      if (t.ev === 'report_missing') { const m = missing.get(t.key); if (!m || t.ts >= m.at) missing.set(t.key, { at: t.ts, task: taskId }); }
+      else if (t.ev === 'task_interrupted') {
+        const m = interrupts.get(t.key);
+        if (!m || t.ts >= m.at) interrupts.set(t.key, { at: t.ts, task: taskId, errorType: typeof t.pl.error_type === 'string' && t.pl.error_type ? t.pl.error_type.replace(/[^a-z_]/g, '').slice(0, 40) || 'unknown' : 'unknown', files: Number.isInteger(t.pl.files) && t.pl.files >= 0 ? t.pl.files : null });
+      } else { const m = taskIds.get(t.key); if (!m || t.ts >= m.ts) taskIds.set(t.key, { ts: t.ts, task: taskId }); }
+    }
     for (const f of c.effs) if (!efforts.get(f.key) || f.ts >= efforts.get(f.key).ts) efforts.set(f.key, { ts: f.ts, level: f.level });
     for (const e of c.events) {
       const a = agents.get(e.agentId) || { start: null, lastStart: null, stop: null, agentType: null, sessionId: null, transcriptPath: null };
@@ -335,7 +348,7 @@ export async function readHooks(projectPath, cache, env) {
       agents.set(e.agentId, a);
     }
   }
-  return { agents, notifs, notifTypes, fails, efforts: new Map([...efforts].map(([k, v]) => [k, v.level])), bad, dir: dirs[0], dirs };
+  return { agents, notifs, notifTypes, fails, efforts: new Map([...efforts].map(([k, v]) => [k, v.level])), missing, interrupts, taskIds: new Map([...taskIds].map(([k, v]) => [k, v.task])), bad, dir: dirs[0], dirs };
 }
 
 function subTitle(meta, agentId) {
@@ -385,6 +398,24 @@ export function failedBasis(fail, mtimeMs) {
 
 /** failure field from a StopFailure hook (core serves it only while the state is failed); {} when the hook does not apply. */
 function failOf(fail, mtimeMs) { return failedBasis(fail, mtimeMs) ? { failure: failureOfStopError(fail.errorType) } : {}; }
+
+/** Task watchdog fields of one agent/session: reportMissing / interrupted only while newer than the agent's latest start (a session: than its last transcript write), taskId from the latest task_status. */
+export function taskFields(info, key, hook, mtimeMs) {
+  if (!info || !info.missing) return {};
+  const newer = at => {
+    const t = Date.parse(at);
+    if (!Number.isFinite(t)) return false;
+    if (key.startsWith('s:')) return !(mtimeMs > t + 2000);
+    const st = hook && hook.lastStart ? Date.parse(hook.lastStart) : NaN;
+    return !(Number.isFinite(st) && t <= st);
+  };
+  const out = {};
+  const m = info.missing.get(key), i = info.interrupts.get(key);
+  if (m && newer(m.at)) out.reportMissing = { at: m.at, task: m.task };
+  if (i && newer(i.at)) out.interrupted = { at: i.at, task: i.task, errorType: i.errorType, files: i.files };
+  if (key.startsWith('a:')) out.taskId = info.taskIds.get(key) || null;
+  return out;
+}
 
 function subBasis(hook, mtimeIso, done, wait, fail = null) {
   if (fail) return fail;
@@ -654,7 +685,7 @@ function groupSessions(g, hookInfo, teams) {
   sessions.push({ ...base, nativeId: g.uuid, parentNativeId: null, depth: 0, ...title, agentType: null, model: g.top.model, effort: efforts.get('s:' + g.uuid) || null,
     createdAt: g.top.createdAt || msToIso(g.st.birthtimeMs || g.st.mtimeMs), updatedAt: mt, endedAt: null,
     tokens: { context: g.top.tokens, total: null }, lastActivity: g.top.lastActivity,
-    refs: { file: g.file, db: null, key: null }, ...failOf(fails.get('s:' + g.uuid), g.st.mtimeMs),
+    refs: { file: g.file, db: null, key: null }, ...failOf(fails.get('s:' + g.uuid), g.st.mtimeMs), ...taskFields(hookInfo, 's:' + g.uuid, null, g.st.mtimeMs),
     stateBasis: failedBasis(fails.get('s:' + g.uuid), g.st.mtimeMs) || waitingBasis(g.top.pending, notifs.get('s:' + g.uuid), g.st.mtimeMs, mt, notifTypes.get('s:' + g.uuid)) || { kind: 'mtime', at: mt, stateSource: 'mtime' } });
   const seen = new Set();
   for (const s of g.subs) {
@@ -678,7 +709,7 @@ function groupSessions(g, hookInfo, teams) {
       createdAt: earlier(s.tr.createdAt, hook && hook.start) || smt, updatedAt: smt, endedAt: (hook && hook.stop) || (done && done.at) || null,
       ...(runStartedAt ? { runStartedAt } : {}),
       tokens: { context: s.tr.tokens, total: null }, lastActivity: s.tr.lastActivity,
-      refs: { file: s.file, db: null, key: null }, failure: s.tr.failure, ...failOf(fails.get('a:' + s.agentId), s.st.mtimeMs),
+      refs: { file: s.file, db: null, key: null }, failure: s.tr.failure, ...failOf(fails.get('a:' + s.agentId), s.st.mtimeMs), ...taskFields(hookInfo, 'a:' + s.agentId, hook, s.st.mtimeMs),
       stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt, notifTypes.get('a:' + s.agentId)), failedBasis(fails.get('a:' + s.agentId), s.st.mtimeMs)) });
   }
   for (const [agentId, hook] of hooks) {
@@ -692,7 +723,7 @@ function groupSessions(g, hookInfo, teams) {
       ...(member && member.name ? { title: clip(member.name, 120), titleSource: 'meta' } : { title: clip(hook.agentType, 120) || `agent ${agentId.slice(0, 8)}`, titleSource: 'fallback' }),
       agentType: hook.agentType || (member && member.agentType) || null, effort: efforts.get('a:' + agentId) || null, model: null, createdAt: hook.start || hook.stop, updatedAt: hook.stop || hook.start,
       endedAt: hook.stop || null, tokens: { context: null, total: null }, lastActivity: null,
-      refs: { file: derived, db: null, key: null }, ...failOf(fails.get('a:' + agentId), 0),
+      refs: { file: derived, db: null, key: null }, ...failOf(fails.get('a:' + agentId), 0), ...taskFields(hookInfo, 'a:' + agentId, hook, 0),
       stateBasis: subBasis(hook, null, null, null, failedBasis(fails.get('a:' + agentId), 0)) });
   }
   return sessions;

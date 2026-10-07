@@ -19,6 +19,7 @@
     </div>
     <nav class="tabs" role="tablist" aria-label="Views">
       <button id="tabSessions" class="tab" type="button" role="tab" aria-selected="true">Sessions</button>
+      <button id="tabTasks" class="tab" type="button" role="tab" aria-selected="false">Tasks</button>
       <button id="tabSettings" class="tab" type="button" role="tab" aria-selected="false">Settings</button>
     </nav>
     <div class="src-group">
@@ -63,6 +64,13 @@
       <div id="scopeSwitch" class="segs" role="group" aria-label="Scope"></div>
     </div>
     <div id="settingsBody"></div>
+  </main>
+  <main id="tasksView" class="tasks" hidden aria-labelledby="h-tasks">
+    <div class="settings-head">
+      <h2 id="h-tasks">Tasks</h2>
+      <select id="tasksProject" aria-label="Project"></select>
+    </div>
+    <div id="tasksBody"></div>
   </main>
   <dialog id="confirmDlg" class="dlg" aria-labelledby="confirmTitle">
     <h3 id="confirmTitle">Lower protection?</h3>

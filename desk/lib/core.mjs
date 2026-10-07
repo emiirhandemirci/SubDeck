@@ -122,6 +122,12 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
           refs: { file: s.refs?.file ?? null, db: s.refs?.db ?? null, key: s.refs?.key ?? null },
           archived: !!s.archived, childCount: 0,
         };
+        if (s.reportMissing && typeof s.reportMissing === 'object' && typeof s.reportMissing.at === 'string') out.reportMissing = { at: s.reportMissing.at, task: typeof s.reportMissing.task === 'string' ? s.reportMissing.task : null };
+        if (s.interrupted && typeof s.interrupted === 'object' && typeof s.interrupted.at === 'string') {
+          const i = s.interrupted;
+          out.interrupted = { at: i.at, task: typeof i.task === 'string' ? i.task : null, errorType: typeof i.errorType === 'string' ? i.errorType : 'unknown', files: Number.isInteger(i.files) ? i.files : null };
+        }
+        if (s.taskId !== undefined) out.taskId = typeof s.taskId === 'string' ? s.taskId : null;
         Object.defineProperty(out, '_parentNative', { value: s.parentNativeId ?? null, enumerable: false });
         if (s.failure && FAILURE_KINDS.includes(s.failure.kind)) Object.defineProperty(out, '_failure', { value: { kind: s.failure.kind, detail: String(s.failure.detail || '').slice(0, 80) }, enumerable: false });
         newBases.set(id, s.stateBasis);
@@ -184,13 +190,14 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
 
   function finishProjects(projects, sessions) {
     const byId = new Map([...projects.values()].map(p => [p.id, { ...p, tools: new Set(p.tools) }]));
-    for (const p of byId.values()) { p.sessionCount = 0; p.agentCount = 0; p.runningCount = 0; p.waitingCount = 0; p.lastActivityAt = null; p.tokenTotal = null; }
+    for (const p of byId.values()) { p.sessionCount = 0; p.agentCount = 0; p.runningCount = 0; p.waitingCount = 0; p.noticeCount = 0; p.lastActivityAt = null; p.tokenTotal = null; }
     for (const s of sessions) {
       const p = byId.get(s.projectId);
       p.agentCount++;
       if (!s.parentId) p.sessionCount++;
       if (s.state === 'running') p.runningCount++;
       if (s.state === 'waiting') p.waitingCount++;
+      else if (s.reportMissing || s.interrupted) p.noticeCount++;   // listed in /api/waiting, state unchanged
       const tk = s.tokens.total ?? s.tokens.context;   // adapters without usage data contribute nothing (no fake zeros)
       if (Number.isFinite(tk)) p.tokenTotal = (p.tokenTotal || 0) + tk;
       if (s.updatedAt && (!p.lastActivityAt || s.updatedAt > p.lastActivityAt)) p.lastActivityAt = s.updatedAt;
@@ -203,8 +210,8 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
     const hashes = new Map();
     for (const p of snap.projects) {
       const own = snap.sessions.filter(s => s.projectId === p.id)
-        .map(s => [s.id, s.state, s.updatedAt, s.tokens.context, s.title, s.lastActivity && s.lastActivity.at, s.parentId]);
-      hashes.set(p.id, JSON.stringify([p.tools, p.sessionCount, p.agentCount, p.runningCount, p.waitingCount, p.lastActivityAt, own]));
+        .map(s => [s.id, s.state, s.updatedAt, s.tokens.context, s.title, s.lastActivity && s.lastActivity.at, s.parentId, s.reportMissing || null, s.interrupted || null, s.taskId ?? null]);
+      hashes.set(p.id, JSON.stringify([p.tools, p.sessionCount, p.agentCount, p.runningCount, p.waitingCount, p.noticeCount, p.lastActivityAt, own]));
     }
     const changed = [];
     for (const [id, h] of hashes) if (projectHashes.get(id) !== h) changed.push(id);

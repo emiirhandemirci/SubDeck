@@ -360,3 +360,26 @@ button.danger:hover { background: var(--danger-bg); filter: brightness(1.1); }
 .pbody:focus-visible, .settings:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .settings { scrollbar-gutter: stable; overscroll-behavior: contain; }
 @media (max-width: 900px) { .pane > .pbody { scrollbar-gutter: auto; } }
+
+/* Tasks tab */
+.tag.notice { color: var(--waiting); border-color: color-mix(in srgb, var(--waiting) 50%, var(--border)); background: color-mix(in srgb, var(--waiting) 12%, transparent); font-weight: 600; }
+.tasks { flex: 1; min-height: 0; overflow: auto; padding: var(--s3); width: 100%; }
+.tasks .settings-head select { font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 3px 8px; }
+.tcols { display: grid; grid-template-columns: repeat(6, minmax(190px, 1fr)); gap: var(--s3); align-items: start; overflow-x: auto; padding-bottom: var(--s2); }
+.tcol { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r); padding: var(--s2); min-width: 0; }
+.tcol h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 2px 4px var(--s2); display: flex; justify-content: space-between; }
+.tcol.col-interrupted h3 { color: var(--waiting); }
+.tcount { font-variant-numeric: tabular-nums; }
+.tcol-empty { margin: 4px; font-size: 12px; }
+.tcard { background: var(--card); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--s2); margin-bottom: var(--s2); display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.tcard.st-interrupted { border-color: color-mix(in srgb, var(--waiting) 55%, var(--border)); }
+.tcard-head { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.tcard-id { font-size: 12px; color: var(--muted); }
+.tcard-title { font-weight: 600; }
+.tcard-meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.tcard-handoff { font-size: 12px; font-weight: 600; color: var(--waiting); }
+.tcard-paths { font-size: 11px; }
+.tcard-body { margin: 4px 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; font-family: var(--mono); font-size: 12px; background: var(--raised); border-radius: var(--r-sm); padding: var(--s2); }
+.linklike { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
+.linklike:hover { text-decoration: underline; }
+@media (max-width: 900px) { .tcols { grid-template-columns: repeat(6, 220px); } }

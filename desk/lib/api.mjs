@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { readNotifyEnabled, writeNotifyEnabled } from './notify-settings.mjs';
 import { projectKey, relativeTo, isSecretPath, stateDirs } from './paths.mjs';
 import { showCommit, HASH_RE } from './git.mjs';
+import { createTasksReader } from './tasks.mjs';
 
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
@@ -19,6 +20,7 @@ const STATIC = {
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/theme.js': ['theme.js', 'text/javascript; charset=utf-8'],
   '/settings.js': ['settings.js', 'text/javascript; charset=utf-8'],
+  '/tasks.js': ['tasks.js', 'text/javascript; charset=utf-8'],
 };
 const CSP = "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:";
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -55,8 +57,9 @@ export function runSettingsSh(args, { home = null, script = SETTINGS_SH, timeout
 }
 const SETTING_KEY_RE = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/;
 
-export function createApi({ core, getPort, startedAt, days, version, publicDir, now = Date.now, maxStreams = 32, contentEnabled = true, adapters = [], env = null, configFile = null, gitShow = null, settingsRun = null, token = crypto.randomBytes(24).toString('hex') }) {
+export function createApi({ core, getPort, startedAt, days, version, publicDir, now = Date.now, maxStreams = 32, contentEnabled = true, adapters = [], env = null, configFile = null, gitShow = null, settingsRun = null, tasks = null, token = crypto.randomBytes(24).toString('hex') }) {
   const streams = new Set();
+  const reader = tasks || createTasksReader({ env });
   const iso = () => new Date(now()).toISOString();
 
   function json(res, status, obj) { res.writeHead(status, JSON_HEADERS); res.end(JSON.stringify(obj)); }
@@ -83,12 +86,42 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
 
   // Everything blocked on the user, across projects and tools. Titles and metadata only, never prompt content.
   function waitingList(snap) {
-    const items = snap.sessions.filter(s => s.state === 'waiting').map(s => {
+    // sessions blocked on the user, plus agents that stopped without a report or were interrupted (their state is unchanged)
+    const kindOf = s => (s.state === 'waiting' ? (s.waitingKind ?? null) : s.reportMissing ? 'no-report' : 'interrupted');
+    const sinceOf = s => (s.state === 'waiting' ? (s.waitingSince ?? s.updatedAt ?? null) : (s.reportMissing || s.interrupted).at);
+    const items = snap.sessions.filter(s => s.state === 'waiting' || s.reportMissing || s.interrupted).map(s => {
       const p = snap.projects.find(x => x.id === s.projectId);
       return { id: s.id, projectId: s.projectId, projectName: p ? p.name : null, projectPath: p ? p.path : null, tool: s.tool, title: s.title,
-        agentType: s.agentType ?? null, isAgent: !!s.parentId, stateSource: s.stateSource, waitingKind: s.waitingKind ?? null, since: s.waitingSince ?? s.updatedAt ?? null };
+        agentType: s.agentType ?? null, isAgent: !!s.parentId, stateSource: s.stateSource, waitingKind: kindOf(s), since: sinceOf(s),
+        ...(s.state !== 'waiting' ? { taskId: (s.reportMissing && s.reportMissing.task) || (s.interrupted && s.interrupted.task) || null } : {}) };
     }).sort((a, b) => String(a.since).localeCompare(String(b.since)));
     return { generatedAt: iso(), items };
+  }
+
+  // ---- tasks (read-only): files of the tasks dir, optional Beads items ----
+  async function tasksList(res, snap, only) {
+    const projs = snap.projects.filter(p => p.path && (!only || p.id === only));
+    if (only && !projs.length) return json(res, 404, { error: 'not found' });
+    const out = [];
+    for (const p of projs) {
+      let r;
+      try { r = await reader.read(p.path); } catch { r = { dir: reader.dir(p.path), tasks: [] }; }
+      const bySession = new Map(snap.sessions.filter(x => x.projectId === p.id && x.parentId).map(x => [x.nativeId, x.id]));
+      out.push({ projectId: p.id, projectName: p.name, dir: r.dir, tasks: r.tasks.map(t => taskOut(t, bySession)) });
+    }
+    return json(res, 200, { generatedAt: iso(), projects: out });
+  }
+  function taskOut(t, bySession) {
+    return { ...t.task, agentSessionId: (t.task.agent && bySession.get(t.task.agent)) || null, handoff: t.handoff || null };
+  }
+  async function taskDetail(res, snap, projectId, taskId) {
+    if (!contentEnabled) return json(res, 404, { error: 'content disabled' });
+    const p = snap.projects.find(x => x.id === projectId);
+    if (!p || !p.path) return json(res, 404, { error: 'not found' });
+    const t = await reader.get(p.path, taskId);
+    if (!t) return json(res, 404, { error: 'not found' });
+    const bySession = new Map(snap.sessions.filter(x => x.projectId === p.id && x.parentId).map(x => [x.nativeId, x.id]));
+    return json(res, 200, { task: { ...taskOut(t, bySession), body: t.body } });
   }
 
   function sessionDetail(snap, id) {
@@ -332,11 +365,15 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       if (STATIC[p]) return await serveStatic(req, res, STATIC[p]);
       if (req.method === 'HEAD') return json(res, 405, { error: 'method not allowed' });
       const snap = core.snapshot();
+      let m;
       if (p === '/api/sources') return json(res, 200, { generatedAt: iso(), server: { version, startedAt, days }, home: (env && env.home) || os.homedir(), sources: snap.sources });
+      if (p === '/api/tasks') { const q = url.searchParams.get('project'); return await tasksList(res, snap, q === null ? null : q); }
+      m = /^\/api\/tasks\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/.exec(p);
+      if (m) return await taskDetail(res, snap, m[1], m[2]);
       if (p === '/api/waiting') return json(res, 200, waitingList(snap));
       if (p === '/api/projects') return json(res, 200, { generatedAt: iso(), projects: snap.projects });
       if (p === '/api/stream') return openStream(res);
-      let m = /^\/api\/projects\/([A-Za-z0-9._-]+)$/.exec(p);
+      m = /^\/api\/projects\/([A-Za-z0-9._-]+)$/.exec(p);
       if (m) { const t = projectTree(snap, m[1]); return t ? json(res, 200, t) : json(res, 404, { error: 'not found' }); }
       m = /^\/api\/sessions\/([A-Za-z0-9._-]+)$/.exec(p);
       if (m) { const d = sessionDetail(snap, m[1]); return d ? json(res, 200, d) : json(res, 404, { error: 'not found' }); }
@@ -364,6 +401,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
   return {
     handle,
     broadcast(ev) { send('changed', ev); },
+    broadcastTasks(projectIds) { send('tasks', { projects: projectIds, at: iso() }); },
     heartbeat() { send('heartbeat', { at: iso() }); },
     closeAll() { for (const r of streams) { try { r.end(); } catch { /* ignore */ } } streams.clear(); },
     streamCount() { return streams.size; },

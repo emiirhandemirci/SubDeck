@@ -10,6 +10,7 @@ import { resolveEnv, resolveHome, sandboxVars } from './lib/paths.mjs';
 import { createCore } from './lib/core.mjs';
 import { createWatcher } from './lib/watcher.mjs';
 import { createApi } from './lib/api.mjs';
+import { createTasksReader, createTasksWatcher } from './lib/tasks.mjs';
 import claudeCode from './adapters/claude-code.mjs';
 import cursor from './adapters/cursor.mjs';
 import codex from './adapters/codex.mjs';
@@ -84,7 +85,8 @@ export async function main(argv = process.argv.slice(2)) {
   const core = createCore({ env, adapters: ADAPTERS });
   const startedAt = new Date().toISOString();
   let port = null;
-  const api = createApi({ core, getPort: () => port, startedAt, days: args.days, version: VERSION, contentEnabled: !args.noContent, adapters: ADAPTERS, env, configFile: path.join(rtDir, 'config.json'),
+  const tasks = createTasksReader({ env });
+  const api = createApi({ core, tasks, getPort: () => port, startedAt, days: args.days, version: VERSION, contentEnabled: !args.noContent, adapters: ADAPTERS, env, configFile: path.join(rtDir, 'config.json'),
     publicDir: fileURLToPath(new URL('./public/', import.meta.url)) });
   const server = http.createServer((req, res) => { api.handle(req, res); });
 
@@ -112,6 +114,8 @@ export async function main(argv = process.argv.slice(2)) {
     onNote: (tool, note) => core.setWatchNote(tool, note),
   });
   watcher.update(core.watchTargets());
+  const taskWatcher = createTasksWatcher({ reader: tasks, getProjects: () => core.snapshot().projects, onChange: ids => api.broadcastTasks(ids) });
+  core.onChanged(() => taskWatcher.update());
   const timers = [setInterval(() => core.refreshStates(), 15000), setInterval(() => api.heartbeat(), 15000)];
 
   let stopping = false;
@@ -121,6 +125,7 @@ export async function main(argv = process.argv.slice(2)) {
     try { const rt = JSON.parse(fs.readFileSync(rtFile, 'utf8')); if (rt.pid === process.pid) fs.unlinkSync(rtFile); } catch { /* ignore */ }
     for (const t of timers) clearInterval(t);
     watcher.close();
+    taskWatcher.close();
     api.closeAll();
     server.close();
   }
