@@ -130,10 +130,10 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
           title: s.title, titleSource: s.titleSource, agentType: s.agentType ?? null, model: s.model ?? null, effort: typeof s.effort === 'string' ? s.effort : null,
           state: 'unknown', stateSource: 'none',
           createdAt: s.createdAt ?? null, runStartedAt: s.runStartedAt ?? null, updatedAt: s.updatedAt ?? null, endedAt: s.endedAt ?? null, durationMs: null,
-          tokens: { context: s.tokens.context ?? null, total: s.tokens.total ?? null },
+          tokens: { context: s.tokens.context ?? null, total: s.tokens.total ?? null, ...(Number.isFinite(s.tokens.cached) ? { cached: s.tokens.cached } : {}) },
           lastActivity: la ? { at: la.at ?? null, kind: la.kind, toolName: la.toolName ?? null, summary: la.summary ?? null } : null,
           refs: { file: s.refs?.file ?? null, db: s.refs?.db ?? null, key: s.refs?.key ?? null },
-          archived: !!s.archived, childCount: 0,
+          archived: !!s.archived, childCount: 0, agentTokens: null,
         };
         if (s.reportMissing && typeof s.reportMissing === 'object' && typeof s.reportMissing.at === 'string') out.reportMissing = { at: s.reportMissing.at, task: typeof s.reportMissing.task === 'string' ? s.reportMissing.task : null };
         if (s.interrupted && typeof s.interrupted === 'object' && typeof s.interrupted.at === 'string') {
@@ -142,6 +142,8 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
         }
         if (s.run && typeof s.run === 'object') out.run = cleanRun(s.run);
         if (s.taskId !== undefined) out.taskId = typeof s.taskId === 'string' ? s.taskId : null;
+        if (typeof s.tracked === 'boolean') out.tracked = s.tracked;
+        if (s.reportTooLong && typeof s.reportTooLong === 'object' && typeof s.reportTooLong.at === 'string') out.reportTooLong = { at: s.reportTooLong.at, lines: Number.isInteger(s.reportTooLong.lines) ? s.reportTooLong.lines : null };
         Object.defineProperty(out, '_parentNative', { value: s.parentNativeId ?? null, enumerable: false });
         if (s.failure && FAILURE_KINDS.includes(s.failure.kind)) Object.defineProperty(out, '_failure', { value: { kind: s.failure.kind, detail: String(s.failure.detail || '').slice(0, 80) }, enumerable: false });
         newBases.set(id, s.stateBasis);
@@ -159,6 +161,13 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
       let d = 0, p = s;
       for (; p._parentObj && d < 8; p = p._parentObj) d++;
       if (s._parentObj) s.depth = d;
+    }
+    for (const s of sessions) {   // session header: cumulative tokens of its sub-agents (null when none is known)
+      if (!s.parentId) continue;
+      let r = s, d = 0;
+      while (r._parentObj && d++ < 8) r = r._parentObj;
+      const v = s.tokens.total ?? s.tokens.context;
+      if (r !== s && Number.isFinite(v)) r.agentTokens = (r.agentTokens || 0) + v;
     }
     bases = newBases;
     applyStates(sessions, now());
@@ -224,7 +233,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
     const hashes = new Map();
     for (const p of snap.projects) {
       const own = snap.sessions.filter(s => s.projectId === p.id)
-        .map(s => [s.id, s.state, s.updatedAt, s.tokens.context, s.title, s.lastActivity && s.lastActivity.at, s.parentId, s.reportMissing || null, s.interrupted || null, s.taskId ?? null]);
+        .map(s => [s.id, s.state, s.updatedAt, s.tokens.context, s.title, s.lastActivity && s.lastActivity.at, s.parentId, s.reportMissing || null, s.interrupted || null, s.taskId ?? null, s.reportTooLong || null, s.tokens.total ?? null, s.agentTokens ?? null]);
       hashes.set(p.id, JSON.stringify([p.tools, p.sessionCount, p.agentCount, p.runningCount, p.waitingCount, p.noticeCount, p.lastActivityAt, own]));
     }
     const changed = [];

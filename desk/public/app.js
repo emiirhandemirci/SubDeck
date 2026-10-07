@@ -1,6 +1,6 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
-import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText } from './format.js';
+import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText, agentBadges, cumulativeTokensText, agentTokensText, quotaText, cliText } from './format.js';
 import { initSettings } from './settings.js';
 import { initTasks } from './tasks.js';
 import { runBadgeText, RUN_STATUS_LABEL, mountRunLog } from './runs.js';
@@ -45,6 +45,7 @@ function noticeBadges(s) {   // task watchdog: an agent that ended without the r
     b.title = `Interrupted (${s.interrupted.errorType || 'unknown'})${Number.isInteger(f) ? `, ${f} uncommitted file${f === 1 ? '' : 's'}` : ''}${s.interrupted.task ? `, task ${s.interrupted.task}` : ''}`;
     out.push(b);
   }
+  for (const x of agentBadges(s)) { const b = el('span', x.cls, x.text); b.title = x.title; out.push(b); }
   return out;
 }
 function stateWord(state) { return el('span', `state-word chip ${state}`, STATE_LABEL[state] || state); }
@@ -368,6 +369,8 @@ function sessionLine(s, cls) {
   const rb = s.run ? runBadgeText(s.run) : null;
   if (rb) { const b = el('span', 'tag runbadge', rb); b.title = `Headless run: ${rb}`; line.append(b); }
   else if (s.agentType && cls === 'agent') line.append(el('span', 'tag mono', s.agentType));
+  const ct = s.parentId ? cumulativeTokensText(s) : agentTokensText(s);
+  if (ct) { const c = el('span', 'tag tokens', ct); c.title = s.parentId ? 'Cumulative usage of this agent: input + cache writes + output tokens over all its turns; cache reads shown separately' : 'Cumulative tokens of this session\'s agents'; line.append(c); }
   const u = contextUsage(s, S.ctxWindow);
   line.append(el('span', 'meta-line muted', u ? `${formatDuration(s.durationMs)} · ${u.pct === null ? u.text : `${formatTokens(u.tokens)} · ${u.pct}%`}` : formatDuration(s.durationMs)));
   if (u && u.pct !== null) line.append(usageBar(u));
@@ -387,6 +390,10 @@ function renderMapInner() {
   ph.append(el('span', 'name', S.project.name));
   const pht = projectTokens(S.project); if (pht) ph.append(pht);
   box.append(ph);
+  const qt = quotaText(S.projInfo && S.projInfo.quota);
+  if (qt) { const q = el('div', 'notice-banner', qt); q.setAttribute('role', 'status'); box.append(q); }
+  const cl = cliText(S.projInfo && S.projInfo.cli);
+  if (cl) ph.append(el('span', 'muted cli-note', cl));
   for (const s of S.sessions) {
     const card = el('div', `card st-${s.state}`);   // sessions arrive waiting-first from the API
     const head = sessionLine(s, 'head');
@@ -415,6 +422,7 @@ async function loadProject() {
   try {
     const d = await getJSON(`/api/projects/${encodeURIComponent(S.selectedProject)}`);
     S.project = d.project; S.sessions = d.sessions;
+    try { const t = (await getJSON(`/api/tasks?project=${encodeURIComponent(S.selectedProject)}`)).projects[0]; S.projInfo = t ? { quota: t.quota, cli: t.cli } : null; } catch { S.projInfo = null; }
     if (settingsUi) settingsUi.projectChanged();
   } catch { S.project = null; S.sessions = []; }
   renderMap();
@@ -680,6 +688,8 @@ function renderDetailInner(box) {
   const fd = failureBadge(s); if (fd) row('Failure', fd);
   const nbs = noticeBadges(s); if (nbs.length) { const w = el('span', 'refs'); for (const nb of nbs) w.append(nb, document.createTextNode(' ')); row('Notice', w); }
   if (s.taskId) row('Task', s.taskId);
+  else if (s.parentId && s.tracked === false) row('Task', 'not tracked');
+  { const ct = s.parentId ? cumulativeTokensText(s) : agentTokensText(s); if (ct) row(s.parentId ? 'Cumulative tokens' : 'Agent tokens', ct); }
   if (s.run) {
     const rb = runBadgeText(s.run);
     if (rb) row('Run', rb);

@@ -75,6 +75,31 @@ export function parseHandoff(handoffText) {
   return last;
 }
 
+/** Latest `### <time> verify (<by>)` block of the Verification section: { at, by, fingerprint, covers } or null. */
+export function parseVerification(text) {
+  if (!text) return null;
+  const lines = String(text).split('\n');
+  let last = null;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^###\s+(\S+)\s+verify(?:\s+\(([^)]*)\))?\s*$/.exec(lines[i]);
+    if (!m) continue;
+    const b = { at: m[1], by: (m[2] || '').slice(0, 64), fingerprint: null, covers: [] };
+    for (let j = i + 1; j < lines.length && !lines[j].startsWith('### '); j++) {
+      const f = /^Fingerprint:\s*(.*)$/.exec(lines[j]);
+      if (f && f[1].trim() && f[1].trim() !== '-') b.fingerprint = f[1].trim().slice(0, 200);
+    }
+    last = b;
+  }
+  return last;
+}
+
+/** Latest `Verdict:` line of the Verification section, or ''. */
+export function latestVerdict(text) {
+  let v = '';
+  for (const l of String(text || '').split('\n')) { const m = /^\s*Verdict:\s*(Approved|Needs fixes|Escalate)/.exec(l); if (m) v = m[1]; }
+  return v;
+}
+
 /** One task from file text. `id` comes from the file name. */
 export function parseTask(text, id, { archived = false, file = null } = {}) {
   const { fm, body, ok } = parseFrontmatter(text);
@@ -87,8 +112,12 @@ export function parseTask(text, id, { archived = false, file = null } = {}) {
     id, title: fm.title || id, status, owner: fm.owner || '', agent: fm.agent || '', session: fm.session || '', transcript: fm.transcript || '',
     blockedBy: parseList(fm['blocked-by']), writable: parseList(fm.writable),
     role: fm.role || '', tool: fm.tool || '', model: fm.model || '', branch: fm.branch || '', worktree: fm.worktree || '', run: fm.run || '', created: fm.created || '', updated: fm.updated || '',
+    auto: fm.auto === 'true', pack: /^[a-z0-9][a-z0-9-]{0,39}$/.test(fm.pack || '') ? fm.pack : '', grants: parseList(fm.grants), covers: parseList(fm.covers),
+    verdict: latestVerdict(sections.verification),
     archived, invalid, file,
   };
+  const vb = parseVerification(sections.verification);
+  if (vb) task.verifiedBy = { by: vb.by, fingerprint: vb.fingerprint, at: vb.at };
   return { task, body: body.length > BODY_CAP ? body.slice(0, BODY_CAP) : body, handoff };
 }
 
@@ -131,7 +160,7 @@ export function mapBeads(raw, projectPath) {
     const deps = Array.isArray(b.dependencies) ? b.dependencies.filter(d => typeof d === 'string' || (d && typeof d === 'object' && (d.type === undefined || BEADS_BLOCKING.has(d.type)))).map(d => (typeof d === 'string' ? d : d.depends_on_id || d.id)).filter(x => typeof x === 'string') : [];
     out.push({ task: {
       id: b.id, title: String(b.title || b.id).slice(0, 200), status: st || 'open', owner: typeof b.assignee === 'string' ? b.assignee : '', agent: '', session: '', transcript: '',
-      blockedBy: deps, writable: [], role: '', tool: '', model: '', branch: '', worktree: '', run: '', created: typeof b.created_at === 'string' ? b.created_at : '', updated: typeof b.updated_at === 'string' ? b.updated_at : (typeof b.created_at === 'string' ? b.created_at : ''),
+      blockedBy: deps, writable: [], auto: false, pack: '', grants: [], covers: [], verdict: '', role: '', tool: '', model: '', branch: '', worktree: '', run: '', created: typeof b.created_at === 'string' ? b.created_at : '', updated: typeof b.updated_at === 'string' ? b.updated_at : (typeof b.created_at === 'string' ? b.created_at : ''),
       archived: (st || 'open') === 'done', invalid: !st, file: null, source: 'beads',
     }, body: typeof b.description === 'string' ? b.description.slice(0, BODY_CAP) : '', handoff: null });
   }
@@ -182,6 +211,7 @@ async function lstatOrNull(f) { try { return await fs.lstat(f); } catch { return
 export function createTasksReader({ env = null, now = Date.now, beads = runBd, beadsTtlMs = 10000, beadsEnabled = null } = {}) {
   const beadsOn = beadsEnabled !== null ? !!beadsEnabled : ((env && env.vars && env.vars.SUBDECK_BEADS) || process.env.SUBDECK_BEADS) === '1';
   const cache = new Map();   // file -> { sig, parsed }
+  const evCache = new Map();   // events file -> { sig, items }
   const beadsCache = new Map();   // project path -> { at, items }
 
   async function listDir(dir, archived, cap) {
@@ -223,7 +253,59 @@ export function createTasksReader({ env = null, now = Date.now, beads = runBd, b
     return items;
   }
 
+  const EV_KINDS = new Set(['task_verify', 'quota_recent', 'tasks_cli']);
+  /** task_verify / quota_recent / tasks_cli events of the project's state dirs (events.jsonl + events.d), cached by size and mtime. */
+  async function projectEvents(projectPath) {
+    const out = [];
+    for (const dir of stateDirs(projectPath, env)) {
+      const files = [path.join(dir, 'events.jsonl')];
+      try { for (const e of await fs.readdir(path.join(dir, 'events.d'), { withFileTypes: true })) if (e.isFile() && e.name.endsWith('.json')) files.push(path.join(dir, 'events.d', e.name)); } catch { /* none */ }
+      for (const f of files) {
+        const st = await statOrNull(f);
+        if (!st || !st.isFile() || st.size > 64 * 1024 * 1024) continue;
+        const sig = `${st.size}|${st.mtimeMs}`;
+        let c = evCache.get(f);
+        if (!c || c.sig !== sig) {
+          let text = ''; try { text = await fs.readFile(f, 'utf8'); } catch { continue; }
+          const items = [];
+          for (const line of text.split('\n')) {
+            if (!line.includes('"task_verify"') && !line.includes('"quota_recent"') && !line.includes('"tasks_cli"')) continue;
+            let o; try { o = JSON.parse(line); } catch { continue; }
+            if (!o || typeof o !== 'object' || !EV_KINDS.has(o.event) || !o.payload || typeof o.payload !== 'object') continue;
+            const t = Date.parse(o.ts);
+            if (Number.isFinite(t)) items.push({ event: o.event, t, ts: new Date(t).toISOString(), pl: o.payload });
+          }
+          c = { sig, items }; evCache.set(f, c);
+        }
+        out.push(...c.items);
+      }
+    }
+    return out;
+  }
+  /** { verifies: [{ at, by, task, covers, verdict, fingerprint }], quota: {at,reset,resetAt}|null, cli: {calls,bytes,since} } */
+  async function summary(projectPath, nowMs = now()) {
+    const ev = await projectEvents(projectPath);
+    const verifies = ev.filter(e => e.event === 'task_verify').map(e => ({ at: e.ts, t: e.t, by: String(e.pl.agent_id || '').slice(0, 64), task: String(e.pl.task || ''),
+      covers: Array.isArray(e.pl.covers) ? e.pl.covers.filter(x => typeof x === 'string' && TASK_ID_RE.test(x)) : [], verdict: String(e.pl.verdict || ''),
+      fingerprint: typeof e.pl.fingerprint === 'string' && e.pl.fingerprint ? e.pl.fingerprint.slice(0, 200) : null })).sort((a, b) => a.t - b.t);
+    let quota = null;
+    for (const e of ev) {
+      if (e.event !== 'quota_recent') continue;
+      const resetAt = typeof e.pl.resetAt === 'string' && Number.isFinite(Date.parse(e.pl.resetAt)) ? e.pl.resetAt : null;
+      if (!(nowMs - e.t < 3600000 || (resetAt && Date.parse(resetAt) > nowMs))) continue;
+      if (!quota || e.ts > quota.at) quota = { at: e.ts, reset: typeof e.pl.reset === 'string' ? e.pl.reset.slice(0, 60) : null, resetAt };
+    }
+    let calls = 0, bytes = 0, since = null;
+    for (const e of ev) {
+      if (e.event !== 'tasks_cli' || nowMs - e.t > 86400000 || e.t > nowMs + 60000) continue;
+      calls++; bytes += Number.isFinite(e.pl.bytes) && e.pl.bytes > 0 ? e.pl.bytes : 0;
+      if (!since || e.ts < since) since = e.ts;
+    }
+    return { verifies, quota, cli: { calls, bytes, since } };
+  }
+
   return {
+    summary,
     dir(projectPath) { return resolveTasksDir(projectPath, env); },
     /** { dir, tasks: [{ task, handoff }] } newest update first; live files, then archive; beads items last. */
     async read(projectPath) {

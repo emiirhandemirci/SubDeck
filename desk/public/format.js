@@ -225,3 +225,49 @@ export function emptyProjectsText(sources, days) {
 export function noMatchText(hiddenTemp) {
   return hiddenTemp > 0 ? `No projects match. ${hiddenTemp} temporary project${hiddenTemp === 1 ? ' is' : 's are'} hidden (tick "Show temporary projects").` : 'No projects match.';
 }
+
+// ---- 0.8.1: task-aware agent badges, cumulative tokens, project notices ----
+
+/** Extra agent badges: [{ text, cls, title }]. "not tracked" only for sub-agents the adapter reports tracked:false (informational, never a notice). */
+export function agentBadges(s) {
+  const out = [];
+  if (!s) return out;
+  if (s.parentId && s.tracked === false) out.push({ text: 'not tracked', cls: 'tag nottracked', title: 'This agent has no task: no report check, no notification. Informational only.' });
+  if (s.accepted) out.push({ text: 'accepted', cls: 'tag accepted', title: `Its task${s.taskId ? ` ${s.taskId}` : ''} is accepted (done or approved); later notifications from it are stale.` });
+  if (s.reportTooLong) {
+    const n = s.reportTooLong.lines;
+    out.push({ text: Number.isInteger(n) ? `long report (${n} lines)` : 'long report', cls: 'tag longreport', title: 'The final report is longer than 9 lines; re-instruct the agent, do not re-read it.' });
+  }
+  return out;
+}
+
+/** "120.0k tokens, 2.1M cached" of an agent (cumulative usage), else null. */
+export function cumulativeTokensText(s) {
+  const t = s && s.tokens;
+  if (!t || !Number.isFinite(t.total)) return null;
+  return `${formatTokens(t.total)} used${Number.isFinite(t.cached) && t.cached > 0 ? `, ${formatTokens(t.cached)} cached` : ''}`;
+}
+
+/** "agents: 120.0k tokens" for a session header (sum over its sub-agents), else null. */
+export function agentTokensText(s) {
+  return s && Number.isFinite(s.agentTokens) ? `agents ${formatTokens(s.agentTokens)} tokens` : null;
+}
+
+/** Quota banner text, or null. */
+export function quotaText(q) {
+  if (!q || !q.at) return null;
+  const hm = new Date(q.at).toISOString().slice(11, 16);
+  return `Quota limit hit ${hm}Z; resets ${q.reset || (q.resetAt ? q.resetAt : 'unknown')}. Check before launching agents.`;
+}
+
+/** "tasks.sh: 12 calls, 3.4 KB (24 h)" or null without calls. */
+export function cliText(c) {
+  if (!c || !c.calls) return null;
+  const kb = c.bytes / 1024;
+  return `tasks.sh: ${c.calls} calls, ${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB (24 h)`;
+}
+
+/** "w1: 3 tasks, 120.0k tokens" */
+export function waveText(w) {
+  return `${w.id}: ${w.tasks.length} task${w.tasks.length === 1 ? '' : 's'}, ${w.tokens === null || w.tokens === undefined ? 'no token data' : `${formatTokens(w.tokens)} tokens`}`;
+}

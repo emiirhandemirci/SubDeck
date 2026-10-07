@@ -1,5 +1,6 @@
 // desk/public/tasks.js
 import { runBadgeText, RUN_STATUS_LABEL, mountRunLog } from './runs.js';
+import { formatTokens, quotaText, cliText, waveText } from './format.js';
 // Tasks tab: one card per task file (and Beads item), columns by status. Read-only; data only via textContent.
 
 export const COLUMNS = [
@@ -42,6 +43,8 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
     const head = el('div', 'tcard-head');
     head.append(el('span', 'mono tcard-id', t.id));
     if (t.source === 'beads') head.append(el('span', 'tag', 'Beads'));
+    if (t.auto) { const b = el('span', 'tag autotask', 'auto'); b.title = 'Created automatically for an agent that had no task (auto-bind); records untracked work'; head.append(b); }
+    if (t.verdict) { const b = el('span', `tag verdict v-${t.verdict.replace(/\s+/g, '-').toLowerCase()}`, t.verdict); b.title = t.verifiedBy ? `Latest verdict by ${t.verifiedBy.by || 'unknown'}${t.verifiedBy.fingerprint ? `, fingerprint ${t.verifiedBy.fingerprint}` : ''}` : 'Latest verdict'; head.append(b); }
     if (t.invalid) { const b = el('span', 'tag conflict', 'invalid'); b.title = 'Unreadable or unknown status; shown as open'; head.append(b); }
     c.append(head, el('div', 'tcard-title', t.title));
     const rb = runBadgeText(t);
@@ -64,6 +67,14 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
     if (t.blockedBy.length) meta.append(el('span', null, `blocked by ${t.blockedBy.join(', ')}`));
     if (t.updated) { const u = el('span', null, relativeTime(t.updated, Date.now())); u.title = t.updated; meta.append(u); }
     c.append(meta);
+    if (t.wave || t.grants.length || Number.isFinite(t.tokens)) {
+      const x = el('div', 'tcard-extra muted');
+      if (t.wave) { const w = el('span', 'tag wavechip', `wave ${t.wave}`); w.title = t.covers.length ? `Verified together with ${t.covers.join(', ')}` : `Context pack ${t.pack}`; x.append(w); }
+      if (t.grants.length) { const g = el('span', 'tag grantchip', `+${t.grants.length} grant${t.grants.length === 1 ? '' : 's'}`); g.title = `Granted paths: ${t.grants.join(', ')}`; x.append(g); }
+      if (Number.isFinite(t.tokens)) { const k = el('span', null, `${formatTokens(t.tokens)} tokens`); k.title = 'Cumulative tokens of the agents that worked on this task'; x.append(k); }
+      c.append(x);
+    }
+    if (t.grants.length) c.append(el('div', 'tcard-paths mono muted', `grants: ${t.grants.join(', ')}`));
     const hs = handoffSummary(t);
     if (hs) c.append(el('div', 'tcard-handoff', hs));
     if (t.writable.length) c.append(el('div', 'tcard-paths mono muted', t.writable.join(', ')));
@@ -131,6 +142,16 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
     const multi = shown.length > 1;
     const flat = [];
     for (const p of shown) for (const t of p.tasks) flat.push({ p, t });
+    for (const p of shown) {
+      const notes = [quotaText(p.quota), cliText(p.cli)].filter(Boolean);
+      const ws = p.waves || [];
+      if (!notes.length && !ws.length) continue;
+      const sum = el('div', 'tsummary');
+      if (quotaText(p.quota)) sum.append(el('div', 'notice-banner', quotaText(p.quota)));
+      if (cliText(p.cli)) sum.append(el('div', 'muted tsummary-cli', multi ? `${p.projectName}: ${cliText(p.cli)}` : cliText(p.cli)));
+      for (const w of ws) { const r = el('div', 'tsummary-wave', waveText(w)); r.title = `${w.agents} agent${w.agents === 1 ? '' : 's'}: ${w.tasks.join(', ')}`; sum.append(r); }
+      box.append(sum);
+    }
     const cols = el('div', 'tcols');
     for (const g of groupTasks(flat.map(x => x.t))) {
       const col = el('section', `tcol col-${g.id}`);

@@ -213,8 +213,8 @@ test('readHooks: report_missing / task_interrupted / task_status only count whil
   ].join('\n') + '\n');
   const info = await readHooks(proj, new Map(), env);
   const hook = id => info.agents.get(id);
-  assert.deepEqual(taskFields(info, 'a:a1', hook('a1'), 0), { reportMissing: { at: '2026-10-07T09:10:01.000Z', task: 't-0a01' }, taskId: 't-0a01' });
-  assert.deepEqual(taskFields(info, 'a:a2', hook('a2'), 0), { taskId: null });
+  assert.deepEqual(taskFields(info, 'a:a1', hook('a1'), 0), { reportMissing: { at: '2026-10-07T09:10:01.000Z', task: 't-0a01' }, taskId: 't-0a01', tracked: true });
+  assert.deepEqual(taskFields(info, 'a:a2', hook('a2'), 0), { taskId: null, tracked: false });
   const s = taskFields(info, 's:sess1', null, 0);
   assert.deepEqual(s.interrupted, { at: '2026-10-07T09:40:00.000Z', task: 't-0c03', errorType: 'billing', files: 0 });
   assert.equal(taskFields(info, 's:sess1', null, Date.parse('2026-10-07T09:50:00Z')).interrupted, undefined);   // the session wrote on afterwards

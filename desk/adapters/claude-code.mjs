@@ -232,6 +232,47 @@ async function scanSpawns(file, st, cache) {
   return c;
 }
 
+/**
+ * Cumulative usage of one transcript (cache key u:<file>), incremental like scanSpawns: billed = input + cache creation + output tokens
+ * over all assistant records, cached = cache reads. Records sharing a message id (one API message streamed in pieces) count once, last wins.
+ */
+export async function readUsage(file, st, cache) {
+  const key = 'u:' + file;
+  let c = cache.get(key);
+  if (!c || st.size < c.offset) c = { offset: 0, byId: new Map(), anon: [0, 0], total: null };
+  if (st.size > c.offset) {
+    const fh = await fs.open(file, 'r');
+    try {
+      let pos = c.offset, carry = Buffer.alloc(0);
+      const buf = Buffer.allocUnsafe(Math.min(CHUNK, st.size - pos));
+      while (pos < st.size) {
+        const { bytesRead } = await fh.read(buf, 0, Math.min(buf.length, st.size - pos), pos);
+        if (!bytesRead) break;
+        pos += bytesRead;
+        const all = carry.length ? Buffer.concat([carry, buf.subarray(0, bytesRead)]) : buf.subarray(0, bytesRead);
+        const nl = all.lastIndexOf(0x0a);
+        if (nl < 0) { carry = Buffer.from(all); continue; }
+        for (const line of all.toString('utf8', 0, nl).split('\n')) {
+          if (!line.includes('"usage"') || !line.includes('"assistant"')) continue;
+          let o; try { o = JSON.parse(line); } catch { continue; }
+          const m = o && o.type === 'assistant' && o.message && typeof o.message === 'object' ? o.message : null;
+          if (!m || !m.usage || typeof m.usage !== 'object') continue;
+          const n = k => (Number.isFinite(m.usage[k]) && m.usage[k] > 0 ? m.usage[k] : 0);
+          const v = [n('input_tokens') + n('cache_creation_input_tokens') + n('output_tokens'), n('cache_read_input_tokens')];
+          if (typeof m.id === 'string' && m.id) c.byId.set(m.id, v); else { c.anon[0] += v[0]; c.anon[1] += v[1]; }
+        }
+        carry = Buffer.from(all.subarray(nl + 1));
+      }
+      c.offset = pos - carry.length;
+    } finally { await fh.close(); }
+    let b = c.anon[0], k = c.anon[1];
+    for (const v of c.byId.values()) { b += v[0]; k += v[1]; }
+    c.total = b + k > 0 ? { billed: b, cached: k } : null;
+  }
+  cache.set(key, c);
+  return c.total;
+}
+
 /** Latest completion per agent id. Incremental: only bytes appended since the last scan are read (cache key c:<file>). */
 export async function readCompletions(file, st, cache) { return (await scanSpawns(file, st, cache)).agents; }
 
@@ -284,10 +325,11 @@ export async function readHooks(projectPath, cache, env) {
   const efforts = new Map();   // same keys -> latest effort level seen in a hook payload
   const missing = new Map();   // same keys -> latest report_missing { at, task }
   const interrupts = new Map();   // same keys -> latest task_interrupted { at, task, errorType, files }
-  const taskIds = new Map();   // same keys -> latest task_status { ts, task }
+  const taskIds = new Map();   // same keys -> latest task_status / task_link / task_verify { ts, task }
+  const longReports = new Map();   // same keys -> latest report_too_long { at, lines }
   const dirs = [];
   for (const d of candidates) { const st = await statOrNull(d); if (st && st.isDirectory()) dirs.push(d); }
-  if (!dirs.length) return { agents, notifs, notifTypes, fails, efforts, missing, interrupts, taskIds, bad: 0, dir: null, dirs };
+  if (!dirs.length) return { agents, notifs, notifTypes, fails, efforts, missing, interrupts, taskIds, longReports, bad: 0, dir: null, dirs };
   const files = [];
   for (const dir of dirs) {
     files.push(path.join(dir, 'events.jsonl'));
@@ -321,7 +363,7 @@ export async function readHooks(projectPath, cache, env) {
       const failed = p.records.filter(e => e.event === 'StopFailure' && toIso(e.ts) && keyOf(e))
         .map(e => ({ key: keyOf(e), ts: toIso(e.ts), errorType: e.payload && typeof e.payload.error_type === 'string' ? e.payload.error_type : null }));
       const effs = p.records.filter(e => toIso(e.ts) && keyOf(e) && effortOf(e.payload)).map(e => ({ key: keyOf(e), ts: toIso(e.ts), level: effortOf(e.payload) }));
-      const tasks = p.records.filter(e => (e.event === 'report_missing' || e.event === 'task_interrupted' || e.event === 'task_status') && toIso(e.ts) && e.payload && typeof e.payload === 'object')
+      const tasks = p.records.filter(e => (e.event === 'report_missing' || e.event === 'task_interrupted' || e.event === 'task_status' || e.event === 'task_link' || e.event === 'task_verify' || e.event === 'report_too_long') && toIso(e.ts) && e.payload && typeof e.payload === 'object')
         .map(e => { const k = keyOf({ agent_id: e.agent_id || e.payload.agent_id, session_id: e.session_id || e.payload.session_id }); return k ? { key: k, ev: e.event, ts: toIso(e.ts), pl: e.payload } : null; }).filter(Boolean);
       c = { sig, events, notes, failed, effs, tasks, bad: p.bad };
       cache.set('h:' + f, c);
@@ -331,11 +373,12 @@ export async function readHooks(projectPath, cache, env) {
     for (const f of c.failed) if (!fails.get(f.key) || f.ts > fails.get(f.key).ts) fails.set(f.key, { ts: f.ts, errorType: f.errorType });
     for (const t of c.tasks) {
       const taskId = typeof t.pl.task === 'string' && t.pl.task ? t.pl.task.slice(0, 40) : null;
-      if (t.ev === 'report_missing') { const m = missing.get(t.key); if (!m || t.ts >= m.at) missing.set(t.key, { at: t.ts, task: taskId }); }
+      if (t.ev === 'report_missing') { if (taskId) { const m = missing.get(t.key); if (!m || t.ts >= m.at) missing.set(t.key, { at: t.ts, task: taskId }); } }   // task:null = not tracked: never a missing report
+      else if (t.ev === 'report_too_long') { const m = longReports.get(t.key); if (!m || t.ts >= m.at) longReports.set(t.key, { at: t.ts, lines: Number.isInteger(t.pl.lines) && t.pl.lines > 0 ? t.pl.lines : null }); }
       else if (t.ev === 'task_interrupted') {
         const m = interrupts.get(t.key);
         if (!m || t.ts >= m.at) interrupts.set(t.key, { at: t.ts, task: taskId, errorType: typeof t.pl.error_type === 'string' && t.pl.error_type ? t.pl.error_type.replace(/[^a-z_]/g, '').slice(0, 40) || 'unknown' : 'unknown', files: Number.isInteger(t.pl.files) && t.pl.files >= 0 ? t.pl.files : null });
-      } else { const m = taskIds.get(t.key); if (!m || t.ts >= m.ts) taskIds.set(t.key, { ts: t.ts, task: taskId }); }
+      } else if (taskId || t.ev === 'task_status') { const m = taskIds.get(t.key); if (!m || t.ts >= m.ts) taskIds.set(t.key, { ts: t.ts, task: taskId }); }
     }
     for (const f of c.effs) if (!efforts.get(f.key) || f.ts >= efforts.get(f.key).ts) efforts.set(f.key, { ts: f.ts, level: f.level });
     for (const e of c.events) {
@@ -348,7 +391,7 @@ export async function readHooks(projectPath, cache, env) {
       agents.set(e.agentId, a);
     }
   }
-  return { agents, notifs, notifTypes, fails, efforts: new Map([...efforts].map(([k, v]) => [k, v.level])), missing, interrupts, taskIds: new Map([...taskIds].map(([k, v]) => [k, v.task])), bad, dir: dirs[0], dirs };
+  return { agents, notifs, notifTypes, fails, efforts: new Map([...efforts].map(([k, v]) => [k, v.level])), missing, interrupts, taskIds: new Map([...taskIds].map(([k, v]) => [k, v.task])), longReports, bad, dir: dirs[0], dirs };
 }
 
 function subTitle(meta, agentId) {
@@ -413,7 +456,9 @@ export function taskFields(info, key, hook, mtimeMs) {
   const m = info.missing.get(key), i = info.interrupts.get(key);
   if (m && newer(m.at)) out.reportMissing = { at: m.at, task: m.task };
   if (i && newer(i.at)) out.interrupted = { at: i.at, task: i.task, errorType: i.errorType, files: i.files };
-  if (key.startsWith('a:')) out.taskId = info.taskIds.get(key) || null;
+  const l = info.longReports && info.longReports.get(key);
+  if (l && newer(l.at)) out.reportTooLong = { at: l.at, lines: l.lines };
+  if (key.startsWith('a:')) { out.taskId = info.taskIds.get(key) || null; out.tracked = !!out.taskId; }
   return out;
 }
 
@@ -645,6 +690,7 @@ export function mayHaveSpawned(p, c) {
 /** Phase 2 for one group: whole-transcript completion records and nested sub-agent parents (incremental after the first scan). */
 async function resolveSpawns(g, cache) {
   if (!g.subs.length) return;
+  await mapLimit(g.subs, IO_LIMIT, async s => { s.cum = await readUsage(s.file, s.st, cache); });
   g.completions = await readCompletions(g.file, g.st, cache);
   // nested sub-agents: the transcript that spawned an agent (Agent tool result / task notification) is its real parent.
   // With a single sub-agent there is no other sub-agent to be its parent, so its own transcript need not be scanned.
@@ -708,7 +754,7 @@ function groupSessions(g, hookInfo, teams) {
       model: s.tr.model || (s.meta && s.meta.model) || null,
       createdAt: earlier(s.tr.createdAt, hook && hook.start) || smt, updatedAt: smt, endedAt: (hook && hook.stop) || (done && done.at) || null,
       ...(runStartedAt ? { runStartedAt } : {}),
-      tokens: { context: s.tr.tokens, total: null }, lastActivity: s.tr.lastActivity,
+      tokens: { context: s.tr.tokens, total: s.cum ? s.cum.billed : null, ...(s.cum ? { cached: s.cum.cached } : {}) }, lastActivity: s.tr.lastActivity,
       refs: { file: s.file, db: null, key: null }, failure: s.tr.failure, ...failOf(fails.get('a:' + s.agentId), s.st.mtimeMs), ...taskFields(hookInfo, 'a:' + s.agentId, hook, s.st.mtimeMs),
       stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt, notifTypes.get('a:' + s.agentId)), failedBasis(fails.get('a:' + s.agentId), s.st.mtimeMs)) });
   }

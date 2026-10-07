@@ -72,10 +72,21 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     return v === `127.0.0.1:${p}` || v === `localhost:${p}`;
   }
 
-  function projectTree(snap, id) {
+  // task ids of a project whose work was accepted: archived/done, or the latest verdict is Approved
+  async function acceptedIds(snap, projectId) {
+    const p = snap.projects.find(x => x.id === projectId);
+    if (!p || !p.path || !snap.sessions.some(s => s.projectId === projectId && s.taskId)) return new Set();
+    try {
+      const r = await reader.read(p.path);
+      return new Set(r.tasks.filter(t => t.task.archived || t.task.status === 'done' || t.task.verdict === 'Approved').map(t => t.task.id));
+    } catch { return new Set(); }
+  }
+
+  async function projectTree(snap, id) {
     const project = snap.projects.find(p => p.id === id);
     if (!project) return null;
-    const own = snap.sessions.filter(s => s.projectId === id);
+    const acc = await acceptedIds(snap, id);
+    const own = snap.sessions.filter(s => s.projectId === id).map(s => (s.taskId && acc.has(s.taskId) ? { ...s, accepted: true } : s));
     const w = x => (x.state === 'waiting' ? 1 : 0);   // blocked-on-user first
     const byUpdated = (a, b) => w(b) - w(a) || String(b.updatedAt).localeCompare(String(a.updatedAt));
     const childOrder = (a, b) => w(b) - w(a) || (b.state === 'running') - (a.state === 'running') || String(b.createdAt).localeCompare(String(a.createdAt));
@@ -109,9 +120,52 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       let r;
       try { r = await reader.read(p.path); } catch { r = { dir: reader.dir(p.path), tasks: [] }; }
       const bySession = new Map(snap.sessions.filter(x => x.projectId === p.id && x.parentId).map(x => [x.nativeId, x.id]));
-      out.push({ projectId: p.id, projectName: p.name, dir: r.dir, tasks: r.tasks.map(t => taskOut(t, bySession, p.id)) });
+      let sm = null;
+      try { sm = await reader.summary(p.path, now()); } catch { /* events are optional */ }
+      const tasks = r.tasks.map(t => taskOut(t, bySession, p.id));
+      const waves = annotate(tasks, snap.sessions.filter(x => x.projectId === p.id && x.parentId), sm ? sm.verifies : []);
+      out.push({ projectId: p.id, projectName: p.name, dir: r.dir, tasks, waves, quota: sm ? sm.quota : null, cli: sm ? sm.cli : { calls: 0, bytes: 0, since: null } });
     }
     return json(res, 200, { generatedAt: iso(), projects: out });
+  }
+  // Adds verifiedBy, wave and tokens to the task objects (in place); returns the project's waves.
+  function annotate(tasks, agents, verifies) {
+    const byId = new Map(tasks.map(t => [t.id, t]));
+    const parent = new Map(tasks.map(t => [t.id, t.id]));
+    const find = x => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+    const union = (a, b) => { if (byId.has(a) && byId.has(b)) parent.set(find(a), find(b)); };
+    const packFirst = new Map();
+    for (const t of tasks) {
+      if (t.pack) { if (packFirst.has(t.pack)) union(t.id, packFirst.get(t.pack)); else packFirst.set(t.pack, t.id); }
+      for (const c of t.covers || []) union(t.id, c);
+    }
+    const comp = new Map();
+    for (const t of tasks) { const k = find(t.id); if (!comp.has(k)) comp.set(k, []); comp.get(k).push(t); }
+    const tokOf = a => { const v = a.tokens && (a.tokens.total ?? a.tokens.context); return Number.isFinite(v) ? v : null; };
+    const sum = list => { let n = null; for (const a of list) { const v = tokOf(a); if (v !== null) n = (n || 0) + v; } return n; };
+    const agentByNative = new Map(agents.map(a => [a.nativeId, a]));
+    const waves = [];
+    for (const members of comp.values()) {
+      const ids = members.map(t => t.id).sort();
+      const packs = members.map(t => t.pack).filter(Boolean).sort();
+      const linked = packs.length || members.some(t => (t.covers || []).length) || members.length > 1;
+      const id = packs.length ? packs[0] : `covers:${ids[0]}`;
+      for (const t of members) t.wave = linked ? id : null;
+      const set = new Set(ids);
+      const ag = new Map();
+      for (const a of agents) if (a.taskId && set.has(a.taskId)) ag.set(a.nativeId, a);
+      for (const v of verifies) if (v.by && (set.has(v.task) || v.covers.some(c => set.has(c))) && agentByNative.has(v.by)) ag.set(v.by, agentByNative.get(v.by));
+      if (linked) waves.push({ id, tasks: ids, agents: ag.size, tokens: sum([...ag.values()]) });
+    }
+    for (const t of tasks) {
+      const mine = agents.filter(a => a.taskId === t.id);
+      t.tokens = mine.length ? sum(mine) : null;
+      let best = t.verifiedBy ? { ...t.verifiedBy, t: Date.parse(t.verifiedBy.at) } : null;
+      for (const v of verifies) if ((v.task === t.id || v.covers.includes(t.id)) && (!best || !(best.t > v.t))) best = { by: v.by, fingerprint: v.fingerprint, at: v.at, t: v.t };
+      t.verifiedBy = best ? { by: best.by, fingerprint: best.fingerprint, at: best.at } : null;
+      if (!('wave' in t)) t.wave = null;
+    }
+    return waves.sort((a, b) => a.id.localeCompare(b.id));
   }
   // newest run of each task (project id + task id -> run session), from the subdeck-run source
   function lastRuns(snap) {
@@ -127,7 +181,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
   let runsNow = new Map();
   function taskOut(t, bySession, pid) {
     const r = runsNow.get(`${pid}/${t.task.id}`);
-    return { ...t.task, agentSessionId: (t.task.agent && bySession.get(t.task.agent)) || null, handoff: t.handoff || null,
+    return { auto: false, pack: '', grants: [], covers: [], verdict: '', verifiedBy: null, wave: null, tokens: null, ...t.task, agentSessionId: (t.task.agent && bySession.get(t.task.agent)) || null, handoff: t.handoff || null,
       lastRun: r ? { ts: r.ts, status: r.status, role: r.role, tool: r.tool, model: r.model } : null };
   }
   // ---- runs (read-only): metas come from the subdeck-run source; logs are read on demand ----
@@ -187,9 +241,10 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     return json(res, 200, { task: { ...taskOut(t, bySession, p.id), body: t.body } });
   }
 
-  function sessionDetail(snap, id) {
-    const s = snap.sessions.find(x => x.id === id);
+  async function sessionDetail(snap, id) {
+    let s = snap.sessions.find(x => x.id === id);
     if (!s) return null;
+    if (s.taskId && (await acceptedIds(snap, s.projectId)).has(s.taskId)) s = { ...s, accepted: true };
     const p = snap.projects.find(x => x.id === s.projectId);
     const parent = s.parentId ? snap.sessions.find(x => x.id === s.parentId) : null;
     return { generatedAt: iso(), session: { ...s,
@@ -440,9 +495,9 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       if (p === '/api/projects') return json(res, 200, { generatedAt: iso(), projects: snap.projects });
       if (p === '/api/stream') return openStream(res);
       m = /^\/api\/projects\/([A-Za-z0-9._-]+)$/.exec(p);
-      if (m) { const t = projectTree(snap, m[1]); return t ? json(res, 200, t) : json(res, 404, { error: 'not found' }); }
+      if (m) { const t = await projectTree(snap, m[1]); return t ? json(res, 200, t) : json(res, 404, { error: 'not found' }); }
       m = /^\/api\/sessions\/([A-Za-z0-9._-]+)$/.exec(p);
-      if (m) { const d = sessionDetail(snap, m[1]); return d ? json(res, 200, d) : json(res, 404, { error: 'not found' }); }
+      if (m) { const d = await sessionDetail(snap, m[1]); return d ? json(res, 200, d) : json(res, 404, { error: 'not found' }); }
       m = /^\/api\/sessions\/([A-Za-z0-9._-]+)\/content$/.exec(p);
       if (m) {
         if (!contentEnabled) return json(res, 404, { error: 'content disabled' });

@@ -20,7 +20,7 @@ import cline from './adapters/cline.mjs';
 import opencode from './adapters/opencode.mjs';
 import subdeckRun from './adapters/subdeck-run.mjs';
 
-export const VERSION = '0.8.0';
+export const VERSION = '0.8.1';
 export const ADAPTERS = [claudeCode, cursor, codex, copilot, gemini, cline, opencode, subdeckRun];
 const DEFAULT_PORT = 4917;
 const PORT_TRIES = 20;
