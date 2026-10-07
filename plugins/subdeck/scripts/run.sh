@@ -231,11 +231,12 @@ split_user_args() {
   read -ra toks <<< "$1"
   for tok in ${toks[@]+"${toks[@]}"}; do UARGS[${#UARGS[@]}]="${tok//\{sp\}/ }"; done
 }
-# deny_check ARGS -> 0 ok, 1 denied (DENIED = the token). Each token is compared lower-case as is, with spaces ({sp})
-# turned into "=", and joined to the previous token with "=" (so "--permission-mode auto" matches --permission-mode=auto).
-# settings.sh applies the same rule to the same list (_.deny_args).
+# deny_check ARGS -> 0 ok, 1 denied (DENIED = the token). settings.sh applies the same rule to the same list
+# (_.deny_args). A token (lower-case) is denied when any of these matches a pattern: the token; the token with spaces
+# ({sp}) as "="; "<previous token>=<token>"; the flag part before "=" (so --auto=true is --auto); and a single-dash
+# cluster of short flags (-sy) containing a denied one-letter flag (-y).
 deny_check() {
-  local tok pat low lpat prev="" c2 c3
+  local tok pat low lpat prev="" c2 c3 c4
   local -a pats
   pget _ deny_args
   read -ra pats <<< "$PV"
@@ -243,11 +244,15 @@ deny_check() {
   DENIED=""
   for tok in ${UARGS[@]+"${UARGS[@]}"}; do
     sd_lower "$tok"; low="$SD_LOWER"
-    c2="${low// /=}"; c3="$prev=$low"
+    c2="${low// /=}"; c3="$prev=$low"; c4="${c2%%=*}"
     for pat in ${pats[@]+"${pats[@]}"}; do
       sd_lower "$pat"; lpat="$SD_LOWER"
       # shellcheck disable=SC2053
-      if [[ $low == $lpat ]] || [[ $c2 == $lpat ]] || { [ -n "$prev" ] && [[ $c3 == $lpat ]]; }; then DENIED="$tok"; return 1; fi
+      if [[ $low == $lpat ]] || [[ $c2 == $lpat ]] || { [ -n "$prev" ] && [[ $c3 == $lpat ]]; } \
+         || { [ "${c4:0:1}" = - ] && [[ $c4 == $lpat ]]; }; then DENIED="$tok"; return 1; fi
+      if [[ $lpat =~ ^-[a-z0-9]$ ]] && [[ $c4 =~ ^-[a-z0-9]{2,}$ ]]; then
+        case "${c4:1}" in *"${lpat:1}"*) DENIED="$tok"; return 1 ;; esac
+      fi
     done
     prev="$low"
   done
@@ -363,8 +368,8 @@ gitdir_snapshot() {
   gd="$(cd "$CWD" && cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd)"
   [ -n "$cd" ] || return 0
   for f in "$cd/config" "$gd/config.worktree"; do [ -f "$f" ] && printf '%s %s\n' "$(cksum < "$f" | tr ' ' :)" "${f#$cd/}"; done
-  if [ -d "$cd/hooks" ]; then
-    find "$cd/hooks" \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do
+  if [ -d "$cd/hooks" ] || [ -d "$cd/info" ]; then
+    find "$cd/hooks" "$cd/info" \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do
       if [ -L "$f" ]; then printf 'link:%s %s\n' "$(readlink "$f")" "${f#$cd/}"
       else printf '%s %s\n' "$(cksum < "$f" | tr ' ' :)" "${f#$cd/}"; fi
     done
@@ -708,16 +713,21 @@ HOOKS_DIR="$RUNDIR/hooks"; V_HOOKS="$HOOKS_DIR"
 if [ "$PLAT" = win ] && command -v cygpath >/dev/null 2>&1; then V_HOOKS="$(cygpath -m "$HOOKS_DIR" 2>/dev/null || printf '%s' "$HOOKS_DIR")"; fi
 GCN=0; [[ ${GIT_CONFIG_COUNT:-} =~ ^[0-9]{1,3}$ ]] && GCN=$((10#$GIT_CONFIG_COUNT))
 GC_KEYS=("url.subdeck-no-push://.pushInsteadOf" "core.hooksPath"); GC_VALS=("" "$V_HOOKS")
-PUSHURLS=""
+PUSHURLS=""; PU_NOTE=""
 if is_git "$PROJECT" || is_git "$CWD" 2>/dev/null; then
   GDIR="$PROJECT"; is_git "$GDIR" || GDIR="$CWD"
   PUSHURLS="$(git -C "$GDIR" config --get-regexp '^remote\..*\.pushurl$' 2>/dev/null)"
   FETCHURLS="$(git -C "$GDIR" config --get-regexp '^remote\..*\.url$' 2>/dev/null | sed 's/^[^ ]* //')"
   while IFS= read -r pl; do
     [ -n "$pl" ] || continue
-    pu="${pl#* }"; clash=0
+    pu="${pl#* }"; pn="${pl%% *}"; pn="${pn#remote.}"; pn="${pn%.pushurl}"; clash=0
     while IFS= read -r fu; do [ -n "$fu" ] && case "$fu" in "$pu"*) clash=1 ;; esac; done <<< "$FETCHURLS"
-    [ "$clash" = 0 ] && { GC_KEYS[${#GC_KEYS[@]}]="url.subdeck-no-push://.insteadOf"; GC_VALS[${#GC_VALS[@]}]="$pu"; }
+    if [ "$clash" = 0 ]; then
+      GC_KEYS[${#GC_KEYS[@]}]="url.subdeck-no-push://.insteadOf"; GC_VALS[${#GC_VALS[@]}]="$pu"
+      PU_NOTE="$PU_NOTE${NL}warning: remote $pn has an explicit pushurl $pu: push blocked by url rewrite and the SubDeck pre-push hook"
+    else
+      PU_NOTE="$PU_NOTE${NL}warning: remote $pn has an explicit pushurl $pu that is also a fetch url prefix: guarded by the SubDeck pre-push hook only (git push --no-verify is not blocked)"
+    fi
   done <<< "$PUSHURLS"
 fi
 ENV_OUT[${#ENV_OUT[@]}]="GIT_CONFIG_COUNT=$((GCN + ${#GC_KEYS[@]}))"
@@ -778,9 +788,7 @@ fi
 mkdir -p "$HOOKS_DIR" 2>/dev/null
 printf '#!/bin/sh\necho "SubDeck: git push is disabled inside a SubDeck run; the manager integrates branch subdeck/%s after the user approves." >&2\nexit 1\n' "$TASK" > "$HOOKS_DIR/pre-push"
 chmod +x "$HOOKS_DIR/pre-push" 2>/dev/null
-if [ -n "$PUSHURLS" ]; then
-  logh "warning: remote(s) with an explicit pushurl: $(printf '%s' "$PUSHURLS" | tr '\n' ' ')- push blocked by url rewrite and the SubDeck pre-push hook"
-fi
+while IFS= read -r pl; do [ -n "$pl" ] && logh "$pl"; done <<< "$PU_NOTE"
 CHECK=skipped; is_git "$CWD" && CHECK=ok
 RUNBASE=""; PRE=""; TOP=""; GSNAP=""; MARKF="$F.marker"
 if [ "$CHECK" = ok ]; then
@@ -859,9 +867,9 @@ set -m
   # the caller's Claude Code session identity must not leak into the child (it would look like that session)
   unset CLAUDECODE CLAUDE_PID CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SSE_PORT \
     CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CLAUDE_CODE_WORKER_EPOCH CLAUDE_AFTER_LAST_COMPACT \
-    CLAUDE_CODE_DIAGNOSTICS_FILE CLAUDE_CODE_TEE_SDK_STDOUT CLAUDE_SESSION_INGRESS_TOKEN_FILE 2>/dev/null
+    CLAUDE_CODE_SESSION_ATTENDED 2>/dev/null
   while IFS='=' read -r n _; do
-    case "$n" in CLAUDE_CODE_*SESSION*|CLAUDE_*_SESSION_ID) [[ $n =~ ^[A-Z0-9_]+$ ]] && unset "$n" ;; esac
+    case "$n" in CLAUDE*_SESSION_ID) [[ $n =~ ^[A-Z0-9_]+$ ]] && unset "$n" ;; esac
   done < <(env 2>/dev/null)
   for e in "${ENV_OUT[@]}"; do export "$e"; done
   exec "$BIN" ${ARGV_OUT[@]+"${ARGV_OUT[@]}"} < "$STDIN_SRC" > "$OUTF" 2>> "$LOGF"

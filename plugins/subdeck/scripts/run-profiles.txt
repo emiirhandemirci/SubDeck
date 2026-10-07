@@ -16,9 +16,10 @@ _.status=stable
 _.auth_codes=
 _.quota_re=rate.?limit|quota|429|usage limit|resource.?exhausted|too many requests|credits
 _.auth_re=not (logged|signed) in|log ?in required|unauthori[sz]ed|401|403|forbidden|invalid api key|authenticat|could not be validated|set an auth method
-# deny_args: bash patterns matched lower-case against each role args token, the token with spaces as "=", and
-# "<previous token>=<token>" (run.sh at run time and settings.sh at set time read this same line).
-_.deny_args=*dangerously* *bypasspermissions* *yolo* *danger-full-access* -y --auto --allow-all --allow-all-paths --allow-all-urls --no-sandbox --permission-mode=auto --approve-for-me --add-dir --add-dir=* --include-directories --include-directories=*
+# deny_args: bash patterns matched lower-case against each role args token: the token, the token with spaces as "=",
+# "<previous token>=<token>", the flag part before "=" (--auto=true counts as --auto), and single-dash short-flag
+# clusters (-sy contains the denied -y). run.sh at run time and settings.sh at set time read this same line.
+_.deny_args=*dangerously* *bypasspermissions* *yolo* *danger-full-access* -y --auto --allow-all --allow-all-paths --allow-all-urls --no-sandbox --permission-mode=auto --approve-for-me --add-dir --add-dir=* --include-directories --include-directories=* --settings
 
 # Claude Code: hooks run in -p mode, so the SubDeck guard applies. Prompts that would ask are denied.
 claude.bin=claude

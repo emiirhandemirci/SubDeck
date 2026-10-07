@@ -4,7 +4,7 @@
 # Always reads all of stdin. Behaviour from env:
 #   FAKE_CLI_LOG=<dir>      records <n>.<tool>.argv (one arg per line, newline as \n), .stdin, .cwd, .env
 #                           (sorted; names SUBDECK_* OPENCODE_* COPILOT_* GIT_CONFIG_* GIT_TERMINAL_PROMPT CLAUDE_PROJECT_DIR,
-#                           and CLAUDECODE CLAUDE_PID CLAUDE_CODE_* for the session-identity strip test)
+#                           and CLAUDECODE CLAUDE_* for the session-identity strip test)
 #   FAKE_CLI_REPLY=<file>   final message: a path, or a name under replies/ (default worker-done.txt)
 #   FAKE_CLI_EXIT=<n>       exit code (default 0)
 #   FAKE_CLI_STDERR=<text>  written to stderr
@@ -34,7 +34,7 @@ if [ -n "${FAKE_CLI_LOG:-}" ]; then
   for a in "$@"; do printf '%s\n' "${a//$'\n'/\\n}" >> "$base.argv.tmp"; done
   printf '%s' "$STDIN" > "$base.stdin"
   pwd > "$base.cwd"
-  env | grep -E '^(SUBDECK_[A-Z_]*|OPENCODE_[A-Z_]*|COPILOT_[A-Z_]*|GIT_CONFIG_[A-Z0-9_]*|GIT_TERMINAL_PROMPT|CLAUDE_PROJECT_DIR|CLAUDECODE|CLAUDE_PID|CLAUDE_CODE_[A-Z0-9_]*)=' | LC_ALL=C sort > "$base.env"
+  env | grep -E '^(SUBDECK_[A-Z_]*|OPENCODE_[A-Z_]*|COPILOT_[A-Z_]*|GIT_CONFIG_[A-Z0-9_]*|GIT_TERMINAL_PROMPT|CLAUDE_PROJECT_DIR|CLAUDECODE|CLAUDE_PID|CLAUDE_[A-Z0-9_]*)=' | LC_ALL=C sort > "$base.env"
   mv -f "$base.argv.tmp" "$base.argv"
 fi
 

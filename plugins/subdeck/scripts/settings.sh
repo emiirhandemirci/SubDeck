@@ -436,8 +436,9 @@ ROLE_FIXED=" manager worker worker-heavy researcher verifier "
 role_name_ok() { case "$ROLE_FIXED" in *" $1 "*) return 0 ;; esac; [[ $1 =~ ^[a-z][a-z0-9-]{0,23}$ ]]; }
 # Deny list for roles.<r>.args: the _.deny_args line of run-profiles.txt (the list run.sh enforces at run time);
 # the fallback below is the same list for an install without that file. Same matching rule as run.sh deny_check:
-# lower-case token, token with {sp} as "=", and "<previous token>=<token>", each against every bash pattern.
-DENY_FALLBACK='*dangerously* *bypasspermissions* *yolo* *danger-full-access* -y --auto --allow-all --allow-all-paths --allow-all-urls --no-sandbox --permission-mode=auto --approve-for-me --add-dir --add-dir=* --include-directories --include-directories=*'
+# lower-case token, token with {sp} as "=", "<previous token>=<token>", the flag part before "=", and single-dash
+# short-flag clusters containing a denied one-letter flag, each against every bash pattern.
+DENY_FALLBACK='*dangerously* *bypasspermissions* *yolo* *danger-full-access* -y --auto --allow-all --allow-all-paths --allow-all-urls --no-sandbox --permission-mode=auto --approve-for-me --add-dir --add-dir=* --include-directories --include-directories=* --settings'
 DENY_PATS=()
 deny_load() {
   local line list=""
@@ -451,14 +452,18 @@ deny_load() {
   read -ra DENY_PATS <<< "$list"
 }
 deny_token() { # token [previous token] -> 0 when it is on the deny list
-  local t c2 c3="" p
+  local t c2 c3="" c4 p
   [ ${#DENY_PATS[@]} -gt 0 ] || deny_load
-  lower "$1"; t="$LOW"; c2="${t//\{sp\}/=}"
+  lower "$1"; t="$LOW"; c2="${t//\{sp\}/=}"; c4="${c2%%=*}"
   if [ -n "${2:-}" ]; then lower "$2"; c3="${LOW//\{sp\}/=}=$t"; fi
   for p in "${DENY_PATS[@]}"; do
     lower "$p"
     # shellcheck disable=SC2053
-    if [[ $t == $LOW ]] || [[ $c2 == $LOW ]] || { [ -n "$c3" ] && [[ $c3 == $LOW ]]; }; then return 0; fi
+    if [[ $t == $LOW ]] || [[ $c2 == $LOW ]] || { [ -n "$c3" ] && [[ $c3 == $LOW ]]; } \
+       || { [ "${c4:0:1}" = - ] && [[ $c4 == $LOW ]]; }; then return 0; fi
+    if [[ $LOW =~ ^-[a-z0-9]$ ]] && [[ $c4 =~ ^-[a-z0-9]{2,}$ ]]; then
+      case "${c4:1}" in *"${LOW:1}"*) return 0 ;; esac
+    fi
   done
   return 1
 }

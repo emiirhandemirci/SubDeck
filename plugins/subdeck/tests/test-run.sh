@@ -410,7 +410,10 @@ FAKE_CLI_LOG="$W/logp" FAKE_CLI_SH="git push '$R1' HEAD:refs/heads/leak4" r work
 FAKE_CLI_LOG="$W/logp" FAKE_CLI_SH='git fetch -q origin' r worker "$TP" >/dev/null 2>&1
 check "$(cat "$W/logp/5.codex.sh-exit")" "0" "fetch still works inside a run"
 check "$(git -C "$R1" for-each-ref | wc -l | tr -d ' ')$(git -C "$R2" for-each-ref refs/heads/leak* | wc -l | tr -d ' ')$(git -C "$R3" for-each-ref | wc -l | tr -d ' ')" "000" "no ref reached any remote"
-has "$(cat "$(ls -t "$ST/runs/$TP"/*.log | head -n 1)")" "warning: remote(s) with an explicit pushurl" "pushurl warning in the run log"
+PLOG="$(cat "$(ls -t "$ST/runs/$TP"/*.log | head -n 1)")"
+has "$PLOG" "warning: remote origin has an explicit pushurl $R2: push blocked by url rewrite and the SubDeck pre-push hook" "pushurl warning (rewritten) in the run log"
+has "$PLOG" "warning: remote same has an explicit pushurl $R3 that is also a fetch url prefix: guarded by the SubDeck pre-push hook only" "pushurl warning (hook only) in the run log"
+hasnt "$(printf '%s\n' "$PLOG" | grep 'remote same')" "url rewrite" "hook-only remote is not reported as rewritten"
 git -C "$P" remote remove origin; git -C "$P" remote remove same
 
 # ---------- 13d. git dir writes, symlink escapes, ignored files ----------
@@ -420,6 +423,14 @@ has "$(lastmeta "$TG")" '"violations":["git-dir:config","git-dir:hooks/post-comm
 has "$(lastevent writable_violation)" '"reason":"git-dir"' "writable_violation reason git-dir"
 check "$(field "$TG" status)" "blocked" "git-dir violation blocks the task"
 rm -f "$(git -C "$P" rev-parse --git-common-dir)/hooks/post-commit" "$P/.git/hooks/post-commit"; git -C "$P" config --unset subdeck.evil
+TX="$(newtask "info exclude" "src")"
+FAKE_CLI_SH='echo "*" >> "$(git rev-parse --git-common-dir)/info/exclude"' r worker "$TX" >/dev/null 2>&1; check "$?" "5" "appending * to info/exclude: violation"
+has "$(lastmeta "$TX")" '"git-dir:info/exclude"' "info/exclude listed as git-dir violation"
+CD_="$(cd "$P" && cd "$(git rev-parse --git-common-dir)" && pwd)"; sed -i.bak '$d' "$CD_/info/exclude" && rm -f "$CD_/info/exclude.bak"
+TX2="$(newtask "info attributes" "src")"
+FAKE_CLI_SH='echo "* -diff" > "$(git rev-parse --git-common-dir)/info/attributes"' r worker "$TX2" >/dev/null 2>&1; check "$?" "5" "creating info/attributes: violation"
+has "$(lastmeta "$TX2")" '"git-dir:info/attributes"' "info/attributes listed"
+rm -f "$CD_/info/attributes"
 TG2="$(newtask "gitdir control" "src")"
 FAKE_CLI_TOUCH=src/fine.js r worker "$TG2" >/dev/null 2>&1; check "$?" "0" "negative control: same run without git-dir writes is clean"
 TL="$(newtask "symlink" "src")"
@@ -442,23 +453,28 @@ check "$(field "$TI" status)" "review" "ignored-files warning does not change th
 TE="$(newtask "env strip" "src")"
 rm -rf "$W/loge"
 CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=sess-abc CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_CODE_REMOTE_SESSION_ID=rs CLAUDE_PID=123 CLAUDE_CODE_OAUTH_TOKEN=keep-me \
+  CLAUDE_SESSION_INGRESS_TOKEN_FILE=/run/tok CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2=1 \
   FAKE_CLI_LOG="$W/loge" r worker "$TE" >/dev/null 2>&1
 E="$(cat "$W/loge/1.codex.env")"
 for v in CLAUDECODE= CLAUDE_CODE_SESSION_ID= CLAUDE_CODE_ENTRYPOINT= CLAUDE_CODE_REMOTE_SESSION_ID= CLAUDE_PID=; do hasnt "$E" "$v" "child env has no $v"; done
 has "$E" "CLAUDE_CODE_OAUTH_TOKEN=keep-me" "auth/config vars are kept"
+has "$E" "CLAUDE_SESSION_INGRESS_TOKEN_FILE=/run/tok" "credential-path vars (*_TOKEN_FILE) are kept"
+has "$E" "CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2=1" "session config flags (not identity) are kept"
 CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=sess-abc FAKE_CLI_LOG="$W/loge2" "$FAKE/bin/codex" </dev/null >/dev/null 2>&1
 has "$(cat "$W/loge2/1.codex.env")" "CLAUDE_CODE_SESSION_ID=sess-abc" "negative control: the fake records the var when it is passed"
 
 # ---------- 13f. deny list (run time and settings.sh share _.deny_args) ----------
 TDL="$(newtask "deny2")"
-for a in "--permission-mode auto" "--permission-mode{sp}auto" "--permission-mode=Auto" "--permission-mode bypassPermissions" "--dangerously-skip-permissions" "--add-dir /tmp" "--add-dir=/tmp" "--approve-for-me" "--dangerously-bypass-approvals-and-sandbox" "--yolo" "-y" "--auto" "--allow-all-paths" "--include-directories /x"; do
+for a in "--auto=true" "--allow-all=true" "--approve-for-me=true" "--no-sandbox=true" "-y=true" "-sy" "-yS" "-Ys=1" "--settings" "--settings=x.json" "--settings /x.json" "--Auto=1" "--permission-mode auto" "--permission-mode{sp}auto" "--permission-mode=Auto" "--permission-mode bypassPermissions" "--dangerously-skip-permissions" "--add-dir /tmp" "--add-dir=/tmp" "--approve-for-me" "--dangerously-bypass-approvals-and-sandbox" "--yolo" "-y" "--auto" "--allow-all-paths" "--include-directories /x"; do
   ucfg "{\"roles\":{\"worker\":{\"tool\":\"codex\",\"args\":\"--ok $a\"}}}"
   r worker "$TDL" --dry-run >/dev/null 2>&1; check "$?" "2" "run.sh denies: $a"
   ( H2="$(mktemp -d)"; HOME="$H2" bash "$PL/scripts/settings.sh" set roles.worker.tool=codex "roles.worker.args=--ok $a" >/dev/null 2>&1; rc=$?; rm -rf "$H2"; exit $rc ); check "$?" "2" "settings.sh denies: $a"
 done
-ucfg '{"roles":{"worker":{"tool":"claude","args":"--permission-mode plan --effort high"}}}'
-r worker "$TDL" --dry-run >/dev/null 2>&1; check "$?" "0" "negative control: run.sh allows --permission-mode plan"
-( H2="$(mktemp -d)"; HOME="$H2" bash "$PL/scripts/settings.sh" set roles.worker.tool=claude "roles.worker.args=--permission-mode plan --effort high" >/dev/null 2>&1; rc=$?; rm -rf "$H2"; exit $rc ); check "$?" "0" "negative control: settings.sh allows --permission-mode plan"
+for a in "--permission-mode plan --effort high" "-s workspace-write -c x=1" "--mcp-config m.json" "--model=gpt-5 -sb" "--autoformat=true"; do
+  ucfg "{\"roles\":{\"worker\":{\"tool\":\"claude\",\"args\":\"$a\"}}}"
+  r worker "$TDL" --dry-run >/dev/null 2>&1; check "$?" "0" "negative control: run.sh allows $a"
+  ( H2="$(mktemp -d)"; HOME="$H2" bash "$PL/scripts/settings.sh" set roles.worker.tool=claude "roles.worker.args=$a" >/dev/null 2>&1; rc=$?; rm -rf "$H2"; exit $rc ); check "$?" "0" "negative control: settings.sh allows $a"
+done
 ucfg "$ROLES_ALL"
 
 # ---------- 14. bash 3.2 rules ----------
