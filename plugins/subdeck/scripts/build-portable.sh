@@ -6,6 +6,7 @@
 #   skills-portable/<name>/SKILL.md   skills without Claude's "!" command injection and ${CLAUDE_PLUGIN_ROOT}:
 #                                     the script path is resolved from the skill's own directory (../../scripts)
 #   skills-portable/orchestrator/pr-facts.sh   copy
+#   scripts/roles/<class>.md          run.sh rulebooks (worker, researcher, verifier): agents/<class>-current.md body, no frontmatter
 #   .github/agents/<name>.agent.md    Copilot custom agents (Claude model/effort/memory keys dropped)
 #   .github/plugin/plugin.json        Copilot plugin manifest (found before .claude-plugin/plugin.json)
 #   hooks/copilot-plugin-hooks.json   Copilot-format hooks using the PLUGIN_ROOT variable Copilot exports
@@ -71,6 +72,23 @@ d="$OUT/skills-portable/orchestrator"; mkdir -p "$d"
         -e 's#subdeck:<agent>#<agent>#g'
 } > "$d/SKILL.md"
 cp "$SRC/skills/orchestrator/pr-facts.sh" "$d/pr-facts.sh"
+
+# ---------- portable role rulebooks (scripts/roles/<class>.md, read by scripts/run.sh) ----------
+# Body of agents/<class>-current.md without frontmatter, same subdeck: rewrites as the portable orchestrator.
+rm -rf "$OUT/scripts/roles"; mkdir -p "$OUT/scripts/roles"
+for class in worker researcher verifier; do
+  {
+    echo "# SubDeck $class rules"
+    echo
+    body "$SRC/agents/$class-current.md" \
+    | sed -e 's#"\${CLAUDE_PLUGIN_ROOT}/scripts/#"<skill dir>/../../scripts/#g' \
+          -e 's#`/subdeck:\([a-z]*\)`#the `\1` skill#g' \
+          -e 's#/subdeck:\([a-z]*\)#the \1 skill#g' \
+          -e 's#subdeck:worker#worker#g' -e 's#subdeck:researcher#researcher#g' -e 's#subdeck:verifier#verifier#g' \
+          -e 's#subdeck:<agent>#<agent>#g' \
+    | awk 'NF || started { started=1; print }'
+  } > "$OUT/scripts/roles/$class.md"
+done
 
 # ---------- Copilot agents ----------
 rm -rf "$OUT/.github/agents"; mkdir -p "$OUT/.github/agents"

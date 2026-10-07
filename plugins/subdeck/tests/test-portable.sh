@@ -11,7 +11,7 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL $1"; }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 
 bash "$PL/scripts/build-portable.sh" --out "$T/gen" > "$T/out" 2>&1 && ok "generator runs into a temp dir" || bad "generator failed: $(cat "$T/out")"
-for p in skills-portable .github/agents .github/plugin hooks/copilot-plugin-hooks.json; do
+for p in skills-portable scripts/roles .github/agents .github/plugin hooks/copilot-plugin-hooks.json; do
   if diff -r "$T/gen/$p" "$PL/$p" > "$T/diff" 2>&1; then ok "committed $p equals generated"; else bad "committed $p drifted from the generator (run scripts/build-portable.sh): $(head -3 "$T/diff" | tr '\n' ' ')"; fi
 done
 bash "$PL/scripts/build-portable.sh" --out "$T/gen" > /dev/null 2>&1
@@ -51,4 +51,21 @@ fi
 n=0; for f in "$PL"/agents/*.md; do b="$(basename "$f" .md)"; g="$PL/.github/agents/$b.agent.md"; [ -f "$g" ] && grep -qx "name: $b" "$g" && ! grep -Eq '^(model|effort|memory):' "$g" && n=$((n+1)); done
 [ "$n" = 7 ] && ok "7 Copilot agents, Claude-only keys dropped" || bad "copilot agents: $n"
 grep -qx 'tools: \["read", "search"\]' "$PL/.github/agents/researcher.agent.md" && ! grep -q '^tools:' "$PL/.github/agents/worker-sonnet.agent.md" && ok "copilot: researcher read-only, worker unrestricted" || bad "copilot tools"
+
+# run.sh rulebooks (scripts/roles) and the 0.8 docs
+for c in worker researcher verifier; do
+  f="$PL/scripts/roles/$c.md"
+  [ -f "$f" ] && [ "$(head -1 "$f")" = "# SubDeck $c rules" ] && ! head -3 "$f" | grep -q '^---' && ! grep -q 'CLAUDE_PLUGIN_ROOT' "$f" && grep -q 'Headless run' "$f" && ok "roles/$c.md: heading, no frontmatter, no plugin root, headless rule" || bad "roles/$c.md content"
+  grep -q "Stop:" "$f" && ok "roles/$c.md: has the Stop: report shape" || bad "roles/$c.md Stop"
+done
+grep -q 'Tested:' "$PL/scripts/roles/worker.md" && grep -q 'Verdict:' "$PL/scripts/roles/verifier.md" && ok "roles: worker Tested:, verifier Verdict:" || bad "roles report shapes"
+grep -q '^## 4b\. Mapped roles' "$PL/skills/orchestrator/SKILL.md" && grep -q 'run.sh" roles' "$PL/skills-portable/orchestrator/SKILL.md" && ok "orchestrator: mapped roles section in source and portable copy" || bad "orchestrator mapped roles"
+RT="$PL/../../docs/runs.md"
+if [ -f "$RT" ]; then
+  for k in claude codex gemini agy opencode copilot; do grep -qi "$k" "$RT" || bad "docs/runs.md misses $k"; done
+  grep -q 'Antigravity' "$RT" && grep -qi 'privacy' "$RT" && ok "docs/runs.md: tools, Gemini consumer note, privacy" || bad "docs/runs.md content"
+  grep -o '](\([^)#]*\)' "$PL/../../README.md" "$PL/../../docs/USER_GUIDE.md" "$RT" | sed 's/.*](//' | grep -v '^http' | sort -u | while read -r l; do
+    [ -e "$PL/../../$l" ] || [ -e "$PL/../../docs/$l" ] || echo "BROKEN $l"; done > "$T/links"
+  [ -s "$T/links" ] && bad "broken doc links: $(tr '\n' ' ' < "$T/links")" || ok "docs links resolve"
+else bad "docs/runs.md missing"; fi
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" -eq 0 ]

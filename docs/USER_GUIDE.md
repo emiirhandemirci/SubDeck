@@ -294,6 +294,27 @@ SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds a
 
 The guard rule `protected-resources` (default `ask`; `deny` or `off` with `protected-resources=deny|off`) then asks before a Bash or PowerShell command that uses `localhost:8080`, `127.0.0.1:8080`, `0.0.0.0:8080`, `--port 8080`, `PORT=8080`, `-p 8080` (the exact forms only), `lsof -i :8080`, a listed host, or `kill`, `pkill`, `killall`, `taskkill /IM` or `Stop-Process -Name` on a listed process. Limits, honestly: it reads the command text only. It does not see a port or host held in a variable, written in a script or config file, chosen by the program itself, or a plain `kill <pid>`; aliases and other interpreters get around it. It is a reminder to ask you first, not a sandbox. For anything shared, also use a lock file named in the task and the "leave it as you found it" checklist (forms closed, processes stopped, ports released) in the agent's report. The rule does nothing while all three lists are empty.
 
+## 9c. Mapped roles (other models and CLIs)
+
+Opt-in. A role (`worker`, `researcher`, `verifier`, `worker-heavy` or a name of your own) can be mapped to Codex, Gemini CLI, OpenCode, Copilot, Claude or a custom command; the manager then delegates it with `run.sh` instead of an in-session sub-agent. Unmapped roles behave as before.
+
+| Key | Meaning |
+|---|---|
+| `roles.<role>.tool` | `claude`, `codex`, `gemini`, `agy` (experimental), `opencode`, `copilot` or `custom`; empty removes the mapping |
+| `roles.<role>.model` | model name passed through to the CLI; empty = the CLI's default |
+| `roles.<role>.args` | extra flags (no quotes; auto-approve flags such as `--yolo` are refused) |
+| `roles.<role>.cmd` | command line for `custom`; must contain `{prompt_file}` |
+| `roles.<role>.timeout` | seconds, 60 to 86400, default 1800 |
+
+Example: `/subdeck:settings set roles.worker.tool=codex roles.worker.model=gpt-5-codex roles.verifier.tool=claude roles.verifier.model=opus --project`. A project's role replaces the user's role as a whole. Desk shows the same keys as a table in the Settings tab and lists the runs.
+
+Points to know:
+
+- Workers run in a separate git worktree on branch `subdeck/<task>`. Nothing reaches your branch until you say yes; then the manager merges fast-forward only or cherry-picks, and removes the worktree.
+- The verifier must be a different model than the one that produced the work.
+- Code goes to the provider of the mapped tool (see Privacy below). The SubDeck guard hooks run only in Claude runs; for other tools the worktree and a writable-path check after the run are the safety net.
+- Per-tool setup, login, exit codes and a smoke checklist: [runs.md](runs.md).
+
 ## 10. Settings: status line
 
 `/subdeck:settings set statusline=on` adds an optional line to the Claude Code status bar with the agent counts of the current project, for example `SubDeck ● 2 running  ◐ 1 waiting  ✕ 1 failed`. Groups with a zero count are hidden; an idle project shows just `SubDeck`. The counts use the same waiting and stale rules as `/subdeck:status`.
@@ -309,6 +330,7 @@ The guard rule `protected-resources` (default `ask`; `deny` or `off` with `prote
 - Local only: Desk binds `127.0.0.1` and rejects requests with a foreign `Host` header.
 - Prompt, tool calls and final report are read from your local transcript only when you open an agent. They are never stored, cached or logged; tool output and thinking text are never served.
 - Start with `--no-content` to turn content reading off completely.
+- SubDeck sends nothing anywhere. The one exception is a role you map to another tool (section 9c): the code that role reads, the task text and your protected-resource lists go to that tool's provider, under its terms. Without a `roles` setting nothing is sent.
 
 ## 12. Troubleshooting
 

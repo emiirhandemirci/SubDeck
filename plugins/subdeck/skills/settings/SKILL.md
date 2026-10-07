@@ -1,6 +1,6 @@
 ---
 name: settings
-description: Show or change SubDeck settings in one place (models, notifications, push, guard, protected files, context, status line). Deterministic script output, no analysis.
+description: Show or change SubDeck settings in one place (models, mapped roles, notifications, push, guard, protected files, context, status line). Deterministic script output, no analysis.
 argument-hint: "[help | set key=value ... [--project] | reset [--project]]"
 disable-model-invocation: true
 allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/settings.sh" *), Read, Edit
@@ -14,6 +14,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/settings.sh" $ARGUMENTS "${CLAUDE_PROJECT_DI
 ```
 
 User request: `$ARGUMENTS`
+
+Mapped roles: `roles.<role>.tool|model|args|cmd|timeout` map a role (worker, researcher, verifier, or your own name) to another CLI such as codex, gemini, opencode, copilot or claude; example `set roles.worker.tool=codex roles.worker.model=gpt-5-codex --project`. Set the tool first; an empty tool removes the mapping. See docs/runs.md.
 
 Protected files: `protect=<glob>[,<glob>]` sets the list of files or globs agents must not edit or delete without approval (guard rule `protected-paths`, default ask; e.g. `protect=CLAUDE.md,.github/workflows/**,migrations/**,*.lock`); it replaces the list, `unprotect=<glob>` removes entries. Add `--project` to store a setting for this project only; a project value replaces the user value. `context=<tokens>` sets the context window for models whose size is unknown (0 = auto). `help` lists every key with its options.
 

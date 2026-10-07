@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Any model, any role (opt-in):** map a role to another CLI with `roles.<role>.tool|model|args|cmd|timeout` (`claude`, `codex`, `gemini`, `agy` experimental, `opencode`, `copilot`, `custom`). New `scripts/run.sh` runs a role headlessly from its task file, in a git worktree on branch `subdeck/<task>` for workers, with a timeout, a writable-path check afterwards and a push blocker. Exit codes classify auth, quota, timeout and violations; `run.sh roles|tail|cleanup` inspect and clean up. Flags per CLI live in `scripts/run-profiles.txt`. Unmapped roles stay in-session sub-agents; without a `roles` setting nothing changes.
+- **Verifier on another model:** a mapped verifier on the same `tool/model` as the task's producer is refused.
+- **Results only after your yes:** `run.sh` never commits, merges or pushes; the manager integrates `subdeck/<task>` only after your explicit approval.
+- **Rulebook:** new orchestrator section "Mapped roles (opt-in)"; sub-agents know they may be in a headless run (end with `Stop: waiting` and the question). Portable per-class rulebooks are generated into `scripts/roles/`.
+- **Desk:** SubDeck runs appear as a source with a live log view, role/tool/model badges and a roles table in Settings.
+- **Docs:** new [docs/runs.md](docs/runs.md) (setup and login per CLI, privacy, honest guard coverage per tool, smoke checklist), README privacy note. Gemini CLI consumer tiers ended in June 2026: use an API key or Vertex, or `agy`.
+
 ## 0.7.0 - 2026-10-07
 
 - **Tasks:** the manager keeps a task file per delegated job (`tasks.sh`: new, set, append, done, list, ready, show). Files live in the project's state folder by default; `tasks.dir` moves them. Hooks set the status from the agent's start, stop and failure events; `done` needs an approved verifier verdict. Desk gets a Tasks tab.

@@ -81,6 +81,7 @@ Restart the tool (in a running Claude Code session `/reload-plugins` also works;
 - **Resumed agents stay running:** a sub-agent that is resumed after a stop is shown as running again.
 - **Branch-aware push guard:** `push=branches` (default) asks only for protected branches, tags and merges into them; force push is always denied. Notifications default to waiting and done; agent and idle are opt-in.
 - **Settings help and `context`:** `/subdeck:settings help` lists every key; `context=<tokens>` sets the window for models Desk cannot size.
+- **Any model, any role (opt-in):** map a role to another CLI (`/subdeck:settings set roles.worker.tool=codex roles.worker.model=gpt-5-codex`): Codex, Gemini CLI, OpenCode, Copilot, Claude, or a custom command (Antigravity `agy` is experimental). The manager then runs that role headlessly with `run.sh` in its own git worktree on branch `subdeck/<task>`; results are merged only after your explicit yes, and the verifier must be a different model than the producer. Setup, login and limits per tool: [docs/runs.md](docs/runs.md).
 - **State outside the repo:** events, notification log and project settings live in `~/.subdeck/projects/`, never in your project.
 - **No nested managers:** plugin agents cannot launch agents.
 - **Sandbox-friendly Desk:** `SUBDECK_HOME` sets the single data root Desk reads.
@@ -179,6 +180,10 @@ Check the manifests with `claude plugin validate .` and `claude plugin validate 
 - Requirements: Bash and awk (Git Bash on Windows), Claude Code with plugin support, git. Desk needs Node 22.13 or newer.
 </details>
 
+## Privacy
+
+SubDeck itself sends nothing anywhere: hooks, scripts and Desk stay on your machine. If you map a role to another tool (see [docs/runs.md](docs/runs.md)), the code that role reads, the task text and your protected-resource lists go to **that tool's provider**, under its terms. With no `roles` setting nothing changes. The manager tells you once per session which providers will receive code.
+
 ## Limits
 
 What SubDeck does not do:
@@ -187,6 +192,7 @@ What SubDeck does not do:
 - **Protected resources are matched by text.** The guard sees `localhost:8080`, `--port 8080`, a listed host, or `kill`/`pkill` of a listed process name in the command itself. It does not see values in variables, ports set inside scripts or config files, a test runner that picks the port itself, or a plain `kill <pid>`. Tell agents in the task which resources are off limits and use a lock file for shared ones.
 - **The report watchdog checks the shape, not the truth.** A reply with a `Stop:` and `Tested:` line passes even if the claim is wrong; that is what the verifier is for. The interrupted handoff covers uncommitted files in the task's writable paths (the whole repository if none are set), not work in other directories.
 - **Copilot CLI, Codex, Cursor, Antigravity, Gemini CLI and OpenCode are not live-tested.** Support is built from the official docs; see [what works per tool](docs/USER_GUIDE.md#3-install).
+- **Mapped roles are guarded unevenly.** SubDeck's guard hooks run inside headless Claude runs only. For Codex, Copilot, Gemini, OpenCode and Antigravity the safety net is the separate worktree, the writable-path check after the run and a push blocker, plus each tool's own restrictions; nothing stops such a tool from writing elsewhere while it runs. See the [coverage table](docs/runs.md#what-the-subdeck-guard-does-and-does-not-cover). The Antigravity profile is unverified.
 - **Desk reads local files only** and may estimate a state ("running", "idle") from file activity when a tool has no hooks.
 - **"Changed files" misses shell edits.** Only Write, Edit, MultiEdit and NotebookEdit calls are listed, not files written by shell commands.
 - **Weak or local models may narrate instead of launching agents.** The manager rulebook assumes a model that follows tool-use instructions.
@@ -195,7 +201,7 @@ What SubDeck does not do:
 
 ## Status
 
-v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 added notifications, guard rules and the Desk context-usage bar; v0.5 cut the commands to three; v0.6 added the Desk Settings tab, the branch-aware push guard and state outside the repository; v0.7 adds Tasks, the report watchdog, interrupted-work handoff, protected resources and typed test evidence. See the [CHANGELOG](CHANGELOG.md) for what changed in each release.
+v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 added notifications, guard rules and the Desk context-usage bar; v0.5 cut the commands to three; v0.6 added the Desk Settings tab, the branch-aware push guard and state outside the repository; v0.7 added Tasks, the report watchdog, interrupted-work handoff, protected resources and typed test evidence; the next release adds mapped roles (run a role on another CLI or model). See the [CHANGELOG](CHANGELOG.md) for what changed in each release.
 
 ## License
 
