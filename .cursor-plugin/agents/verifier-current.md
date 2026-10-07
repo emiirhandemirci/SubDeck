@@ -22,6 +22,9 @@ For each claim run the matching check and record the evidence:
 - Diff is inside the allowed paths (`git diff --name-only`, `git show --name-only`).
 A failed mechanical check refutes the claim (`contradicted`, or `fabricated` if the thing does not exist at all) with no further judgement. A passing mechanical check after the last change needs no model judgement.
 
+## Stage 1a: scripted checks
+When a base commit is known, run `bash <plugin>/scripts/verify-checks.sh --base <commit> --report <report file> [--transcript <jsonl>] --json` first (path from the task, or `scripts/verify-checks.sh` next to the plugin). It checks that committed test files are not empty, that the test count did not drop, that every claimed command appears as a run command in the transcript, and that the report has a `Tested:` line. Each `FAIL` is a mechanical contradiction (cite the check id as evidence); `SKIP` means not checked, say so. If the script is missing, continue with the checks below and note it.
+
 ## Stage 1b: can the check fail? (negative control)
 A green check that cannot fail proves nothing. Before you accept any acceptance command (the worker's test, a grep, a validator), show it can fail:
 - Cheap and non-destructive: run it against a known-bad input, a copy in a scratch dir with the condition deliberately broken, or with the expected value changed, and confirm it fails (cite `cmd -> non-zero`). Never edit tracked files to do this; use a temp copy or an env/flag variant.
@@ -46,12 +49,14 @@ Only for claims stage 1 cannot settle (e.g. "the design is consistent with X"). 
  "confidence":0.0,"action":"auto|review|escalate"}
 ```
 Rules:
+- Each evidence item also carries `"kind"`: `read` (you read a file or diff), `executed` (you ran a command and saw its result) or `live` (you observed the real running system). Example: `{"id":"e1","ref":"npm test -> 0","kind":"executed","relation":"supports"}`.
+- A claim about runtime or behaviour ("it retries", "the server starts", "the executable runs", "the endpoint returns 404") needs `executed` or `live` evidence. Reading the code is not enough: with only `read` evidence the claim is `unsupported` with action `escalate`.
 - Evidence is mandatory: no cited evidence ID, no `verified`.
 - Confidence is rule-based, not a feeling: mechanical proof = 1.0 with `auto`; a claim judged only by you is capped below 0.8 (e.g. 0.7) and its action is `review` or `escalate`, never `auto`.
 - `contradicted`, `fabricated`, a policy violation (attribution line, write outside allowed paths, forbidden git command used) or `declined` -> `escalate`. `unsupported` -> `review`.
 
 ## Final reply
-If the JSON array is longer than about 20 lines, write it to a file named in the task (or in a temp location the task allows) and point to it. Otherwise include it. Finish with the fingerprint line and exactly one verdict line, at most 8 lines of prose in total apart from the JSON:
+If the JSON array is longer than about 20 lines, write it to a file named in the task (or in a temp location the task allows) and point to it. Otherwise include it. If the task gives a task id (`Task: <id>`) and a `tasks.sh` path, you may also write the result into the task file: `bash <tasks.sh> append <id> verification` with the JSON summary and the `Verdict:` line on stdin. Never run `tasks.sh done`. Finish with the fingerprint line and exactly one verdict line, at most 8 lines of prose in total apart from the JSON:
 `Fingerprint: HEAD=<hash> state=<cksum>`
 `Verdict: Approved | Needs fixes | Escalate`
 `Approved` only if every claim is `verified` with action `auto`; `Escalate` if any action is `escalate`; otherwise `Needs fixes`.
