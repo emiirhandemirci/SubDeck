@@ -159,14 +159,20 @@ role_class() { # ROLE -> CLASS
     *) CLASS=worker ;;
   esac
 }
-all_roles() { # -> ROLE_LIST (fixed first, then free roles from any config, sorted)
-  local extra s r f v
-  extra="$(while IFS="$US" read -r s r f v; do
+# free_roles -> stdout: role names from the config rows that are valid and not fixed
+# (kept out of $(...): bash 3.2 misparses a case pattern's ")" inside a command substitution)
+free_roles() {
+  local s r f v
+  while IFS="$US" read -r s r f v; do
     [ -n "$r" ] || continue
     [[ $r =~ $ROLE_RE ]] || continue
     case " $FIXED_ROLES " in *" $r "*) continue ;; esac
     printf '%s\n' "$r"
-  done <<< "$CFG_ROWS" | sort -u)"
+  done <<< "$CFG_ROWS"
+}
+all_roles() { # -> ROLE_LIST (fixed first, then free roles from any config, sorted)
+  local extra
+  extra="$(free_roles | sort -u)"
   ROLE_LIST="$FIXED_ROLES $(printf '%s' "$extra" | tr '\n' ' ')"
 }
 
@@ -190,8 +196,9 @@ pget() { # tool field -> PV (tool value, else the "_" default, else "")
   if [ -n "$isset" ]; then eval "PV=\${PF____${2}}"; return 0; fi
   PV=""
 }
-sq() { # STR -> SQ (single-quoted for bash)
-  SQ="'${1//\'/\'\\\'\'}'"
+sq() { # STR -> SQ (single-quoted for bash); quotes via variables: bash 3.2 keeps backslashes of an escaped replacement
+  local q="'" r="'\\''"
+  SQ="'${1//$q/$r}'"
 }
 # subst TOKEN [quote] -> SUB: single left-to-right pass; inserted values are never scanned again
 subst() {
