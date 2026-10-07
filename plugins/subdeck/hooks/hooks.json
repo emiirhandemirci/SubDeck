@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"SubDeck is installed. When you delegate work or launch sub-agents, load the subdeck:orchestrator skill first and follow it (model policy, task template, git rules, pre-push checklist, push only after explicit user approval). User commands: /subdeck:desk, /subdeck:status, /subdeck:settings.\"}}'",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"SubDeck is installed. When you delegate work or launch sub-agents, load the subdeck:orchestrator skill first and follow it (model policy, task template, git rules, pre-push checklist, push only after explicit user approval). If a subdeck agent type is reported missing, tell the user once to run /reload-plugins or restart the tool; do not silently fall back. User commands: /subdeck:desk, /subdeck:status, /subdeck:settings.\"}}'",
             "shell": "bash",
             "timeout": 5
           }
@@ -39,6 +39,18 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.cmd\" notify hook agent",
             "shell": "bash",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.cmd\" log-event StopFailure",
+            "shell": "bash",
+            "timeout": 20
           }
         ]
       }

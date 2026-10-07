@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Append one JSON line per subagent event to <state>/events.jsonl, where <state> is the project's state dir
 # outside the project (~/.subdeck/projects/<key>/, see lib-paths.sh; SUBDECK_STATE_DIR overrides the root).
-# Usage: log-event.sh <SubagentStart|SubagentStop>   (hook payload on stdin)
+# Usage: log-event.sh <SubagentStart|SubagentStop|StopFailure|...>   (hook payload on stdin)
+# After SubagentStart/SubagentStop/StopFailure it also runs `tasks.sh hook <event>` (task status, report check,
+# interrupted handoff; skipped when SUBDECK_TASKS=0). Other kinds (report_missing, task_*) are only logged.
 # No jq/node needed. Uses an mkdir lock; if not acquired in ~5 s, writes the event
 # lock-free to <state>/events.d/<ts>-<pid>-<rand>.json (never dropped). Always exits 0.
 # Envelope lifts agent_id, agent_type, transcript_path, session_id to the top level.
@@ -28,6 +30,14 @@ DIR="$SD_STATE"
 LOCK="$DIR/events.lock"
 mkdir -p "$DIR" 2>/dev/null || exit 0
 
+# task hook: same payload, after the event is safely logged and the events lock is released
+dispatch_tasks() {
+  case "$EVENT" in SubagentStart|SubagentStop|StopFailure) ;; *) return 0 ;; esac
+  [ "${SUBDECK_TASKS:-}" = 0 ] && return 0
+  [ -f "$HERE/tasks.sh" ] || return 0
+  printf '%s' "$PAYLOAD" | bash "$HERE/tasks.sh" --project "$PROJECT" hook "$EVENT" >/dev/null 2>&1
+  return 0
+}
 log_err() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$DIR/hook-errors.log" 2>/dev/null; }
 
 COMPACT="$(printf '%s' "$PAYLOAD" | tr -d '\r\n')"
@@ -88,6 +98,7 @@ while :; do
     else
       log_err "fallback write failed for $EVENT; event dropped"
     fi
+    dispatch_tasks
     exit 0
   fi
   sleep 0.05
@@ -95,4 +106,5 @@ done
 
 printf '%s\n' "$LINE" >> "$DIR/events.jsonl" 2>/dev/null || log_err "append failed for $EVENT"
 release
+dispatch_tasks
 exit 0

@@ -41,9 +41,21 @@ if command -v node >/dev/null 2>&1; then
   jt "$CO" 'Object.values(j.hooks).every(a=>a.every(h=>h.type==="command"&&h.bash&&h.powershell&&h.timeoutSec>0&&h.bash.includes("__ROOT__")&&h.powershell.includes("__ROOT__")))'; chk "copilot hooks: bash + powershell + __ROOT__ everywhere" $?
   jt "$CO" 'j.hooks.PreToolUse[0].env.SUBDECK_TOOL==="copilot" && /Bash/.test(j.hooks.PreToolUse[0].matcher)'; chk "copilot guard sets SUBDECK_TOOL=copilot" $?
   jt "$PL/hooks/hooks.json" 'JSON.stringify(j).includes("CLAUDE_PLUGIN_ROOT") && !JSON.stringify(j).includes("SUBDECK_TOOL")'; chk "Claude hooks.json untouched by tool variants" $?
+  jt "$PL/hooks/hooks.json" 'j.hooks.StopFailure[0].hooks[0].command.includes("log-event StopFailure") && j.hooks.StopFailure[0].hooks[0].timeout===20 && j.hooks.StopFailure[0].hooks[0].shell==="bash"'; chk "hooks.json logs StopFailure through log-event" $?
+  for f in hooks.json codex-session-start.json copilot-session-start.json; do
+    grep -q 'run /reload-plugins or restart the tool; do not silently fall back' "$PL/hooks/$f"; chk "$f session text names /reload-plugins for a missing agent type" $?
+  done
 else
   echo "skip JSON structure tests (no node)"
 fi
+
+# ---------- task hooks reach Codex / Copilot payloads through log-event.sh ----------
+TP2="$T/taskproj"; mkdir -p "$TP2"
+TID="$(bash "$PL/scripts/tasks.sh" --project "$TP2" new "multi-tool job")"
+printf '{"hook_event_name":"SubagentStart","session_id":"s9","cwd":"%s","agent_id":"c1","agent_name":"worker-sonnet","prompt":"Task: %s"}' "$TP2" "$TID" | SUBDECK_TOOL=copilot bash "$PL/scripts/log-event.sh" SubagentStart
+[ "$(bash "$PL/scripts/tasks.sh" --project "$TP2" show "$TID" | sed -n 's/^status: //p')" = in-progress ]; chk "Copilot-style SubagentStart (agent_name, cwd only) moves the task to in-progress" $?
+printf '{"hook_event_name":"SubagentStop","session_id":"s9","cwd":"%s","agent_id":"c1","agent_name":"worker-sonnet","last_assistant_message":"ok\\nTested: not run (x)\\nStop: done"}' "$TP2" | SUBDECK_TOOL=codex bash "$PL/scripts/log-event.sh" SubagentStop
+[ "$(bash "$PL/scripts/tasks.sh" --project "$TP2" show "$TID" | sed -n 's/^status: //p')" = review ]; chk "Codex-style SubagentStop moves the task to review" $?
 
 # ---------- guard payload normalisation ----------
 G="$PL/scripts/guard.sh"

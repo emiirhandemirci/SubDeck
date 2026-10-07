@@ -15,6 +15,8 @@
 # Kinds: waiting (needs your input: permission_prompt, elicitation_dialog, agent_needs_input), done (manager turn
 #   finished), agent (a sub-agent finished; skipped when agent_type or the transcript path is empty), idle (Notification
 #   idle_prompt, an idle reminder, not a question; routed here by hooks.json, label "idle").
+#   tasks.sh also calls `hook waiting` with notification_type report_missing | task_interrupted (reason "agent <type>
+#   stopped without a report" / "agent <type> interrupted"); the kind stays waiting and the collapse rules apply.
 # Noise control: per session (payload session_id) at most one toast per 10 s (env SUBDECK_NOTIFY_COLLAPSE=seconds,
 #   0 disables). Priority waiting > done > agent > idle: a toast of equal or lower priority inside the window is
 #   collapsed (not shown) and logged with the method "collapsed"; a higher priority one still shows. State: <state>/notify.last.
@@ -249,7 +251,16 @@ case "$CMD" in
     case ",$EV," in *",$KIND,"*) ;; *) exit 0 ;; esac
     PD="${PROJECT%/}"; clean "${PD##*/}"; NAME="$CLEAN"; [ -n "$NAME" ] || NAME="project"
     case "$KIND" in
-      waiting) REASON="needs your input" ;;
+      waiting)
+        REASON="needs your input"
+        # synthetic payloads from tasks.sh (kind stays waiting): the watchdog and the interrupted handoff
+        case "$NTYPE" in
+          report_missing|task_interrupted)
+            AT=""
+            if [[ "$PAYLOAD" =~ \"agent_type\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then clean "${BASH_REMATCH[1]}"; AT="$CLEAN"; fi
+            if [ "$NTYPE" = report_missing ]; then REASON="agent${AT:+ $AT} stopped without a report"
+            else REASON="agent${AT:+ $AT} interrupted"; fi ;;
+        esac ;;
       idle) REASON="idle, waiting for you" ;;
       done) REASON="finished" ;;
       agent)

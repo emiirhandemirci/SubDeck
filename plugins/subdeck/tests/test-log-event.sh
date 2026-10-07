@@ -129,5 +129,24 @@ echo '{"agent_id":"n2"}' | CLAUDE_PROJECT_DIR="$P2" bash "$SCRIPT" SubagentStart
 case "$D" in "$SUBDECK_STATE_DIR"/*) ok "state dir is under SUBDECK_STATE_DIR" ;; *) bad "state dir $D" ;; esac
 rm -rf "$P" "$P2" "$D"
 
+# 9. StopFailure is logged like the other kinds; task hook dispatch
+P="$(newproj)"; D="$(sd "$P")"
+echo '{"hook_event_name":"StopFailure","session_id":"s1","error_type":"rate_limit"}' | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" StopFailure
+check "$(allparse "$D/events.jsonl")" "1/1" "StopFailure line parses"
+check "$(sed -n 's/.*"event":"\([A-Za-z_]*\)".*/\1/p' "$D/events.jsonl")" "StopFailure" "StopFailure event name logged"
+TSH="$HERE/../scripts/tasks.sh"
+TID="$(bash "$TSH" --project "$P" new "dispatch")"
+echo "{\"hook_event_name\":\"SubagentStart\",\"session_id\":\"s1\",\"agent_id\":\"d1\",\"agent_type\":\"worker-sonnet\",\"prompt\":\"Task: $TID\"}" | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" SubagentStart
+check "$(bash "$TSH" --project "$P" show "$TID" | sed -n 's/^status: //p')" "in-progress" "SubagentStart dispatches to tasks.sh hook"
+check "$(grep -c '"event":"task_status"' "$D/events.jsonl")" "1" "task_status event logged (and not dispatched again)"
+TID2="$(bash "$TSH" --project "$P" new "optout")"
+echo "{\"hook_event_name\":\"SubagentStart\",\"session_id\":\"s1\",\"agent_id\":\"d2\",\"agent_type\":\"worker-sonnet\",\"prompt\":\"Task: $TID2\"}" | SUBDECK_TASKS=0 CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" SubagentStart
+check "$(bash "$TSH" --project "$P" show "$TID2" | sed -n 's/^status: //p')" "open" "SUBDECK_TASKS=0 skips the dispatch"
+echo "{\"hook_event_name\":\"Notification\",\"agent_id\":\"d3\",\"prompt\":\"Task: $TID2\"}" | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" Notification
+check "$(bash "$TSH" --project "$P" show "$TID2" | sed -n 's/^status: //p')" "open" "other event kinds are not dispatched"
+echo '{"task":"x"}' | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" report_missing
+check "$(grep -c '"event":"report_missing"' "$D/events.jsonl")" "1" "synthetic kinds are logged with the same envelope"
+rm -rf "$P" "$D"
+
 echo "SUMMARY: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

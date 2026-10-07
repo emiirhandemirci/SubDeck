@@ -226,5 +226,22 @@ has "$out" '^enabled +true +project' "legacy key not in the new file still appli
 HOME="$LGH" SUBDECK_NOTIFY_DRYRUN= SUBDECK_NOTIFY_OS=none bash "$N" test "$LG" >/dev/null 2>&1
 [ "$(ls -A "$LG/.subdeck")" = config.json ] && ok "nothing new in the project folder" || bad "project folder written: $(ls -A "$LG/.subdeck")"
 
+# tasks.sh synthetic notifications: kind stays waiting, reason names the agent
+TH="$(mktemp -d)"; mkdir -p "$TH/.subdeck"; echo '{"notify":{"enabled":true,"events":["waiting"]}}' > "$TH/.subdeck/config.json"
+tk() { printf '%s' "$1" | HOME="$TH" SUBDECK_NOTIFY_DRYRUN=1 SUBDECK_NOTIFY_OS=linux SUBDECK_NOTIFY_COLLAPSE=0 CLAUDE_PROJECT_DIR="$P" bash "$N" hook waiting; }
+out="$(tk '{"session_id":"s1","cwd":"/x","agent_type":"worker-sonnet","notification_type":"report_missing"}')"
+has "$out" "DRYRUN linux: notify-send 'SubDeck' 'my-proj: agent worker-sonnet stopped without a report'" "report_missing reason"
+out="$(tk '{"session_id":"s1","cwd":"/x","agent_type":"worker-sonnet","notification_type":"task_interrupted"}')"
+has "$out" "my-proj: agent worker-sonnet interrupted'" "task_interrupted reason"
+out="$(tk '{"session_id":"s1","cwd":"/x","notification_type":"task_interrupted"}')"
+has "$out" "my-proj: agent interrupted'" "task_interrupted without an agent type"
+out="$(tk '{"session_id":"s1","notification_type":"permission_prompt"}')"
+has "$out" "my-proj: needs your input'" "ordinary waiting text unchanged"
+out="$(printf '%s' '{"session_id":"s1","agent_type":"worker-sonnet","notification_type":"report_missing"}' | HOME="$TH" SUBDECK_NOTIFY_DRYRUN=1 SUBDECK_NOTIFY_OS=linux CLAUDE_PROJECT_DIR="$P" bash "$N" hook done)"
+hasnt "$out" "stopped without a report" "the reason applies to the waiting kind only"
+printf '{"notify":{"enabled":true,"events":["done"]}}' > "$TH/.subdeck/config.json"
+out="$(tk '{"session_id":"s1","agent_type":"worker-sonnet","notification_type":"report_missing"}')"
+[ -z "$out" ] && ok "report_missing respects the events list" || bad "report_missing ignored the events list: $out"
+
 echo "passed $PASS, failed $FAIL"
 [ $FAIL -eq 0 ]
