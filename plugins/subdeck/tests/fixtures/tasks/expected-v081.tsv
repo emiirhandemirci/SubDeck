@@ -1,0 +1,4 @@
+id	auto	pack	grants	covers	verdict
+t-3c3c	true				
+t-4d4d	false	w1	docs/x.md	t-4d4d,t-4e4e	Approved
+t-4e4e	false	w1		t-4d4d,t-4e4e	Needs fixes

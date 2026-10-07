@@ -7,3 +7,6 @@ t-0e05	review		src/e.js	false	false
 t-0f06	done			true	false
 t-1a1a	open	t-0a01,t-0b02	a.txt,b.txt	false	true
 t-2b2b	review		src/run.js	false	false
+t-3c3c	in-progress			false	false
+t-4d4d	review		src/d.js	false	false
+t-4e4e	review		src/e2.js	false	false
