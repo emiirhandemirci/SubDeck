@@ -77,7 +77,7 @@ grep -Eq '^[0-9]+ running=1 ' "$PCS/statusline.cache" && ok "cache: format '<epo
 ev "$(isoat -99)" SubagentStart r2rrrrrr "$T/s1.jsonl" >> "$PCS/events.jsonl"
 eq "$(cj)" "SubDeck ● 1 running" "cache: warm run reuses the old counts"
 eq "$(NO_COLOR=1 SUBDECK_STATUSLINE_TTL=0 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PC\"}}")" "SubDeck ● 2 running" "cache: TTL=0 bypasses it"
-sed "s/^[0-9]* /1 /" "$PCS/statusline.cache" > "$PCS/sc.tmp" && mv "$PCS/sc.tmp" "$PCS/statusline.cache"
+sed 's/^[0-9]* /1 /' "$PCS/statusline.cache" > "$PCS/sc.tmp" && mv "$PCS/sc.tmp" "$PCS/statusline.cache"
 eq "$(cj)" "SubDeck ● 2 running" "cache: expired entry is recomputed"
 [ "$(ls "$PCS" | grep -c 'statusline.cache\.')" = 0 ] && ok "cache: no tmp leftovers" || bad "cache: tmp leftovers"
 printf 'junk' > "$PCS/statusline.cache"
@@ -93,7 +93,8 @@ mkdir -p "$PMS"; ev "$(isoat -99)" SubagentStart r2rrrrrr "$T/s1.jsonl" > "$PMS/
 eq "$(NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PM\"}}")" "SubDeck ● 2 running" "legacy and state-dir events merged"
 [ "$(ls -A "$PM/.subdeck")" = events.jsonl ] && ok "nothing written into the project" || bad "project written: $(ls -A "$PM/.subdeck")"
 E2="$(mktemp -d)"; mkdir -p "$(sd "$E2")"; ev "$(isoat -100)" SubagentStart r1rrrrrr "$T/s1.jsonl" > "$(sd "$E2")/events.jsonl"
-eq "$(NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$E\",\"project_dir\":\"$E2\"}}")" "SubDeck ● 1 running" "candidate with a state dir wins"
+J2="{\"workspace\":{\"current_dir\":\"$E\",\"project_dir\":\"$E2\"}}"   # in a variable: bash 3.2 splits this here-string inside $(...)
+eq "$(NO_COLOR=1 bash "$SL" <<<"$J2")" "SubDeck ● 1 running" "candidate with a state dir wins"
 rm -rf "$PM" "$PMS" "$E2" "$(sd "$E2")"
 
 # speed: cold (cache off) and warm (cache on) with 20 and 200 agents (info only unless SUBDECK_PERF_STRICT=1)
