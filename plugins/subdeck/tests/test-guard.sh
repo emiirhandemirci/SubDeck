@@ -603,6 +603,190 @@ out="$(run branches '')"; has "$out" 'error: usage: branches' "cli branches reje
 out="$(run branches 'staging' --project)"; has "$out" '^protectBranches \(project\): staging' "cli branches --project"
 out="$(run reset)"; grep -q protectBranches "$H/.subdeck/config.json" 2>/dev/null && bad "reset kept protectBranches" || ok "reset drops protectBranches"
 rm -f "$UC" "$PC"
+# ---- protected-resources (inactive until guard.protectPorts/Hosts/Procs has an entry) ----
+rm -f "$UC" "$PC"
+expect allow 'curl http://localhost:8080/health' "protected-resources inactive without lists"
+RES_CFG='{"guard":{"protectPorts":["8080","9000"],"protectHosts":["staging.example","10.0.0.5"],"protectProcs":["redis","node"]}}'
+cfg "$UC" "$RES_CFG"
+# want <TAB> tool <TAB> command ; every ask row is also run against a guard without the rule (negative control below)
+RES_TABLE="$(cat <<'TABLE'
+ask	Bash	curl http://localhost:8080/health
+ask	Bash	curl 'http://127.0.0.1:8080'
+ask	Bash	curl "http://LOCALHOST:8080/x"
+ask	Bash	wget http://0.0.0.0:9000
+ask	Bash	curl http://[::1]:8080/
+ask	Bash	curl "http://[::]:8080"
+ask	Bash	curl localhost:"8080"/x
+ask	Bash	curl localhost\:8080
+ask	Bash	npm start -- --port 8080
+ask	Bash	vite --port=8080
+ask	Bash	PORT=8080 npm start
+ask	Bash	env PORT=8080 node server.js
+ask	Bash	export DEV_PORT=9000
+ask	Bash	docker run -p 8080:80 img
+ask	Bash	docker run -p 3000:8080 img
+ask	Bash	docker run -p 8080 img
+ask	Bash	docker run -p 127.0.0.1:8080:80 img
+ask	Bash	lsof -i :8080
+ask	Bash	lsof -i:9000
+ask	Bash	lsof -iTCP:8080 -sTCP:LISTEN
+ask	Bash	fuser 8080/tcp
+ask	Bash	fuser -k 9000/tcp
+ask	Bash	ssh deploy@staging.example
+ask	Bash	curl https://staging.example:8443/api
+ask	Bash	scp f.txt user@STAGING.example:/tmp/
+ask	Bash	git clone git@staging.example:org/repo.git
+ask	Bash	ping -c 1 staging.example.
+ask	Bash	psql -h 10.0.0.5 -U app
+ask	Bash	pkill redis
+ask	Bash	pkill -9 redis
+ask	Bash	pkill -HUP -x redis
+ask	Bash	pkill -u redis node
+ask	Bash	killall REDIS
+ask	Bash	kill $(pgrep redis)
+ask	Bash	kill -9 `pidof node`
+ask	Bash	fuser -k /usr/local/bin/redis
+ask	Bash	sudo -u root pkill redis
+ask	Bash	timeout 5 killall node
+ask	Bash	nohup env -u X pkill -f redis
+ask	Bash	echo ok && pkill node
+ask	Bash	make build; curl -s localhost:9000 | jq .
+ask	Bash	bash -c "pkill redis"
+ask	Bash	sh -c 'curl localhost:8080'
+ask	Bash	eval "curl localhost:8080"
+ask	Bash	x=$(curl -s localhost:8080)
+ask	Bash	echo "$(lsof -i :8080)"
+ask	PowerShell	Stop-Process -Name redis
+ask	PowerShell	Stop-Process -Name:redis -Force
+ask	PowerShell	Stop-Process -n mongo,redis
+ask	PowerShell	spps -Name REDIS.exe
+ask	PowerShell	kill -Name node
+ask	PowerShell	taskkill /F /IM redis.exe
+ask	PowerShell	taskkill /im node.exe /t
+ask	PowerShell	cmd /c "taskkill /IM redis.exe /F"
+ask	PowerShell	Invoke-WebRequest -Uri http://localhost:8080/health
+ask	PowerShell	Invoke-RestMethod "https://staging.example/api"
+ask	PowerShell	$env:PORT=8080; npm start
+ask	PowerShell	Test-NetConnection -ComputerName staging.example -Port 443
+allow	Bash	mkdir -p build
+allow	Bash	mkdir -p 8080-logs
+allow	Bash	ssh -p 2222 deploy@other.example
+allow	Bash	ssh -p 22 host
+allow	Bash	cp -p a b
+allow	Bash	docker run -p 3000:80 img
+allow	Bash	docker run -p 18080:80 img
+allow	Bash	curl http://localhost:3000
+allow	Bash	curl localhost:80801
+allow	Bash	curl localhost:18080
+allow	Bash	curl http://mylocalhost:8080
+allow	Bash	curl http://staging.example.org/
+allow	Bash	curl http://notstaging.example/
+allow	Bash	ls staging.example.d/
+allow	Bash	pkill redis-server
+allow	Bash	kill 1234
+allow	Bash	kill -9 4242
+allow	Bash	pgrep -u redis python
+allow	Bash	echo 8080
+allow	Bash	grep -rn 8080 src
+allow	Bash	SUPPORT=8080 make
+allow	Bash	app --portal 8080
+allow	Bash	python -m http.server 8000
+allow	Bash	npm test
+allow	PowerShell	Stop-Process -Id 4242
+allow	PowerShell	Stop-Process -Name notepad
+allow	PowerShell	taskkill /IM notepad.exe
+allow	PowerShell	Get-ChildItem -Path C:\src
+TABLE
+)"
+while IFS=$'\t' read -r want tool cmd; do
+  [ -n "$want" ] || continue
+  TOOL="$tool" expect "$want" "$cmd" "protected-resources ($tool): $cmd"
+done <<< "$RES_TABLE"
+# neutral message naming the resource and the list
+out="$(msg 'curl localhost:8080')"
+has "$out" 'SubDeck guard \(protected-resources\): this command uses port 8080, listed in guard.protectPorts; get the user.s approval first and leave it as you found it\.' "message names the port and the list"
+has "$(msg 'ssh staging.example')" 'uses host staging.example, listed in guard.protectHosts' "message names the host"
+has "$(msg 'pkill redis')" 'uses process redis, listed in guard.protectProcs' "message names the process"
+has "$out" 'To change this rule: /subdeck:settings set protected-resources=deny\|off' "message tells how to change the rule"
+printf '%s' "$out" | grep -Eqi 'other agents|forbidden|never' && bad "protected-resources message is not neutral" || ok "protected-resources message is neutral"
+cx="$(bash_json 'pkill redis' | SUBDECK_TOOL=codex HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+has "$cx" '"permissionDecision":"deny".*Ask the user for approval first.*protected-resources' "codex: protected resource becomes ask-first deny"
+expect deny 'git push -f && curl localhost:8080' "deny of another rule still wins over this ask"
+# modes, precedence, robustness
+cfg "$UC" '{"guard":{"rules":{"protected-resources":"deny"},"protectPorts":["8080"]}}'
+expect deny  'curl localhost:8080' "protected-resources=deny"
+cfg "$UC" '{"guard":{"rules":{"protected-resources":"off"},"protectPorts":["8080"]}}'
+expect allow 'curl localhost:8080' "protected-resources=off"
+cfg "$UC" '{"guard":{"protectPorts":["8080"],"protectProcs":["redis"]}}'
+cfg "$PC" '{"guard":{"protectPorts":["9000"]}}'
+expect allow 'curl localhost:8080' "project protectPorts replaces the user list"
+expect ask   'curl localhost:9000' "project protectPorts applies"
+expect ask   'pkill redis' "user protectProcs still applies (lists are replaced one by one)"
+cfg "$PC" '{"guard":{"protectPorts":[]}}'
+expect allow 'curl localhost:8080' "empty project list clears the user list"
+rm -f "$PC"
+cfg "$UC" '{"guard":{"protectPorts":[8080,"abc","70000","0",""],"protectHosts":["bad host","ok.example"],"protectProcs":["a/b","redis.EXE"]}}'
+expect ask   'curl localhost:8080' "numeric JSON port accepted"
+expect allow 'curl localhost:70000' "out-of-range port ignored"
+expect ask   'curl https://ok.example' "valid host kept next to an invalid one"
+expect ask   'pkill redis' "process .exe suffix ignored in config"
+cfg "$UC" '{"guard":{"protectPorts":["8080"],'
+expect allow 'curl localhost:8080' "broken config: fail open (no lists)"
+cfg "$UC" "$RES_CFG"
+got="$(bash_json 'pkill redis' | SUBDECK_GUARD=0 HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+[ -z "$got" ] && ok "SUBDECK_GUARD=0 disables protected-resources" || bad "SUBDECK_GUARD=0 output: $got"
+cfg "$UC" "$(printf '%s' "$RES_CFG" | sed 's/{"guard":{/{"guard":{"enabled":false,/')"
+expect allow 'pkill redis' "guard.enabled=false disables protected-resources"
+# negative controls: the ask rows above come from this rule; without it (mode off, or a guard with the
+# rule's two call sites removed) every one of them is allowed, so the table would fail
+cfg "$UC" "$RES_CFG"
+MUT="$(mktemp -d)"; cp "$HERE/../scripts/"*.sh "$MUT/"
+grep -v 'if (PRON) pr_' "$G" > "$MUT/guard.sh"
+[ "$(grep -c 'if (PRON) pr_' "$G")" -eq 2 ] && ok "negative control: mutant drops both call sites" || bad "negative control: call sites changed"
+n_ask=0; n_mut=0; n_off=0
+while IFS=$'\t' read -r want tool cmd; do
+  [ "$want" = ask ] || continue
+  n_ask=$((n_ask+1))
+  pl="$(TOOL="$tool" bash_json "$cmd")"
+  [ -z "$(printf '%s' "$pl" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$MUT/guard.sh")" ] && n_mut=$((n_mut+1))
+done <<< "$RES_TABLE"
+cfg "$UC" "$(printf '%s' "$RES_CFG" | sed 's/{"guard":{/{"guard":{"rules":{"protected-resources":"off"},/')"
+while IFS=$'\t' read -r want tool cmd; do
+  [ "$want" = ask ] || continue
+  pl="$(TOOL="$tool" bash_json "$cmd")"
+  [ -z "$(printf '%s' "$pl" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")" ] && n_off=$((n_off+1))
+done <<< "$RES_TABLE"
+[ "$n_mut" -eq "$n_ask" ] && ok "negative control: all $n_ask ask rows allowed by the guard without the rule" || bad "negative control: only $n_mut of $n_ask allowed without the rule"
+[ "$n_off" -eq "$n_ask" ] && ok "negative control: all $n_ask ask rows allowed with protected-resources=off" || bad "negative control: only $n_off of $n_ask allowed when off"
+rm -rf "${MUT:?}"
+# CLI: ports / hosts / procs
+rm -f "$UC" "$PC"
+cfg "$UC" '{"modelPolicy":{"worker":"opus"},"guard":{"rules":{"attribution":"deny","future-rule":"ask"},"protectedPaths":["CLAUDE.md"]}}'
+out="$(run ports '8080, 09000,8080')"
+has "$out" '^protectPorts \(user\): 8080,9000$' "cli ports: normalised, deduplicated"
+grep -q '"protectPorts":\["8080","9000"\]' "$UC" && ok "cli ports writes an array of strings" || bad "ports file: $(cat "$UC")"
+out="$(run hosts 'staging.example,10.0.0.5')"; has "$out" '^protectHosts \(user\): staging.example,10.0.0.5' "cli hosts"
+out="$(run procs 'redis,node.exe')"; has "$out" '^protectProcs \(user\): redis,node' "cli procs"
+grep -q '"protectedPaths":\["CLAUDE.md"\]' "$UC" && grep -q '"future-rule":"ask"' "$UC" && grep -q '"modelPolicy":{"worker":"opus"}' "$UC" && grep -q '"protectHosts"' "$UC" && grep -q '"protectProcs":\["redis","node.exe"\]' "$UC" \
+  && ok "cli lists keep every other member" || bad "cli lists damaged config: $(cat "$UC")"
+out="$(run set history-rewrite=deny)"; grep -q '"protectPorts":\["8080","9000"\]' "$UC" && ok "set keeps protectPorts" || bad "set lost protectPorts"
+out="$(run protect 'a.txt')"; grep -q '"protectHosts":\["staging.example","10.0.0.5"\]' "$UC" && ok "protect keeps protectHosts" || bad "protect lost protectHosts"
+b4="$(cat "$UC")"
+out="$(run ports '8080,70000')"; has "$out" "error: invalid port '70000'" "cli ports rejects 70000"
+out="$(run ports '0')"; has "$out" "error: invalid port '0'" "cli ports rejects 0"
+out="$(run hosts 'a b')"; has "$out" "error: invalid host" "cli hosts rejects spaces"
+out="$(run hosts 'x/y')"; [ "$(cat "$UC")" = "$b4" ] && ok "cli hosts: a path-like word is not a list" || bad "cli hosts wrote x/y"
+out="$(run procs 'a;b')"; has "$out" "error: invalid process name" "cli procs rejects ;"
+[ "$(cat "$UC")" = "$b4" ] && ok "rejected lists write nothing" || bad "rejected list changed the file"
+out="$(run ports '')"; has "$out" '^protectPorts: \(none\)' "cli ports '' removes the list"
+grep -q protectPorts "$UC" && bad "empty ports list still written" || ok "empty ports list drops the member"
+out="$(run procs 'redis' --project)"; has "$out" '^protectProcs \(project\): redis$' "cli procs --project"
+has "$out" '^protected-resources +ask +default' "show lists the rule"
+if command -v node >/dev/null 2>&1; then
+  node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(!Array.isArray(j.guard.protectHosts))process.exit(1)' "$UC" && ok "config with lists is valid JSON" || bad "invalid JSON: $(cat "$UC")"
+fi
+out="$(run reset)"; grep -q 'protectHosts' "$UC" && bad "reset kept protectHosts" || ok "reset drops the lists"
+rm -f "$UC" "$PC"
 # ---- timing (best of N runs; strict limits only with SUBDECK_PERF_STRICT=1, generous otherwise) ----
 if [ "${SUBDECK_PERF_STRICT:-0}" = 1 ]; then LIM1=400; LIM2=1500; else LIM1=1500; LIM2=3000; fi
 best_ms() { # runs payload -> minimum wall ms
@@ -617,6 +801,11 @@ PAY="$(bash_json 'git add src/a.js && git commit -m "feat: x" -- src/a.js && git
 avg="$(best_ms 7 "$PAY")"
 echo "info: best hook time ${avg} ms (Bash payload)"
 [ "$avg" -lt "$LIM1" ] && ok "hook time under ${LIM1} ms (${avg} ms)" || bad "hook too slow: ${avg} ms"
+cfg "$UC" "$RES_CFG"
+RPAY="$(bash_json 'PORT=8080 npm start & sleep 2; curl -s http://localhost:3000/health | grep ok && pkill -f node-dev; ssh deploy@other.example uptime')"
+ms="$(best_ms 7 "$RPAY")"; echo "info: best hook time ${ms} ms (protected-resources lists configured)"
+[ "$ms" -lt "$LIM1" ] && ok "hook time with resource lists under ${LIM1} ms (${ms} ms)" || bad "hook with resource lists too slow: ${ms} ms"
+rm -f "$UC"
 BIG="$(head -c 300000 /dev/zero | tr '\0' 'a')"
 BPAY="$(printf '{"tool_name":"Write","cwd":"%s","tool_input":{"file_path":"%s/big.txt","content":"%s"}}' "$P" "$P" "$BIG")"
 ms="$(best_ms 3 "$BPAY")"; echo "info: 300 KB Write payload best ${ms} ms"

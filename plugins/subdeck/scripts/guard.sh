@@ -13,6 +13,8 @@
 #   guard.sh [cli] push <ask|branches|off> [--project]   push mode (default branches); branches <glob>[,<glob>] [--project]
 #       sets guard.protectBranches (default main,master,release/*)
 #   guard.sh [cli] protect <glob>[,<glob>] [--project]   add to guard.protectedPaths (unprotect <glob>[,..] removes)
+#   guard.sh [cli] ports|hosts|procs <item>[,<item>] [--project]   replace guard.protectPorts / protectHosts /
+#       protectProcs (an empty list removes the member); ports 1-65535, hosts [A-Za-z0-9._:-], procs [A-Za-z0-9._-]
 #   A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
 # Config: key "guard" in ~/.subdeck/config.json (user) and the project config (project wins), which is
 #   ~/.subdeck/projects/<key>/config.json (lib-paths.sh); a legacy <project>/.subdeck/config.json is still read
@@ -26,6 +28,14 @@
 #   * stays inside one segment, ** crosses segments; a match also covers everything below it.
 #   Checked: Write/Edit/MultiEdit/apply_patch targets, redirections (> >>), rm/mv/cp (destination)/tee/truncate/
 #   dd of=, sed -i, git rm/mv/restore/checkout -- <path>, PowerShell Remove-Item/Move-Item/Copy-Item.
+#   protected-resources (ask; active only when guard.protectPorts, protectHosts or protectProcs is non-empty; each
+#   project list replaces the user list): a guard rail for the user's live ports, hosts and processes. Seen in the
+#   command text only: localhost:P / 127.0.0.1:P / 0.0.0.0:P / [::1]:P / [::]:P (also inside URLs), --port P,
+#   --port=P, PORT=P, -p P / -p P:x / -p x:P (exactly these forms, so mkdir -p and ssh -p 22 stay quiet),
+#   lsof -i :P, fuser P/tcp; a word whose host part (after scheme://, user@, before :port or /) is a listed host;
+#   kill/pkill/killall/pgrep/pidof/fuser -k <name>, taskkill /IM <name>, Stop-Process -Name <name> (.exe ignored).
+#   Not seen: ports, hosts or names held in variables, scripts or config files, plain kill <pid>, and tools that
+#   take the port another way (python -m http.server 8080).
 # This is a guard rail, not a sandbox: it reads the command text only. Chains (&& || ; | & newline),
 #   quoting, $(...) and backticks (also inside double quotes), heredoc bodies (skipped), env assignments,
 #   sudo/doas/env/nice/time/timeout/stdbuf/xargs/nohup prefixes (with option arguments: sudo -u root), git -C/-c,
@@ -38,7 +48,7 @@
 #   editors, git checkout <branch> / stash / reset, and cp into a protected directory.
 # bash + awk only; one awk process per hook call.
 
-RULES="git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths"
+RULES="git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources"
 
 if [ $# -eq 0 ] || [ "$1" = hook ]; then
   case "$SUBDECK_GUARD" in 0|off|false|no|OFF|FALSE|NO) exit 0 ;; esac
@@ -94,6 +104,9 @@ function jval(path,  c, k, i, s, rk, vs, rv) {
   } else if (c == "[") {
     if (path == "/guard/protectedPaths") HASPP = 1
     if (path == "/guard/protectBranches") HASBR = 1
+    if (path == "/guard/protectPorts") HASRP = 1
+    if (path == "/guard/protectHosts") HASRH = 1
+    if (path == "/guard/protectProcs") HASRC = 1
     P++; jws(); if (substr(T, P, 1) == "]") { P++; return }
     i = 0
     while (1) {
@@ -106,18 +119,27 @@ function jval(path,  c, k, i, s, rk, vs, rv) {
     s = jstr(); if (JERR) return
     if (path ~ /^\/guard\/protectedPaths\/[0-9]+$/) { NPP++; PPRAW[NPP] = s; PPDEC[NPP] = jdec(s) }
     if (path ~ /^\/guard\/protectBranches\/[0-9]+$/) { NBR++; BRRAW[NBR] = s; BRDEC[NBR] = jdec(s) }
+    if (path ~ /^\/guard\/protect(Ports|Hosts|Procs)\/[0-9]+$/) reslist(path, s, jdec(s))
     if (path ~ WANT) { V[path] = jdec(s); if (HOOKPARSE && want_done()) STOP = 1 }
   } else {
     if (!match(substr(T, P), /^[-+0-9a-zA-Z.]+/)) { JERR = 1; return }
     s = substr(T, P, RLENGTH); P += RLENGTH
+    if (path ~ /^\/guard\/protectPorts\/[0-9]+$/) reslist(path, s, s)
     if (path ~ WANT) V[path] = s
   }
+}
+# protectPorts / protectHosts / protectProcs entries (raw JSON text and decoded value)
+function reslist(path, raw, dec) {
+  if (path ~ /Ports/) { NRP++; RPRAW[NRP] = raw; RPDEC[NRP] = dec }
+  else if (path ~ /Hosts/) { NRH++; RHRAW[NRH] = raw; RHDEC[NRH] = dec }
+  else { NRC++; RCRAW[NRC] = raw; RCDEC[NRC] = dec }
 }
 function want_done() {
   return ("/tool_name" in V) && ("/cwd" in V) && (("/tool_input/command" in V) || ("/tool_input/file_path" in V))
 }
 function jparse(text) {
   T = text; N = length(T); P = 1; JERR = 0; STOP = 0; split("", V); NRK = 0; NPP = 0; HASPP = 0; NBR = 0; HASBR = 0
+  NRP = 0; NRH = 0; NRC = 0; HASRP = 0; HASRH = 0; HASRC = 0
   jws(); if (substr(T, P, 1) != "{") return 0
   jval("")
   if (STOP) return 1
@@ -133,14 +155,15 @@ function slurp(f,  t, line, r) {
 
 # ---------- config ----------
 function initrules(  i, n, a) {
-  n = split("git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths", a, " ")
+  n = split("git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources", a, " ")
   NRULE = n
   for (i = 1; i <= n; i++) RID[i] = a[i]
   DEF["git-add-all"] = "deny"; DEF["force-push"] = "deny"; DEF["push"] = "branches"
-  DEF["history-rewrite"] = "ask"; DEF["rm-rf-danger"] = "deny"; DEF["secret-files"] = "ask"; DEF["attribution"] = "off"; DEF["protected-paths"] = "ask"
+  DEF["history-rewrite"] = "ask"; DEF["rm-rf-danger"] = "deny"; DEF["secret-files"] = "ask"; DEF["attribution"] = "off"; DEF["protected-paths"] = "ask"; DEF["protected-resources"] = "ask"
   for (i = 1; i <= n; i++) { MODE[RID[i]] = DEF[RID[i]]; SRC[RID[i]] = "default" }
   ENABLED = 1; ENSRC = "default"; NPL = 0; PLSRC = "default"
   NPB = 3; PB[1] = "main"; PB[2] = "master"; PB[3] = "release/*"; PBSRC = "default"
+  NPORT = 0; NHOST = 0; NPROC = 0; PORTSRC = "default"; HOSTSRC = "default"; PROCSRC = "default"
 }
 function isknown(id,  i) { for (i = 1; i <= NRULE; i++) if (RID[i] == id) return 1; return 0 }
 function cfgfile(f, src,  t, i, v, id) {
@@ -151,6 +174,10 @@ function cfgfile(f, src,  t, i, v, id) {
   CFGSTATE[src] = "ok"
   if (HASPP) { NPL = 0; for (i = 1; i <= NPP; i++) if (PPDEC[i] != "") PL[++NPL] = PPDEC[i]; PLSRC = src }
   if (HASBR) { NPB = 0; for (i = 1; i <= NBR; i++) if (BRDEC[i] != "") PB[++NPB] = BRDEC[i]; PBSRC = src }
+  # protected resources: invalid entries are ignored (a project list replaces the user list)
+  if (HASRP) { NPORT = 0; for (i = 1; i <= NRP; i++) { v = RPDEC[i]; if (v ~ /^[0-9]+$/ && v + 0 >= 1 && v + 0 <= 65535) PORTL[++NPORT] = (v + 0) "" }; PORTSRC = src }
+  if (HASRH) { NHOST = 0; for (i = 1; i <= NRH; i++) { v = tolower(RHDEC[i]); if (v ~ /^[a-z0-9._:-]+$/) HOSTL[++NHOST] = v }; HOSTSRC = src }
+  if (HASRC) { NPROC = 0; for (i = 1; i <= NRC; i++) { v = tolower(RCDEC[i]); sub(/\.exe$/, "", v); if (v ~ /^[a-z0-9._-]+$/) PROCL[++NPROC] = v }; PROCSRC = src }
   for (i = 1; i <= NRK; i++) if (!isknown(RKD[i])) UNK = UNK (UNK == "" ? "" : ", ") RKD[i] " (" src ")"
   if ("/guard/enabled" in V) {
     v = tolower(V["/guard/enabled"])
@@ -513,6 +540,7 @@ function prot_cmd(cmd, d, id, k, nw,  i, x, sc, inplace, svcur, dd) {
 function seg(d, id,  nw, k, x, cmd, j, str) {
   nw = WC[d, id]; k = 1
   if (PPON) for (j = 1; j <= RN[d, id]; j++) pp_check(RD[d, id, j], 0)
+  if (PRON) pr_words(d, id, nw)
   while (k <= nw) {
     x = W[d, id, k]
     if (x ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { k++; continue }
@@ -532,6 +560,7 @@ function seg(d, id,  nw, k, x, cmd, j, str) {
   if (k > nw) return
   cmd = x; sub(/.*[\/\\]/, "", cmd); cmd = tolower(cmd); sub(/\.exe$/, "", cmd)
   if (PPON) prot_cmd(cmd, d, id, k + 1, nw)
+  if (PRON) pr_cmd(cmd, d, id, k + 1, nw)
   if (cmd == "git") git_seg(d, id, k + 1, nw)
   else if (PSM && cmd ~ /^(rm|remove-item|ri|del|erase|rd|rmdir)$/) ps_rm_seg(d, id, k + 1, nw)
   else if (PSM && cmd == "cmd") {
@@ -714,6 +743,119 @@ function secret_path(p,  b) {
   if (b ~ /^credentials.*\.json$/) return 1
   return 0
 }
+# ---------- protected resources (ports, hosts, processes from guard.protectPorts/Hosts/Procs) ----------
+function pr_prepare() {
+  PRON = (MODE["protected-resources"] != "off" && NPORT + NHOST + NPROC > 0)
+  NPFX = split("localhost: 127.0.0.1: 0.0.0.0: [::1]: [::]:", PFX, " ")
+}
+function pr_hit(what, list) { if (RESINFO == "") { RESINFO = what; RESLIST = list }; hit("protected-resources") }
+# s (lower case) contains <loopback prefix>p, not preceded by a letter/digit and not followed by a digit
+function port_in(s, p,  k, pf, t, i, b, a) {
+  for (k = 1; k <= NPFX; k++) {
+    pf = PFX[k] p; t = s
+    while ((i = index(t, pf)) > 0) {
+      b = (i > 1) ? substr(t, i - 1, 1) : ""; a = substr(t, i + length(pf), 1)
+      if (b !~ /[a-z0-9]/ && a !~ /[0-9]/) return 1
+      t = substr(t, i + 1)
+    }
+  }
+  return 0
+}
+# port forms in one word (prev = the word before it)
+function pr_port_word(x, prev,  lx, lp, j, p, eq, left) {
+  lx = tolower(x); lp = tolower(prev)
+  for (j = 1; j <= NPORT; j++) {
+    p = PORTL[j]
+    if (index(lx, p) == 0) continue
+    if (port_in(lx, p)) { pr_hit("port " p, "Ports"); return 1 }
+    if ((lp == "--port" || lp == "-port") && x == p) { pr_hit("port " p, "Ports"); return 1 }
+    if (prev == "-p" && (x == p || x ~ ("^" p ":[0-9]+$") || x ~ ("^[0-9]+:" p "$"))) { pr_hit("port " p, "Ports"); return 1 }
+    eq = index(x, "=")
+    if (eq > 1 && substr(x, eq + 1) == p) { left = substr(lx, 1, eq - 1); if (left ~ /(^|[-_:$])port$/) { pr_hit("port " p, "Ports"); return 1 } }
+  }
+  return 0
+}
+# host part of a word: after scheme://, after user@, before :port or /
+function pr_host_word(x,  h, i, auth, host, j) {
+  h = tolower(x)
+  if (h !~ /[a-z0-9]/) return 0
+  sub(/^[a-z][a-z0-9+.-]*:\/\//, "", h)
+  if ((i = index(h, "/")) > 0) h = substr(h, 1, i - 1)
+  if ((i = index(h, "?")) > 0) h = substr(h, 1, i - 1)
+  if ((i = index(h, "#")) > 0) h = substr(h, 1, i - 1)
+  while ((i = index(h, "@")) > 0) h = substr(h, i + 1)
+  auth = h
+  if (substr(auth, 1, 1) == "[") { i = index(auth, "]"); host = (i > 0) ? substr(auth, 2, i - 2) : auth }
+  else { i = index(auth, ":"); host = (i > 0) ? substr(auth, 1, i - 1) : auth }
+  sub(/\.$/, "", host)
+  for (j = 1; j <= NHOST; j++) if (host == HOSTL[j] || auth == HOSTL[j]) { pr_hit("host " HOSTL[j], "Hosts"); return 1 }
+  return 0
+}
+function pr_words(d, id, nw,  i) {
+  for (i = 1; i <= nw; i++) {
+    if (RESINFO != "") return
+    if (NPORT && pr_port_word(W[d, id, i], (i > 1) ? W[d, id, i - 1] : "")) return
+    if (NHOST && pr_host_word(W[d, id, i])) return
+  }
+}
+function pr_proc(x,  j) {
+  x = tolower(x); sub(/.*[\/\\]/, "", x); sub(/\.exe$/, "", x)
+  for (j = 1; j <= NPROC; j++) if (x == PROCL[j]) { pr_hit("process " PROCL[j], "Procs"); return 1 }
+  return 0
+}
+# non-option arguments of kill/pkill/killall/pgrep/pidof (sa: short options taking an argument, la: long ones)
+function pr_names(d, id, k, nw, sa, la,  i, x, j, len, dd) {
+  dd = 0
+  for (i = k; i <= nw; i++) {
+    x = W[d, id, i]
+    if (!dd && x == "--") { dd = 1; continue }
+    if (!dd && x ~ /^--/) { if (la != "" && x ~ la) i++; continue }
+    if (!dd && x ~ /^-./) {
+      if (x ~ /^-[0-9]+$/ || x ~ /^-[A-Z][A-Z0-9+-]+$/) continue
+      len = length(x)
+      for (j = 2; j <= len; j++) if (index(sa, substr(x, j, 1))) { if (j == len) i++; break }
+      continue
+    }
+    if (pr_proc(x)) return
+  }
+}
+function pr_cmd(cmd, d, id, k, nw,  i, x, n, v, a, na, j, t, kill) {
+  if (NPORT && cmd == "lsof") {
+    for (i = k; i <= nw; i++) {
+      t = tolower(W[d, id, i]); sub(/^-i/, "", t)
+      if (t ~ /^[]a-z0-9@.[]*:[0-9]+$/) { sub(/.*:/, "", t); for (j = 1; j <= NPORT; j++) if (t + 0 == PORTL[j] + 0) { pr_hit("port " PORTL[j], "Ports"); return } }
+    }
+  }
+  if (NPORT && cmd == "fuser") {
+    for (i = k; i <= nw; i++) {
+      t = tolower(W[d, id, i])
+      if (t ~ /^[0-9]+\/(tcp|udp)$/) { sub(/\/.*/, "", t); for (j = 1; j <= NPORT; j++) if (t + 0 == PORTL[j] + 0) { pr_hit("port " PORTL[j], "Ports"); return } }
+    }
+  }
+  if (!NPROC) return
+  if (cmd ~ /^(pkill|pgrep)$/) pr_names(d, id, k, nw, "dgGPstuUF", "^--(delimiter|pgroup|group|parent|session|terminal|euid|uid|pidfile|signal|ns|nslist)$")
+  else if (cmd == "killall") pr_names(d, id, k, nw, "suoync", "^--(signal|user|older-than|younger-than|ns|context)$")
+  else if (cmd == "pidof") pr_names(d, id, k, nw, "o", "^--omit-pid$")
+  else if (cmd == "taskkill") {
+    for (i = k; i < nw; i++) if (tolower(W[d, id, i]) ~ /^[\/-]im$/ && pr_proc(W[d, id, i + 1])) return
+  }
+  else if (cmd ~ /^(stop-process|spps)$/ || (PSM && cmd == "kill")) {
+    for (i = k; i <= nw; i++) {
+      x = W[d, id, i]
+      if (x !~ /^-[A-Za-z]/) continue
+      n = tolower(substr(x, 2)); sub(/:.*/, "", n)
+      if (index("name", n) != 1) continue
+      v = (index(x, ":") > 0) ? substr(x, index(x, ":") + 1) : W[d, id, ++i]
+      na = split(v, a, ","); for (j = 1; j <= na; j++) if (pr_proc(a[j])) return
+    }
+  }
+  else if (cmd == "kill") pr_names(d, id, k, nw, "sn", "^--signal$")
+  else if (cmd == "fuser") {
+    kill = 0
+    for (i = k; i <= nw; i++) { x = W[d, id, i]; if (x ~ /^-[a-zA-Z]+$/ && x ~ /k/) kill = 1 }
+    if (kill) pr_names(d, id, k, nw, "nmM", "^--namespace$")
+  }
+}
 function reason(id) {
   if (id == "git-add-all") return "SubDeck guard (git-add-all): staging everything at once (git add -A/--all/-u/., git commit -a) can pick up unrelated, generated or secret files. Stage explicit paths (git add <file> ...) and commit with a pathspec (git commit -m \"...\" -- <paths>)."
   if (id == "force-push") return "SubDeck guard (force-push): a force push rewrites remote history. Push without --force/-f/--force-with-lease/+refspec, or ask the user to run it by hand."
@@ -724,6 +866,7 @@ function reason(id) {
   if (id == "secret-files") return "SubDeck guard (secret-files): this file looks like a secret (.env, key, certificate, credentials); get the user\047s approval before writing it."
   if (id == "attribution") return "SubDeck guard (attribution): the commit message contains an attribution line (Co-Authored-By / Generated with); remove it and commit again."
   if (id == "protected-paths") return "SubDeck guard (protected-paths): " PPINFO "; this path is listed in guard.protectedPaths; get the user\047s approval before editing, moving or deleting it."
+  if (id == "protected-resources") return "SubDeck guard (protected-resources): this command uses " RESINFO ", listed in guard.protect" RESLIST "; get the user\047s approval first and leave it as you found it."
   return "SubDeck guard (" id ")"
 }
 function jesc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/\n/, "\\n", s); gsub(/\t/, " ", s); return s }
@@ -749,6 +892,7 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
   if (!ENABLED) return
   HOMEN = norm(ENVIRON["HOME"]); PROJN = norm(PROJ); CUR = norm(cwd); if (CUR == "") CUR = PROJN
   DENYID = ""; ASKID = ""; PUSHINFO = ""; split("", CB); COMMIT = 0; NOPRES = 0; PPINFO = ""; pp_prepare()
+  RESINFO = ""; RESLIST = ""; pr_prepare()
   if (tool == "Bash" || tool == "PowerShell") {
     if (cmd == "") return
     # PowerShell: backtick is the escape character (no command substitution), backslash is a plain path separator
@@ -776,6 +920,7 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
   for (pi = 1; pi <= np; pi++) if (pl[pi] != MODE[id]) pp = pp (pp == "" ? "" : "|") pl[pi]
   rs = reason(id) " To change this rule: /subdeck:settings set " id "=" pp
   if (id == "protected-paths") rs = rs " (or unprotect=<glob>)"
+  if (id == "protected-resources") rs = rs " (or change protect-ports=, protect-hosts=, protect-procs=)"
   if (id == "push" && MODE[id] == "branches") rs = rs " (or protect-branches=<glob>[,<glob>])"
   # Codex documents only deny for PreToolUse: an "ask" becomes a deny that tells the model to ask the user first
   if (dec == "ask" && ENVIRON["SUBDECK_TOOL"] == "codex") { dec = "deny"; rs = "Ask the user for approval first; retry only if they approve. " rs }
@@ -794,8 +939,8 @@ function do_show(  i, id, e) {
   e = ENVIRON["SUBDECK_GUARD"]
   printf "enabled: %s (%s)\n", ENABLED ? "yes" : "no", ENSRC
   if (e == "0" || e == "off" || e == "false" || e == "no") print "note: SUBDECK_GUARD=" e " in this environment disables the guard entirely"
-  printf "%-16s %-8s %s\n", "RULE", "MODE", "SOURCE"
-  for (i = 1; i <= NRULE; i++) { id = RID[i]; printf "%-16s %-8s %s\n", id, MODE[id], SRC[id] }
+  printf "%-19s %-8s %s\n", "RULE", "MODE", "SOURCE"
+  for (i = 1; i <= NRULE; i++) { id = RID[i]; printf "%-19s %-8s %s\n", id, MODE[id], SRC[id] }
   if (UNK != "") print "unknown (ignored): " UNK
   e = ""; for (i = 1; i <= NPL; i++) e = e (i > 1 ? "," : "") PL[i]
   if (NPL == 0) print "protectedPaths: (none)"
@@ -803,6 +948,12 @@ function do_show(  i, id, e) {
   e = ""; for (i = 1; i <= NPB; i++) e = e (i > 1 ? "," : "") PB[i]
   if (NPB == 0) print "protectBranches: (none)"
   else printf "protectBranches (%s): %s\n", PBSRC, e
+  e = ""; for (i = 1; i <= NPORT; i++) e = e (i > 1 ? "," : "") PORTL[i]
+  if (NPORT == 0) print "protectPorts: (none)"; else printf "protectPorts (%s): %s\n", PORTSRC, e
+  e = ""; for (i = 1; i <= NHOST; i++) e = e (i > 1 ? "," : "") HOSTL[i]
+  if (NHOST == 0) print "protectHosts: (none)"; else printf "protectHosts (%s): %s\n", HOSTSRC, e
+  e = ""; for (i = 1; i <= NPROC; i++) e = e (i > 1 ? "," : "") PROCL[i]
+  if (NPROC == 0) print "protectProcs: (none)"; else printf "protectProcs (%s): %s\n", PROCSRC, e
   print ""
   printf "user file:    %s (%s)\n", uf, CFGSTATE["user"]
   printf "project file: %s (%s)\n", pf, CFGSTATE["project"]
@@ -816,6 +967,9 @@ function do_dump(  t, i, id, v) {
   for (i = 1; i <= NRK; i++) if (!isknown(RKD[i])) print "unknown\t" RKR[i] "\t" RKV[i]
   for (i = 1; i <= NPP; i++) if (PPDEC[i] != "") print "protect\t" PPRAW[i]
   if (HASBR) { print "branches-set"; for (i = 1; i <= NBR; i++) if (BRDEC[i] != "") print "branch\t" BRRAW[i] }
+  if (HASRP) { print "res-set\tPorts"; for (i = 1; i <= NRP; i++) if (RPDEC[i] != "") print "res\tPorts\t" RPRAW[i] }
+  if (HASRH) { print "res-set\tHosts"; for (i = 1; i <= NRH; i++) if (RHDEC[i] != "") print "res\tHosts\t" RHRAW[i] }
+  if (HASRC) { print "res-set\tProcs"; for (i = 1; i <= NRC; i++) if (RCDEC[i] != "") print "res\tProcs\t" RCRAW[i] }
   if ("/guard/enabled" in V) {
     v = tolower(V["/guard/enabled"])
     if (v == "false" || v == "0" || v == "off" || v == "no") print "enabled false"
@@ -858,16 +1012,20 @@ fi
 
 # ---------- settings mode ----------
 [ "$1" = cli ] && shift
-CMD=""; SCOPE=user; PROJECT=""; PAIRS=(); BADARGS=(); PLIST=""; PADD=(); PDEL=()
+CMD=""; SCOPE=user; PROJECT=""; PAIRS=(); BADARGS=(); PLIST=""; PLSET=""; PADD=(); PDEL=()
 for a in "$@"; do
   a="${a%$'\r'}"
   # protect/unprotect take one positional glob list (a glob may look like a directory name)
+  # ports/hosts/procs: an empty list is valid (removes the member), so a path-like word is the project dir
+  case "$CMD" in ports|hosts|procs)
+    if [ -z "$PLIST" ] && [ -z "$PLSET" ] && [ -n "$a" ] && [[ "$a" != --* ]] && [[ "$a" != */* ]] && [[ "$a" != *\\* ]]; then PLIST="$a"; PLSET=1; continue; fi ;;
+  esac
   if { [ "$CMD" = protect ] || [ "$CMD" = unprotect ] || [ "$CMD" = push ] || [ "$CMD" = branches ]; } && [ -z "$PLIST" ] && [ -n "$a" ] && [[ "$a" != --* ]] && { { [ "$CMD" != push ] && [ "$CMD" != branches ]; } || { [[ "$a" != /* ]] && [[ "$a" != [A-Za-z]:* ]]; }; }; then PLIST="$a"; continue; fi
   case "$a" in
     "") ;;
     --project) SCOPE=project ;;
     --*) BADARGS+=("$a") ;;
-    show|set|on|off|reset|protect|unprotect|push|branches) if [ -z "$CMD" ]; then CMD="$a"; else BADARGS+=("$a"); fi ;;
+    show|set|on|off|reset|protect|unprotect|push|branches|ports|hosts|procs) if [ -z "$CMD" ]; then CMD="$a"; else BADARGS+=("$a"); fi ;;
     *=*) PAIRS+=("$a") ;;
     *) if [ -d "$a" ]; then PROJECT="$a"; else BADARGS+=("$a"); fi ;;
   esac
@@ -883,7 +1041,7 @@ if [ "$SCOPE" = project ]; then TARGET="$PFILE"; else TARGET="$UFILE"; fi
 
 show() {
   SD_GUARD_PF="$PFILE" SD_GUARD_LF="$LFILE" awk -v mode=show -v uf="$UFILE" "$GUARD_AWK" < /dev/null
-  echo "Usage: /subdeck:settings set guard=on|off <rule>=deny|ask|off protect=<glob>[,<glob>] unprotect=<glob> [--project] (low-level: guard.sh set push=off attribution=deny [--project] | on | off | reset | protect GLOBS | unprotect GLOBS)"
+  echo "Usage: /subdeck:settings set guard=on|off <rule>=deny|ask|off protect=<glob>[,<glob>] unprotect=<glob> [--project] (low-level: guard.sh set push=off attribution=deny [--project] | on | off | reset | protect GLOBS | unprotect GLOBS | ports|hosts|procs LIST)"
   echo "Modes: deny | ask | off. Env SUBDECK_GUARD=0 disables the guard for a session."
 }
 
@@ -931,12 +1089,13 @@ write_file() {
   echo "error: could not write $f"; return 1
 }
 
-BRREPLACE=0; BRNEW=()
+BRREPLACE=0; BRNEW=(); RESKIND=""; RESNEW=()
 valid_rule() { case " $RULES " in *" $1 "*) return 0 ;; esac; return 1; }
 
 # update ENABLED(true|false|keep) [rule=mode ...]: merge into TARGET's guard member.
 update() {
-  local TAB=$'\t' BRS=0 bl="" unk="" en="$1" cur others dump line en_cur="" rules="" id m kv g="" rj="" pl="" pitem pdup; local -a PPL=() BRL=()
+  local TAB=$'\t' BRS=0 bl="" unk="" en="$1" cur others dump line en_cur="" rules="" id m kv g="" rj="" pl="" pitem pdup rk rl
+  local RSP=0 RSH=0 RSC=0 RLP="" RLH="" RLC=""; local -a PPL=() BRL=()
   shift
   if ! others="$(members "$TARGET")"; then
     echo "error: $TARGET is not a valid JSON object; left untouched (fix or delete it by hand)."; return 1
@@ -951,6 +1110,9 @@ update() {
       protect$TAB*) PPL+=("${line#protect$TAB}") ;;
       branches-set) BRS=1 ;;
       branch$TAB*) BRL+=("${line#branch$TAB}") ;;
+      res-set$TAB*) case "${line#res-set$TAB}" in Ports) RSP=1 ;; Hosts) RSH=1 ;; Procs) RSC=1 ;; esac ;;
+      res$TAB*) line="${line#res$TAB}"; rk="${line%%$TAB*}"; line="\"${line#*$TAB}\""
+        case "$rk" in Ports) RLP="$RLP,$line" ;; Hosts) RLH="$RLH,$line" ;; Procs) RLC="$RLC,$line" ;; esac ;;
       *) IFS=' ' read -r a b c <<< "$line"; case "$a" in enabled) en_cur="$b" ;; rule) rules="$rules $b=$c" ;; esac ;;
     esac
   done <<< "$dump"
@@ -976,6 +1138,18 @@ update() {
   if [ $BRREPLACE -eq 1 ]; then for kv in "${BRNEW[@]}"; do bl="$bl,\"$kv\""; done; BRS=1
   else for kv in "${BRL[@]}"; do bl="$bl,\"$kv\""; done; fi
   [ $BRS -eq 1 ] && g="$g${g:+,}\"protectBranches\":[${bl#,}]"
+  # protect lists: kept as found unless this call replaces one (an empty replacement drops the member)
+  if [ -n "$RESKIND" ]; then
+    rl=""; for kv in "${RESNEW[@]}"; do rl="$rl,\"$kv\""; done
+    case "$RESKIND" in
+      ports) RLP="$rl"; RSP=0; [ -n "$rl" ] && RSP=1 ;;
+      hosts) RLH="$rl"; RSH=0; [ -n "$rl" ] && RSH=1 ;;
+      procs) RLC="$rl"; RSC=0; [ -n "$rl" ] && RSC=1 ;;
+    esac
+  fi
+  [ $RSP -eq 1 ] && g="$g${g:+,}\"protectPorts\":[${RLP#,}]"
+  [ $RSH -eq 1 ] && g="$g${g:+,}\"protectHosts\":[${RLH#,}]"
+  [ $RSC -eq 1 ] && g="$g${g:+,}\"protectProcs\":[${RLC#,}]"
   write_file "$TARGET" "$others" "{$g}" && echo "wrote $TARGET"
 }
 
@@ -1013,6 +1187,22 @@ case "$CMD" in
     done
     if [ $ERR -ne 0 ] || [ ${#BRNEW[@]} -eq 0 ]; then echo "error: usage: branches <glob>[,<glob>] [--project] (e.g. main,release/*); nothing written."; exit 0; fi
     BRREPLACE=1; update keep; echo; show ;;
+  ports|hosts|procs)
+    # a stray word (e.g. a path) must not turn into "empty list = remove"
+    if [ ${#BADARGS[@]} -gt 0 ]; then echo "error: usage: $CMD <item>[,<item>] [--project] (empty removes the list); nothing written."; exit 0; fi
+    ERR=0; IFS=',' read -ra ITEMS <<< "$PLIST"
+    for it in "${ITEMS[@]}"; do
+      it="${it#"${it%%[![:space:]]*}"}"; it="${it%"${it##*[![:space:]]}"}"
+      [ -n "$it" ] || continue
+      case "$CMD" in
+        ports) if [[ $it =~ ^[0-9]{1,5}$ ]] && [ $((10#$it)) -ge 1 ] && [ $((10#$it)) -le 65535 ]; then it=$((10#$it)); else echo "error: invalid port '$it' (1-65535)"; ERR=1; continue; fi ;;
+        hosts) [[ $it =~ ^[A-Za-z0-9._:-]+$ ]] || { echo "error: invalid host '$it' (letters, digits, . _ : -)"; ERR=1; continue; } ;;
+        procs) [[ $it =~ ^[A-Za-z0-9._-]+$ ]] || { echo "error: invalid process name '$it' (letters, digits, . _ -)"; ERR=1; continue; } ;;
+      esac
+      case " ${RESNEW[*]-} " in *" $it "*) ;; *) RESNEW+=("$it") ;; esac
+    done
+    if [ $ERR -ne 0 ]; then echo "nothing written."; exit 0; fi
+    RESKIND="$CMD"; update keep; echo; show ;;
   protect|unprotect)
     if [ -z "$PLIST" ]; then echo "error: $CMD needs a glob list, e.g. $CMD 'CLAUDE.md,migrations/**'"; exit 0; fi
     ERR=0; IFS=',' read -ra ITEMS <<< "$PLIST"
