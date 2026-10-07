@@ -386,8 +386,9 @@ cmd_new() {
   sanitize_title "$title"; title="$TITLE_OUT"
   [ -n "$title" ] || die 2 'usage: new "<title>" [--owner T] [--writable a,b] [--blocked-by t-x,t-y] [--task <text>|--task-file <f>] [--done-when <text>]'
   has_nl "$owner" && die 2 "owner must be one line"
-  parse_list "$writable"; writable="$LIST_OUT"; valid_list "$writable" || die 2 "writable items may not contain [ or ]"
   has_nl "$writable" && die 2 "writable must be one line"
+  has_nl "$blocked" && die 2 "blocked-by must be one line"
+  parse_list "$writable"; writable="$LIST_OUT"; valid_list "$writable" || die 2 "writable items may not contain [ or ]"
   parse_list "$blocked"; blocked="$LIST_OUT"; valid_ids "$blocked" || die 2 "blocked-by needs task ids (t-<hex>)"
   need_lock
   local h len cand tries=0

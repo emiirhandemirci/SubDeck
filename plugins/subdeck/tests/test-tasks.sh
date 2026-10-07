@@ -55,6 +55,10 @@ t new "" 2>/dev/null; check "$?" "2" "new with empty title exits 2"
 t new "x" --writable "a[1]" 2>/dev/null; check "$?" "2" "new rejects [ in list items"
 t new "x" --blocked-by "nope" 2>/dev/null; check "$?" "2" "new rejects non-id blocked-by"
 t new "x" --bogus 2>/dev/null; check "$?" "2" "new rejects unknown option"
+t new "x" --writable "a,ok
+b" 2>/dev/null; check "$?" "2" "new rejects a newline in writable (no silent truncation)"
+t new "x" --blocked-by "t-0a01
+t-0b02" 2>/dev/null; check "$?" "2" "new rejects a newline in blocked-by"
 check "$(ls "$ST/tasks" | wc -l)" "$BEFORE" "failed new wrote nothing"
 LT="$(t new "$(printf 'tab\there\r\nnl %0300d' 0)")"
 TT="$(t show "$LT" | sed -n 's/^title: //p')"
