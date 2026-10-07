@@ -70,7 +70,7 @@ check "$(field $T3 agent)" "a3" "agent set at stop"
 BODY="$(t show $T3)"
 has "$BODY" "final reply (worker-sonnet a3)" "final reply appended to Report"
 has "$BODY" "Tested: ran \`npm test\` -> 12 passed" "reply text decoded (newlines, backticks)"
-check "$(events task_status)" "4" "events: 1 + 1 + (open->in-progress, in-progress->review)"
+check "$(events task_status)" "5" "events: 1 + 1 + auto-bind of a3 + (open->in-progress, in-progress->review)"
 fire SubagentStop a3 worker-sonnet "$OKMSG"
 check "$(t show $T3 | grep -c 'final reply')" "1" "a repeated stop of the same agent changes nothing"
 
@@ -187,31 +187,31 @@ check "$(t show $T10 | sed -n 's/^status: //p')" "done" "archived done task igno
 N0="$(events task_status)"
 fire SubagentStart n1 worker-sonnet "" '"prompt":"Task: t-dead"'
 fire SubagentStop n1 worker-sonnet "$OKMSG" '"prompt":"Task: t-dead"'
-check "$(events task_status)" "$N0" "unknown task id: nothing happens"
+check "$(events task_status)" "$((N0 + 2))" "unknown task id: no task file for it, the agent is auto-bound instead (open->in-progress, in-progress->review)"
 ls "$TD" | grep -q 't-dead' && bad "no file created for an unknown id" || ok "no file created for an unknown id"
 
-# ---- 11. watchdog without a task ----
+# ---- 11. watchdog: agents with a task (auto-bind) are checked, others are not tracked ----
 N0="$(events report_missing)"; reset_notify
 fire SubagentStop wd1 worker-sonnet 'finished, bye'
-check "$(events report_missing)" "$((N0 + 1))" "worker stop without task and without report: report_missing"
-has "$(lastevent report_missing)" '"task":null' "task is null"
+check "$(events report_missing)" "$((N0 + 1))" "worker stop without report: report_missing (the agent was auto-bound)"
+has "$(lastevent report_missing)" '"task":"t-' "task is the auto task"
 has "$(notified)" "stopped without a report" "watchdog notifies"
 fire SubagentStop wd2 researcher 'found stuff\nStop: done'
 check "$(events report_missing)" "$((N0 + 1))" "researcher with Stop: line is fine"
 fire SubagentStop wd3 subdeck:researcher-current 'found stuff'
 check "$(events report_missing)" "$((N0 + 2))" "researcher without Stop: line is flagged (subdeck: prefix ok)"
 fire SubagentStop wd4 verifier 'ok'
-check "$(events report_missing)" "$((N0 + 3))" "verifier without Verdict is flagged"
+check "$(events report_missing)" "$((N0 + 2))" "verifier without a task is never tracked"
 fire SubagentStop wd5 Explore 'whatever'
-check "$(events report_missing)" "$((N0 + 3))" "other agent types without a task are not checked"
+check "$(events report_missing)" "$((N0 + 2))" "other agent types without a task are not checked"
 fire SubagentStop wd6 "" 'whatever'
-check "$(events report_missing)" "$((N0 + 3))" "phantom stop (no agent type) is not checked"
+check "$(events report_missing)" "$((N0 + 2))" "phantom stop (no agent type) is not checked"
 printf '{"tasks":{"reportCheck":false}}' > "$ST/config.json"
 fire SubagentStop wd7 worker-sonnet 'no report'
-check "$(events report_missing)" "$((N0 + 3))" "tasks.reportCheck=false silences the watchdog"
+check "$(events report_missing)" "$((N0 + 2))" "tasks.reportCheck=false silences the watchdog"
 T11="$(newtask)"; fire SubagentStart rc1 worker-sonnet "" "\"prompt\":\"Task: $T11\""
 fire SubagentStop rc1 worker-sonnet 'no report'
-check "$(field $T11 status) $(events report_missing)" "blocked $((N0 + 3))" "reportCheck=false: status logic unchanged, no event"
+check "$(field $T11 status) $(events report_missing)" "blocked $((N0 + 2))" "reportCheck=false: status logic unchanged, no event"
 rm -f "$ST/config.json"
 
 # ---- 12. opt-out, garbage, robustness ----
@@ -271,6 +271,112 @@ for i in $(seq 1 70); do echo x > "$P/many$i.txt"; done
 fire StopFailure c2 worker-sonnet "" '"error_type":"x"'
 check "$(t show $T14b | awk '/^uncommitted/{f=1;next} /^diff --stat/{f=0} f' | wc -l | tr -d ' ')" "50" "status part capped at 50 lines"
 has "$(t show $T14b)" "uncommitted (git status --porcelain):" "empty writable: whole repo header"
+
+# ---- 0.8.1: auto-bind, not tracked, report_too_long, quota ----
+export SUBDECK_METER=0
+rm -f "$ST/config.json"
+auto_of() { t list --all --tsv | awk -F'\t' -v a="$1" '$4 == a { print $1 }' | head -n 1; }
+printf '{"description":"Fix the parser\\nsecond line"}' > "$W/sessions/$SID/subagents/agent-ab1.meta.json"
+N0="$(events task_status)"
+fire SubagentStart ab1 subdeck:worker-sonnet ""
+TA="$(auto_of ab1)"
+[ -n "$TA" ] && ok "auto-bind: a task exists for the worker" || bad "auto-bind: no task"
+check "$(field $TA auto)" "true" "auto-bind: auto: true"
+check "$(field $TA status)" "in-progress" "auto-bind: in-progress"
+check "$(field $TA owner)" "worker-sonnet" "auto-bind: owner without subdeck:"
+check "$(field $TA session)" "$SID" "auto-bind: session recorded"
+check "$(field $TA transcript)" "$W/sessions/$SID/subagents/agent-ab1.jsonl" "auto-bind: transcript recorded"
+check "$(field $TA title)" "Fix the parser second line" "auto-bind: title from meta.json description (sanitized)"
+check "$(field $TA writable)" "[]" "auto-bind: empty writable"
+has "$(t show $TA)" "## Task" "auto-bind: body sections present"
+check "$(events task_status)" "$((N0 + 1))" "auto-bind: one task_status event"
+has "$(lastevent task_status)" '"from":"open","to":"in-progress","by":"hook","auto":true' "auto-bind: event carries auto:true"
+check "$(t list | grep -c "^$TA in-progress worker-sonnet \[auto\] Fix the parser")" "1" "auto task listed with the [auto] mark"
+fire SubagentStart ab1 subdeck:worker-sonnet ""
+check "$(t list --all --tsv | awk -F'\t' '$4 == "ab1"' | wc -l | tr -d ' ')" "1" "auto-bind: a repeated start creates no second task"
+fire SubagentStop ab1 subdeck:worker-sonnet "$OKMSG"
+check "$(field $TA status)" "review" "auto task follows the 0.7 transitions (-> review)"
+t done $TA; check "$?" "0" "done on an auto task needs no verdict"
+check "$(t show $TA | sed -n 's/^status: //p')" "done" "auto task archived"
+# title from the prompt, then the fallback
+fire SubagentStart ab2 worker-sonnet "" '"prompt":"Refactor the lexer\nand more"'
+check "$(field "$(auto_of ab2)" title)" "Refactor the lexer" "auto-bind: title from the first prompt line"
+fire SubagentStart ab3 researcher ""
+check "$(field "$(auto_of ab3)" title)" "researcher ab3" "auto-bind: fallback title <type> <id>"
+check "$(field "$(auto_of ab3)" owner)" "researcher" "auto-bind: researchers are bound too"
+# a fallback title is replaced at stop when the meta description exists
+printf '{"description":"Late title"}' > "$W/sessions/$SID/subagents/agent-ab3.meta.json"
+fire SubagentStop ab3 researcher 'found it\nStop: done'
+check "$(field "$(auto_of ab3)" title)" "Late title" "fallback title replaced by the meta description at stop"
+# never auto-bound: verifier, other agents, opt-outs
+N1="$(t list --all --tsv | wc -l | tr -d ' ')"
+fire SubagentStart v9 subdeck:verifier-opus ""
+fire SubagentStart x9 Explore ""
+fire SubagentStart x8 general-purpose ""
+check "$(t list --all --tsv | wc -l | tr -d ' ')" "$N1" "verifier and other agent types are never auto-bound"
+printf '{"tasks":{"autoBind":false}}' > "$ST/config.json"
+fire SubagentStart off1 worker-sonnet ""
+check "$(auto_of off1)" "" "tasks.autoBind=false: no auto task"
+rm -f "$ST/config.json"
+SUBDECK_TASKS=0 bash "$TS" --project "$P" hook SubagentStart <<< "{\"hook_event_name\":\"SubagentStart\",\"session_id\":\"$SID\",\"agent_id\":\"off2\",\"agent_type\":\"worker-sonnet\",\"cwd\":\"$P\"}"
+check "$(auto_of off2)" "" "SUBDECK_TASKS=0: no auto task"
+# a task id in the prompt wins: no auto task
+TK="$(newtask)"; fire SubagentStart named1 worker-sonnet "" "\"prompt\":\"Task: $TK\""
+check "$(auto_of named1)" "$TK" "Task: id in the prompt binds that task, no auto task"
+check "$(field $TK auto)" "" "explicit task is not auto"
+# Start missed: auto-bind at stop
+fire SubagentStop late1 worker-sonnet "$OKMSG"
+TL="$(auto_of late1)"
+check "$(field $TL status)" "review" "stop without start: auto task created and moved to review"
+check "$(field $TL auto)" "true" "stop without start: auto"
+# not tracked: no report_missing, no notify
+R0="$(events report_missing)"; reset_notify
+fire SubagentStop nt1 Explore 'found some things'
+fire SubagentStop nt2 subdeck:verifier-opus 'no verdict here'
+check "$(events report_missing)" "$R0" "agents without a task are not tracked: no report_missing"
+[ -s "$W/notify.out" ] && bad "not tracked: no notification" || ok "not tracked: no notification"
+# an auto task without a report: report_missing with its task id
+fire SubagentStart nr1 worker-sonnet ""; fire SubagentStop nr1 worker-sonnet 'finished, bye'
+check "$(events report_missing)" "$((R0 + 1))" "auto task without a report: report_missing"
+has "$(lastevent report_missing)" "\"task\":\"$(auto_of nr1)\"" "report_missing names the auto task"
+check "$(field "$(auto_of nr1)" status)" "blocked" "auto task without a report -> blocked"
+# report length
+L0="$(events report_too_long)"
+LONG9='l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nStop: done'
+LONG10='l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nTested: ran true -> ok\nStop: done'
+fire SubagentStop rl1 worker-sonnet "$LONG9"
+check "$(events report_too_long)" "$L0" "9 lines: no report_too_long"
+fire SubagentStop rl2 worker-sonnet "\\n\\n$LONG10\\n\\n"
+check "$(events report_too_long)" "$((L0 + 1))" "10 lines (blank edges trimmed): report_too_long"
+has "$(lastevent report_too_long)" '"lines":10,"limit":9' "report_too_long carries lines and limit"
+has "$(lastevent report_too_long)" "\"task\":\"$(auto_of rl2)\"" "report_too_long names the task"
+fire SubagentStop rl3 Explore 'a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk'
+has "$(lastevent report_too_long)" '"agent_id":"rl3"' "report_too_long also for agents without a task"
+has "$(lastevent report_too_long)" '"task":null' "report_too_long: task null when not tracked"
+check "$(field "$(auto_of rl2)" status)" "review" "a long report changes no status"
+# quota
+grep -v '"event":"quota_recent"' "$ST/events.jsonl" > "$ST/events.tmp"; mv "$ST/events.tmp" "$ST/events.jsonl"
+Q0="$(events quota_recent)"; reset_notify
+fire SubagentStop qq1 worker-sonnet 'hit the wall\nStop: quota - resets 3pm (UTC)\nTested: not run (quota)'
+check "$(events quota_recent)" "$((Q0 + 1))" "Stop: quota logs quota_recent"
+has "$(lastevent quota_recent)" '"source":"hook","tool":"claude","reset":"3pm (UTC)","resetAt":null' "quota_recent: raw reset text"
+check "$(field "$(auto_of qq1)" status)" "interrupted" "Stop: quota interrupts the task (0.7)"
+sleep 0.5
+has "$(notified)" "quota limit hit; resets 3pm (UTC)" "quota notification reason"
+reset_notify
+fire StopFailure qq2 worker-sonnet "" '"error_type":"rate_limit","error":"limit reached, resets at 2026-10-07T15:30:00Z"'
+check "$(events quota_recent)" "$((Q0 + 2))" "StopFailure rate_limit logs quota_recent"
+has "$(lastevent quota_recent)" '"reset":null,"resetAt":"2026-10-07T15:30:00Z"' "quota_recent: ISO resetAt"
+sleep 0.3
+[ -s "$W/notify.out" ] && bad "quota notification only once per 60 min" || ok "quota notification only once per 60 min"
+printf '{"hook_event_name":"StopFailure","session_id":"s-none","cwd":"%s","error_type":"rate_limit"}' "$P" | bash "$LE" StopFailure
+check "$(events quota_recent)" "$((Q0 + 3))" "rate_limit without any task still logs quota_recent"
+has "$(lastevent quota_recent)" '"task":null' "quota_recent: task null"
+fire StopFailure qq3 worker-sonnet "" '"error_type":"auth"'
+check "$(events quota_recent)" "$((Q0 + 3))" "other failure types log no quota_recent"
+# run.sh marks its own hook calls: no duplicate quota_recent
+printf '{"hook_event_name":"StopFailure","session_id":"r1","agent_id":"run-x","agent_type":"worker-run","cwd":"%s","error_type":"rate_limit"}' "$P" | SUBDECK_QUOTA_LOGGED=1 bash "$TS" --project "$P" hook StopFailure
+check "$(events quota_recent)" "$((Q0 + 3))" "SUBDECK_QUOTA_LOGGED=1 skips the hook's quota_recent"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

@@ -129,6 +129,16 @@ out="$(run set verifier=haiku)"; out="$(run show)"
 has "$out" '^worker +opus +user' "set keeps modelPolicy value, not the outer one"
 rm -f "$H/.subdeck/config.json"
 
+# ---- 0.8.1: light ----
+out="$(run show)"
+has "$out" '^light +haiku +default' "default light haiku"
+has "$out" 'light +haiku -> latest haiku' "light resolves like the other keys"
+out="$(run set light=opus)"; has "$out" '^light +opus +user' "set light=opus"
+grep -q '"light":"opus"' "$H/.subdeck/config.json" && ok "light stored in modelPolicy" || bad "light not stored"
+out="$(run set light='bad value')"; has "$out" "error: invalid value 'bad value' for light" "light value validated"
+out="$(run reset)"; has "$out" '^light +haiku +default' "reset restores the light default"
+rm -f "$H/.subdeck/config.json"
+
 rm -rf "$H" "$P"
 echo "$PASS passed, $FAIL failed"
 [ $FAIL -eq 0 ]

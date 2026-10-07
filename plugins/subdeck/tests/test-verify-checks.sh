@@ -196,5 +196,50 @@ for id in empty-tests test-count ran-cmd tested-line; do
   cmp -s "$VC" "$MUT/vc-$id.sh" && bad "negative control: mutation for $id changed nothing" || ok "negative control: mutation for $id applied"
 done
 
+# ---- 0.8.1: control-chars, tab-in-path, writable-scope ----
+V="$T/vrepo"; bash "$HERE/fixtures/verify/build-repo.sh" "$V" >/dev/null 2>&1
+vv() { bash "$VC" --project "$V" "$@"; }
+o="$(vv --base base --head head)"; rc=$?
+has "$o" '^FAIL control-chars ctrl\.txt:2 0x07 \(1 lines\)$' "control-chars: BEL line fails with file:line, byte and count"
+has "$o" '^WARN tab-in-path tabpath\.txt:2 0x09 \(1 lines\)$' "tab-in-path: C:<TAB> line warns"
+hasnt "$o" 'bin\.dat' "binary files are skipped"
+hasnt "$o" 'ok\.txt' "clean file is not reported"
+[ $rc -eq 1 ] && ok "control-chars FAIL gives exit 1" || bad "exit $rc"
+has "$(vv --base base --head head --json)" '"id":"control-chars","result":"FAIL"' "control-chars in JSON"
+# clean range
+V2="$T/vrepo2"; mkdir -p "$V2"; git -C "$V2" init -q; git -C "$V2" -c user.name=t -c user.email=t@e commit -q --allow-empty -m a
+printf 'tab\tseparated\nCR line\r\nplain\n' > "$V2/t.txt"; git -C "$V2" add t.txt; git -C "$V2" -c user.name=t -c user.email=t@e commit -q -m b
+o="$(bash "$VC" --project "$V2" --base HEAD~1)"
+has "$o" '^PASS control-chars 0 files$' "control-chars: TAB, CR and LF are allowed"
+has "$o" '^PASS tab-in-path 0 files$' "tab-in-path: a plain TAB is fine"
+# 0x1b and 0x0e are caught, 0x0c too
+printf 'esc\033here\nso\016x\nff\014y\n' > "$V2/e.txt"; git -C "$V2" add e.txt; git -C "$V2" -c user.name=t -c user.email=t@e commit -q -m c
+has "$(bash "$VC" --project "$V2" --base HEAD~1)" '^FAIL control-chars e\.txt:1 0x1b \(3 lines\)$' "control-chars: first hit and line count"
+# double backslash with a tab
+printf '\tpath\tC:\\\\dir\\\\file\n' > "$V2/w.txt"; git -C "$V2" add w.txt; git -C "$V2" -c user.name=t -c user.email=t@e commit -q -m d
+has "$(bash "$VC" --project "$V2" --base HEAD~1)" '^WARN tab-in-path w\.txt:1 0x09 \(1 lines\)$' "tab-in-path: a double-backslash path warns"
+# writable-scope
+SD="$T/state"; export SUBDECK_STATE_DIR="$SD" HOME="$T/home"; mkdir -p "$HOME"
+TS="$HERE/../scripts/tasks.sh"
+WID="$(SUBDECK_METER=0 bash "$TS" --project "$V" new job --writable ctrl.txt)"
+o="$(vv --base base --head head --task "$WID")"
+has "$o" '^WARN writable-scope tabpath\.txt is outside the writable paths of '"$WID" "writable-scope: file outside warns"
+has "$o" '^WARN writable-scope ok\.txt ' "writable-scope: every outside file listed"
+hasnt "$o" 'WARN writable-scope ctrl\.txt' "writable-scope: inside file not listed"
+SUBDECK_METER=0 bash "$TS" --project "$V" grant "$WID" tabpath.txt,ok.txt,bin.dat --reason "test"
+o="$(vv --base base --head head --task "$WID")"
+has "$o" '^PASS writable-scope' "writable-scope: grants count as writable"
+has "$(vv --base base --head head --task "$WID" --json)" '"id":"writable-scope","result":"PASS"' "writable-scope in JSON"
+has "$(vv --base base --head head)" '^SKIP writable-scope no --task' "writable-scope: SKIP without --task"
+EID="$(SUBDECK_METER=0 bash "$TS" --project "$V" new nowritable)"
+has "$(vv --base base --head head --task "$EID")" '^SKIP writable-scope' "writable-scope: SKIP with an empty list"
+has "$(vv --base base --head head --task t-ffff)" '^SKIP writable-scope' "writable-scope: SKIP for an unknown task"
+o="$(vv --base base --head head --task "$WID" 2>&1 >/dev/null)"; [ -z "$o" ] && ok "writable-scope: nothing on stderr" || bad "stderr: $o"
+unset SUBDECK_STATE_DIR
+# negative control: without the control-chars rule the BEL line passes
+sed 's/add FAIL control-chars /add PASS control-chars /' "$VC" > "$MUT/vc-cc.sh"
+o="$(bash "$MUT/vc-cc.sh" --project "$V" --base base --head head)"; hasnt "$o" '^FAIL control-chars' "negative control: control-chars mutation no longer fails"
+cmp -s "$VC" "$MUT/vc-cc.sh" && bad "negative control: control-chars mutation changed nothing" || ok "negative control: control-chars mutation applied"
+
 echo "passed=$PASS failed=$FAIL"
 [ $FAIL -eq 0 ]

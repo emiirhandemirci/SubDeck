@@ -67,10 +67,10 @@ rm -rf "$P" "$D"
 
 # 5. top-level field lift
 P="$(newproj)"; D="$(sd "$P")"
-echo '{"hook_event_name":"SubagentStart","agent_id":"agent-7","agent_type":"worker-sonnet","transcript_path":"C:\\Users\\u\\t.jsonl","session_id":"sess-9"}' | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" SubagentStart
+echo '{"hook_event_name":"SubagentStart","agent_id":"agent-7","agent_type":"worker-sonnet","transcript_path":"C:\\Users\\u\\t.jsonl","session_id":"sess-9"}' | SUBDECK_TASKS=0 CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" SubagentStart
 FIELDS="$(node -e 'const o=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8").trim());console.log([o.agent_id,o.agent_type,o.transcript_path,o.session_id,o.payload.agent_id].join("|"))' "$D/events.jsonl")"
 check "$FIELDS" 'agent-7|worker-sonnet|C:\Users\u\t.jsonl|sess-9|agent-7' "top-level fields lifted"
-echo '{"hook_event_name":"SubagentStart"}' | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" SubagentStart
+echo '{"hook_event_name":"SubagentStart"}' | SUBDECK_TASKS=0 CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" SubagentStart
 FIELDS="$(node -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n");const o=JSON.parse(l[1]);console.log([o.agent_id,o.agent_type,o.transcript_path,o.session_id].join("|"))' "$D/events.jsonl")"
 check "$FIELDS" '|||' "absent fields become empty strings"
 rm -rf "$P" "$D"
@@ -131,9 +131,11 @@ rm -rf "$P" "$P2" "$D"
 
 # 9. StopFailure is logged like the other kinds; task hook dispatch
 P="$(newproj)"; D="$(sd "$P")"
-echo '{"hook_event_name":"StopFailure","session_id":"s1","error_type":"rate_limit"}' | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" StopFailure
+echo '{"hook_event_name":"StopFailure","session_id":"s1","error_type":"rate_limit"}' | SUBDECK_TASKS=0 CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" StopFailure
 check "$(allparse "$D/events.jsonl")" "1/1" "StopFailure line parses"
 check "$(sed -n 's/.*"event":"\([A-Za-z_]*\)".*/\1/p' "$D/events.jsonl")" "StopFailure" "StopFailure event name logged"
+echo '{"hook_event_name":"StopFailure","session_id":"s1","error_type":"rate_limit"}' | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" StopFailure
+check "$(grep -c '"event":"quota_recent"' "$D/events.jsonl")" "1" "StopFailure rate_limit also logs quota_recent via the tasks hook"
 TSH="$HERE/../scripts/tasks.sh"
 TID="$(bash "$TSH" --project "$P" new "dispatch")"
 echo "{\"hook_event_name\":\"SubagentStart\",\"session_id\":\"s1\",\"agent_id\":\"d1\",\"agent_type\":\"worker-sonnet\",\"prompt\":\"Task: $TID\"}" | CLAUDE_PROJECT_DIR="$P" bash "$SCRIPT" SubagentStart

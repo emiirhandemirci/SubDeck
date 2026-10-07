@@ -35,7 +35,7 @@ has "$out" '^ +tasks.dir +\(state dir\)' "table: tasks.dir default"
 has "$out" '^ +report-check +on *$' "table: report-check default on"
 has "$out" '^More: /subdeck:settings help$' "table: help pointer"
 hasnt "$out" '->' "table: no resolved-model rows"
-[ "$(printf '%s\n' "$out" | wc -l)" -le 48 ] && ok "table stays short" || bad "table too long"
+[ "$(printf '%s\n' "$out" | wc -l)" -le 52 ] && ok "table stays short" || bad "table too long"
 
 # ---- help ----
 out="$(run help)"; rc=$?
@@ -379,6 +379,38 @@ grep -q '"roles"' "$CFG" 2>/dev/null && bad "reset kept roles" || ok "reset remo
 grep -q '"roles"' "$PS/config.json" && ok "reset (user) leaves the project roles" || bad "project roles lost"
 run reset --project >/dev/null
 grep -q '"roles"' "$PS/config.json" 2>/dev/null && bad "reset --project kept roles" || ok "reset --project removes the roles member"
+rm -f "$CFG"; rm -rf "${SS:?}"/*
+
+# ---- 0.8.1 keys: light, auto-bind, commit-pathspec, commit-scope ----
+out="$(run)"
+has "$out" '^ +light +haiku *$' "table: light default haiku"
+has "$out" '^ +auto-bind +on *$' "table: auto-bind default on"
+has "$out" '^ +commit-pathspec +warn *$' "table: commit-pathspec default warn"
+has "$out" '^ +commit-scope +warn *$' "table: commit-scope default warn"
+J="$(run json)"
+for k in light auto-bind commit-pathspec commit-scope; do has "$J" "\"key\":\"$k\"" "json lists $k"; done
+has "$(run help)" '^  light ' "help lists light"
+rm -f "$CFG"
+run set light=opus auto-bind=off commit-scope=off commit-pathspec=warn >/dev/null 2>&1; rc=$?
+[ $rc -eq 0 ] && ok "set light auto-bind commit rules exits 0" || bad "set exit $rc"
+out="$(run)"
+has "$out" '^ +light +opus ' "set light=opus"
+has "$out" '^ +auto-bind +off ' "set auto-bind=off"
+has "$out" '^ +commit-scope +off ' "set commit-scope=off"
+grep -q '"autoBind":false' "$CFG" && ok "config tasks.autoBind false" || bad "autoBind not written"
+grep -q '"light":"opus"' "$CFG" && ok "config modelPolicy.light" || bad "light not written"
+grep -q '"commit-scope":"off"' "$CFG" && ok "config guard.rules.commit-scope" || bad "commit-scope not written"
+for bad_kv in commit-scope=deny commit-pathspec=ask auto-bind=maybe light="bad value"; do
+  run set "$bad_kv" >/dev/null 2>&1; rc=$?
+  [ $rc -eq 2 ] && ok "set $bad_kv exits 2" || bad "set $bad_kv exit $rc"
+done
+run set report-check=off >/dev/null 2>&1
+grep -q '"autoBind":false' "$CFG" && grep -q '"reportCheck":false' "$CFG" && ok "tasks members coexist" || bad "tasks members lost"
+run reset >/dev/null 2>&1
+out="$(run)"
+has "$out" '^ +light +haiku *$' "reset: light back to haiku"
+has "$out" '^ +auto-bind +on *$' "reset: auto-bind back to on"
+has "$out" '^ +commit-scope +warn *$' "reset: commit-scope back to warn"
 rm -f "$CFG"; rm -rf "${SS:?}"/*
 
 # ---- skill file ----

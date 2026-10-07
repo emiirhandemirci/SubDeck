@@ -196,6 +196,17 @@ FAKE_CLI_MODE=quota r worker "$T3" >/dev/null 2>&1; check "$?" "7" "quota: exit 
 check "$(field "$T3" status)" "interrupted" "quota -> interrupted"
 has "$(t show "$T3")" "interrupted (rate_limit)" "quota: Handoff block with rate_limit"
 has "$(lastmeta "$T3")" '"status":"quota","cliExit":1,"exit":7' "meta quota"
+check "$(events quota_recent)" "1" "quota: exactly one quota_recent (the hook's own is skipped)"
+has "$(lastevent quota_recent)" '"source":"run","tool":"codex"' "quota_recent from run.sh names source run and the tool"
+has "$(lastevent quota_recent)" "\"task\":\"$T3\"" "quota_recent names the task"
+# grants extend the writable list: prompt, check
+TG="$(newtask "grants" a.txt)"; t grant "$TG" docs/x.md --reason "docs" >/dev/null
+has "$(r worker "$TG" --dry-run | sed -n '/^prompt:$/,$p')" "## Writable paths
+a.txt
+docs/x.md" "grants are listed in the prompt's writable paths"
+FAKE_CLI_TOUCH=a.txt,docs/x.md r worker "$TG" >/dev/null 2>&1; check "$?" "0" "touching a granted path is not a violation"
+TG2="$(newtask "grants2" a.txt)"; t grant "$TG2" docs/x.md --reason "docs" >/dev/null
+FAKE_CLI_TOUCH=docs/y.md r worker "$TG2" >/dev/null 2>&1; check "$?" "5" "a path outside writable + grants is still a violation"
 T4="$(newtask "auth")"
 FAKE_CLI_MODE=auth r worker "$T4" >/dev/null 2>"$W/err4"; check "$?" "6" "auth (regex): exit 6"
 check "$(field "$T4" status)" "interrupted" "auth -> interrupted"

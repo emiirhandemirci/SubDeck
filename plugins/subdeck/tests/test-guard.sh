@@ -811,6 +811,66 @@ BPAY="$(printf '{"tool_name":"Write","cwd":"%s","tool_input":{"file_path":"%s/bi
 ms="$(best_ms 3 "$BPAY")"; echo "info: 300 KB Write payload best ${ms} ms"
 [ "$ms" -lt "$LIM2" ] && ok "large Write payload fast enough (${ms} ms)" || bad "large payload slow: ${ms} ms"
 
+# ---- 0.8.1: warn-only commit rules (commit-pathspec, commit-scope) ----
+GW="$(mktemp -d)"; GS="$(mktemp -d)"; GH="$(mktemp -d)"
+export SUBDECK_STATE_DIR="$GS" SUBDECK_METER=0
+git -C "$GW" init -q 2>/dev/null; git -C "$GW" config user.email a@b; git -C "$GW" config user.name t
+mkdir -p "$GW/src" "$GW/docs"; echo a > "$GW/src/a.js"; echo b > "$GW/docs/b.md"
+git -C "$GW" add . ; git -C "$GW" commit -q -m init
+TSH="$HERE/../scripts/tasks.sh"
+WT="$(bash "$TSH" --project "$GW" new job --writable src/a.js)"
+bash "$TSH" --project "$GW" set "$WT" agent=ag1 status=in-progress >/dev/null
+echo x >> "$GW/src/a.js"; echo y >> "$GW/docs/b.md"; git -C "$GW" add src docs
+gw_json() { printf '{"session_id":"s","cwd":"%s","agent_id":"%s","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"command":"%s"}}' "$GW" "${AGENT-ag1}" "${TOOL:-Bash}" "$(esc "$1")"; }
+gw() { gw_json "$1" | HOME="$GH" CLAUDE_PROJECT_DIR="$GW" bash "$G"; }
+o="$(gw 'git commit -m x -- src docs')"
+has "$o" '^\{"systemMessage":"SubDeck guard \(commit-pathspec, warning\): \\"src\\" is a directory; the commit takes every changed file under it, including other agents'"'"' work\. Commit explicit file paths\.' "commit-pathspec: existing directory warns"
+has "$o" '"hookSpecificOutput":\{"hookEventName":"PreToolUse","additionalContext":"SubDeck guard \(commit-pathspec' "warning output carries additionalContext"
+has "$o" 'commit-pathspec, warning\): \\"docs\\" is a directory' "commit-pathspec: every directory word listed"
+has "$o" ' \| SubDeck guard \(commit-scope, warning\): 1 staged file\(s\) outside the writable paths of '"$WT"': docs/b\.md\. Unstage them or ask the manager for a grant\.' "commit-scope: staged file outside writable, joined with ' | '"
+case "$o" in *permissionDecision*) bad "warnings carry no permissionDecision" ;; *) ok "warnings carry no permissionDecision" ;; esac
+has "$(gw 'git commit -m x -- .')" 'commit-pathspec, warning\): \\"\.\\" is a directory' "commit-pathspec: ."
+has "$(gw 'git commit -m x -- src/')" 'commit-pathspec, warning\): \\"src/\\" is a directory' "commit-pathspec: trailing slash"
+o="$(gw 'git commit -m x -- src/a.js')"; [ -z "$o" ] && ok "explicit file pathspec: no warning (and its file is inside writable)" || bad "explicit pathspec warned: $o"
+o="$(gw 'git commit -m x')"
+has "$o" 'commit-scope, warning\): 1 staged file\(s\) outside' "commit-scope: plain commit checks the index"
+case "$o" in *commit-pathspec*) bad "no pathspec warning without pathspec" ;; *) ok "no pathspec warning without pathspec" ;; esac
+o="$(AGENT= gw 'git commit -m x')"; [ -z "$o" ] && ok "commit-scope: no agent id means skip" || bad "no agent id warned: $o"
+o="$(AGENT=other gw 'git commit -m x')"; [ -z "$o" ] && ok "commit-scope: agent without a task means skip" || bad "unbound agent warned: $o"
+o="$(gw_json 'git commit -m x' | SUBDECK_TASK="$WT" HOME="$GH" CLAUDE_PROJECT_DIR="$GW" bash "$G")"
+has "$o" 'commit-scope, warning' "commit-scope: env SUBDECK_TASK binds the task"
+bash "$TSH" --project "$GW" grant "$WT" docs/b.md --reason "docs" >/dev/null
+o="$(gw 'git commit -m x')"; [ -z "$o" ] && ok "commit-scope: a grant extends the writable list" || bad "granted file still warned: $o"
+bash "$TSH" --project "$GW" grant "$WT" zz/ --reason "x" >/dev/null
+for i in 1 2 3 4 5 6 7; do echo "$i" > "$GW/f$i.txt"; done; git -C "$GW" add f1.txt f2.txt f3.txt f4.txt f5.txt f6.txt f7.txt
+has "$(gw 'git commit -m x')" 'outside the writable paths of '"$WT"': f1\.txt, f2\.txt, f3\.txt, f4\.txt, f5\.txt \(\+2 more\)\.' "commit-scope: max 5 names, then (+n more)"
+git -C "$GW" reset -q f1.txt f2.txt f3.txt f4.txt f5.txt f6.txt f7.txt
+# warnings never block: with a deny rule the reason carries them after ' | '
+o="$(gw 'git add -A && git commit -m x -- src')"
+has "$o" '"permissionDecision":"deny"' "deny rule keeps its decision"
+has "$o" 'permissionDecisionReason":"SubDeck guard \(git-add-all\).* \| SubDeck guard \(commit-pathspec, warning\)' "deny reason has the warnings appended after ' | '"
+# modes
+mkdir -p "$GH/.subdeck"
+printf '{"guard":{"rules":{"commit-pathspec":"off"}}}' > "$GH/.subdeck/config.json"
+o="$(gw 'git commit -m x -- src')"; case "$o" in *commit-pathspec*) bad "commit-pathspec=off still warns" ;; *) ok "commit-pathspec=off: no warning" ;; esac
+printf '{"guard":{"rules":{"commit-pathspec":"off","commit-scope":"off"}}}' > "$GH/.subdeck/config.json"
+git -C "$GW" add docs; echo z >> "$GW/docs/b.md"; git -C "$GW" add docs
+bash "$TSH" --project "$GW" set "$WT" writable=src/a.js >/dev/null
+o="$(gw 'git commit -m x -- docs')"; [ -z "$o" ] && ok "both rules off: no output" || bad "both off warned: $o"
+printf '{"guard":{"rules":{"commit-scope":"deny"}}}' > "$GH/.subdeck/config.json"
+o="$(gw 'git commit -m x')"; case "$o" in *'"permissionDecision"'*) bad "commit-scope=deny must not block" ;; *) ok "commit-scope=deny in a config file is ignored (warn-only)" ;; esac
+rm -f "$GH/.subdeck/config.json"
+printf '{"guard":{"enabled":false}}' > "$GH/.subdeck/config.json"
+o="$(gw 'git commit -m x -- src')"; [ -z "$o" ] && ok "guard disabled: no warnings" || bad "disabled guard warned"
+rm -f "$GH/.subdeck/config.json"
+# CLI: only warn|off
+o="$(HOME="$GH" bash "$G" cli set commit-scope=deny "$GW" 2>&1)"; has "$o" 'invalid mode .deny. for commit-scope \(valid: warn, off\)' "guard.sh set commit-scope=deny is refused"
+o="$(HOME="$GH" bash "$G" cli set commit-scope=off "$GW" 2>&1)"; has "$o" 'commit-scope +off' "guard.sh set commit-scope=off"
+rm -f "$GH/.subdeck/config.json"
+o="$(HOME="$GH" bash "$G" cli show "$GW")"; has "$o" 'commit-pathspec +warn +default' "show lists commit-pathspec default warn"
+unset SUBDECK_STATE_DIR SUBDECK_METER
+rm -rf "$GW" "$GS" "$GH"
+
 rm -rf "$H" "$P"
 echo "$PASS passed, $FAIL failed"
 [ $FAIL -eq 0 ]
