@@ -53,6 +53,18 @@ case "$SD_STATE" in "$T/st/proj-"????????) ok "state dir under the root ($SD_STA
 check "$SD_LEGACY" "$T/proj/.subdeck" "legacy dir is <project>/.subdeck"
 [ ! -e "$SD_STATE" ] && [ ! -e "$SD_LEGACY" ] && ok "nothing created" || bad "sd_state_dir created a directory"
 
+# 5b. SUBDECK_PROJECT (set by run.sh for a headless run in a worktree) redirects the state dir to the main project
+mkdir -p "$T/wt"
+SUBDECK_STATE_DIR="$T/st" sd_state_dir "$T/proj"; MAIN="$SD_STATE"
+SUBDECK_STATE_DIR="$T/st" SUBDECK_PROJECT="$T/proj" sd_state_dir "$T/wt"
+check "$SD_STATE" "$MAIN" "SUBDECK_PROJECT redirects a worktree's state dir to the main project"
+check "$SD_LEGACY" "$T/proj/.subdeck" "SUBDECK_PROJECT also names the legacy dir"
+SUBDECK_STATE_DIR="$T/st" SUBDECK_PROJECT="$T/missing" sd_state_dir "$T/wt"
+case "$SD_STATE" in "$T/st/wt-"????????) ok "SUBDECK_PROJECT that is not a directory is ignored" ;; *) bad "missing SUBDECK_PROJECT: $SD_STATE" ;; esac
+SUBDECK_STATE_DIR="$T/st" SUBDECK_PROJECT="" sd_state_dir "$T/wt"
+case "$SD_STATE" in "$T/st/wt-"????????) ok "empty SUBDECK_PROJECT is ignored" ;; *) bad "empty SUBDECK_PROJECT: $SD_STATE" ;; esac
+[ ! -e "$T/st" ] && ok "still nothing created" || bad "created a directory"
+
 # 6. cross-check with Desk for a real directory (Windows: bash /x/.. path vs node's native path)
 if command -v node >/dev/null 2>&1; then
   SUBDECK_STATE_DIR="$T/st" sd_state_dir "$T/proj"; BK="${SD_STATE##*/}"

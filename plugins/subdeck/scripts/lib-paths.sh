@@ -91,8 +91,12 @@ sd_state_root() {
 }
 
 # sd_state_dir PROJECT -> SD_STATE (new per-project state dir, not created) and SD_LEGACY (<project>/.subdeck)
+# Inside a SubDeck headless run (run.sh sets SUBDECK_PROJECT to the main project and starts the CLI in a worktree)
+# $SUBDECK_PROJECT is used instead of PROJECT when it is a directory, so hooks and the guard read and write the
+# main project's state (config, events, tasks), not a separate state for the worktree.
 sd_state_dir() {
   local p="$1" w
+  if [ -n "${SUBDECK_PROJECT:-}" ] && [ -d "$SUBDECK_PROJECT" ]; then p="$SUBDECK_PROJECT"; fi
   SD_LEGACY="${p%/}/.subdeck"
   sd_platform
   # MSYS/Cygwin paths without a drive (/tmp, /home/x) are resolved to their Windows form first
