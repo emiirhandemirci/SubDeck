@@ -46,7 +46,7 @@ has "$BODY" "status: open" "new status open"
 has "$BODY" "writable: [src/a.js, test/a.test.js]" "writable list written"
 has "$BODY" "    ## not a heading" "heading-like task line indented"
 check "$(printf '%s\n' "$BODY" | grep -n '^## ' | cut -d: -f2 | tr '\n' '|')" "## Task|## Done when|## Report|## Verification|## Handoff|" "five sections in order"
-check "$(printf '%s\n' "$BODY" | sed -n '2,12p' | cut -d: -f1 | tr '\n' ' ')" "id title status owner agent session transcript blocked-by writable created updated " "writer key order"
+check "$(printf '%s\n' "$BODY" | sed -n '2,18p' | cut -d: -f1 | tr '\n' ' ')" "id title status owner agent session transcript blocked-by writable role tool model branch worktree run created updated " "writer key order"
 check "$(ls -a "$ST/tasks" | grep -c 'tmp')" "0" "no temp files left"
 
 # ---- new validation (exit 2, nothing written) ----
@@ -92,6 +92,28 @@ has "$BODY" "    ## sneaky" "append indents ## lines"
 check "$(printf '%s\n' "$BODY" | grep -c '^### .* note$')" "2" "two note blocks"
 check "$(printf '%s\n' "$BODY" | grep -n '^## ' | cut -d: -f2 | tr '\n' '|')" "## Task|## Done when|## Report|## Verification|## Handoff|" "sections intact after append"
 printf 'x' | t append "$ID" nosuch 2>/dev/null; check "$?" "2" "append unknown section exit 2"
+printf 'src/x.js\n' | t append "$ID" report --label "writable violation (worker codex)"; check "$?" "0" "append --label ok"
+has "$(t show "$ID")" " writable violation (worker codex)
+src/x.js" "append --label writes the block header"
+printf 'x' | t append "$ID" report --label "bad
+label" 2>/dev/null; check "$?" "2" "append --label rejects a newline"
+printf 'x' | t append "$ID" report --label "## x" 2>/dev/null; check "$?" "2" "append --label rejects a heading"
+printf 'x' | t append "$ID" report --labl x 2>/dev/null; check "$?" "2" "append unknown option exit 2"
+
+# ---- run keys (0.8: role tool model branch worktree run) ----
+t set "$ID" role=worker tool=codex model=gpt-5-codex branch=subdeck/$ID "worktree=$W/wt dir" run=$W/r.log; check "$?" "0" "set run keys"
+RB="$(t show "$ID")"
+has "$RB" "role: worker
+tool: codex
+model: gpt-5-codex
+branch: subdeck/$ID
+worktree: $W/wt dir
+run: $W/r.log
+created: " "run keys written in order before created"
+check "$(t list --json | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));const x=j.tasks.find(t=>t.id===process.argv[1]);console.log([x.role,x.tool,x.model,x.branch,x.worktree,x.run].join("|"))' "$ID")" "worker|codex|gpt-5-codex|subdeck/$ID|$W/wt dir|$W/r.log" "list --json carries the run keys"
+t set "$ID" "model=a
+b" 2>/dev/null; check "$?" "2" "run key with a newline refused"
+t set "$ID" tool= ; check "$(t show "$ID" | sed -n 's/^tool: *//p')" "" "run key cleared with an empty value"
 printf 'x' | t append t-aaaa report 2>/dev/null; check "$?" "1" "append unknown id exit 1"
 R="$(printf '%s\n' "$BODY" | awk '/^## Report$/{f=1;next} /^## /{f=0} f')"
 has "$R" "line one" "report text in the Report section"
@@ -124,7 +146,7 @@ t set "$A" status=open
 printf 'Verdict: Approved\n' | t append "$A" verification; t done "$A"
 check "$(t ready | cut -f1 | tr '\n' ' ')" "$B " "ready: archived blocker counts as done"
 JS="$(t list --json)"
-check "$(printf '%s' "$JS" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(j.version+" "+j.tasks.length+" "+j.dir.endsWith("/tasks")+" "+Object.keys(j.tasks[0]).join(","))')" "1 2 true id,title,status,owner,agent,session,transcript,blockedBy,writable,created,updated,archived,invalid,file" "list --json shape"
+check "$(printf '%s' "$JS" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(j.version+" "+j.tasks.length+" "+j.dir.endsWith("/tasks")+" "+Object.keys(j.tasks[0]).join(","))')" "1 2 true id,title,status,owner,agent,session,transcript,blockedBy,writable,role,tool,model,branch,worktree,run,created,updated,archived,invalid,file" "list --json shape"
 check "$(t ready --json | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(j.tasks.map(x=>x.id).join())')" "$B" "ready --json"
 check "$(t list --all --json | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(j.tasks.filter(x=>x.archived).length)')" "1" "list --all --json marks archived"
 rm -rf "$W/empty"; check "$(SUBDECK_TASKS_DIR="$W/empty" t list --json)" "{\"version\":1,\"dir\":\"$W/empty\",\"tasks\":[]}" "empty dir -> empty tasks array"

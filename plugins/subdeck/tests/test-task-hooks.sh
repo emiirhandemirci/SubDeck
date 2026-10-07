@@ -241,6 +241,25 @@ NB="$(bash "$TS" --project "$NP" show "$NT")"
 has "$NB" "files: 0" "no git: files: 0"
 has "$NB" "uncommitted: (not a git repository)" "no git: explicit line"
 
+# ---- 13b. headless runs: agent_type <class>-run, SUBDECK_TASK_GIT names the Handoff git dir ----
+GW="$W/gitwt"; mkdir -p "$GW"; git -C "$GW" init -q; echo x > "$GW/wt-only.txt"
+T13="$(newtask --writable "")"
+RID="run-$T13-20261007T120000Z"
+printf '{"hook_event_name":"SubagentStart","session_id":"%s","agent_id":"%s","agent_type":"worker-run","cwd":"%s","prompt":"Task: %s"}' "$RID" "$RID" "$P" "$T13" | bash "$TS" --project "$P" hook SubagentStart
+check "$(field $T13 status)" "in-progress" "worker-run start -> in-progress"
+printf '{"hook_event_name":"StopFailure","session_id":"%s","agent_id":"%s","agent_type":"worker-run","cwd":"%s","prompt":"Task: %s","error_type":"timeout"}' "$RID" "$RID" "$P" "$T13" | SUBDECK_TASK_GIT="$GW" bash "$TS" --project "$P" hook StopFailure
+B13="$(t show $T13)"
+check "$(field $T13 status)" "interrupted" "worker-run StopFailure -> interrupted"
+has "$B13" "?? wt-only.txt" "Handoff git status taken from SUBDECK_TASK_GIT"
+has "$B13" "interrupted (timeout)" "error type timeout"
+T13b="$(newtask)"; t set "$T13b" status=review
+printf '{"hook_event_name":"SubagentStop","session_id":"v","agent_id":"v1","agent_type":"verifier-run","cwd":"%s","prompt":"Task: %s","last_assistant_message":"ok\\nVerdict: Approved"}' "$P" "$T13b" | bash "$TS" --project "$P" hook SubagentStop
+check "$(field $T13b status)" "review" "verifier-run never changes status"
+has "$(t show $T13b)" "verifier reply (verifier-run v1)" "verifier-run verdict appended to Verification"
+T13c="$(newtask)"
+printf '{"hook_event_name":"SubagentStop","session_id":"r","agent_id":"r1","agent_type":"researcher-run","cwd":"%s","prompt":"Task: %s","last_assistant_message":"Answer\\nStop: done"}' "$P" "$T13c" | bash "$TS" --project "$P" hook SubagentStop
+check "$(field $T13c status)" "review" "researcher-run report shape is Stop only"
+
 # ---- 14. caps ----
 T14="$(newtask)"; fire SubagentStart c1 worker-sonnet "" "\"prompt\":\"Task: $T14\""
 LONG="$(printf 'x%.0s' $(seq 1 6000))"

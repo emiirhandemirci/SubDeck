@@ -5,7 +5,9 @@
 # Usage: tasks.sh [--project <dir>] <command> ...
 #   new "<title>" [--owner T] [--writable a,b] [--blocked-by t-x,t-y] [--task <text>|--task-file <f>] [--done-when <text>]   -> id
 #   set <id> key=value ...     keys: title owner agent session transcript blocked-by writable status (not done)
-#   append <id> <task|done-when|report|verification|handoff>      text on stdin, added as a "### <time> note" block
+#                              role tool model branch worktree run (headless runs, written by run.sh)
+#   append <id> <task|done-when|report|verification|handoff> [--label <text>]
+#                              text on stdin, added as a "### <time> note" block (or "### <time> <label>")
 #   done <id> [--force]        needs a line "Verdict: Approved" under ## Verification; moves the file to archive/
 #   list [--status s] [--all] [--json]    TSV: id status owner agent updated title
 #   ready [--json]             open tasks whose blocked-by ids all exist and are done
@@ -15,7 +17,8 @@
 # Exit codes (CLI): 0 ok, 1 id not found, 2 usage / invalid value, 3 done refused, 4 lock busy.
 # Task dir: env SUBDECK_TASKS_DIR, else config tasks.dir (project config wins over ~/.subdeck/config.json),
 #   else <state>/tasks (lib-paths.sh). Relative values are relative to the project. Task file grammar: see docs.
-# Env: SUBDECK_TASKS=0 disables the hook side (log-event.sh does not call it).
+# Env: SUBDECK_TASKS=0 disables the hook side (log-event.sh does not call it). SUBDECK_TASK_GIT=<dir>: hook mode runs the
+#   Handoff git commands there instead of in the project (run.sh: the run's worktree).
 
 LC_COLLATE=C
 HERE="${BASH_SOURCE[0]%[/\\]*}"; [ "$HERE" = "${BASH_SOURCE[0]}" ] && HERE="."
@@ -182,6 +185,7 @@ load_task() {
   local line state=0 key val
   T_id=""; T_title=""; T_status=""; T_owner=""; T_agent=""; T_session=""; T_transcript=""
   T_blocked_by=""; T_writable=""; T_created=""; T_updated=""; T_EXTRA=""; T_BODY=""; T_INVALID=0
+  T_role=""; T_tool=""; T_model=""; T_branch=""; T_worktree=""; T_run=""
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     if [ "$state" = 0 ]; then
@@ -194,7 +198,7 @@ load_task() {
         case "$key" in
           blocked-by) parse_list "$val"; T_blocked_by="$LIST_OUT" ;;
           writable) parse_list "$val"; T_writable="$LIST_OUT" ;;
-          id|title|status|owner|agent|session|transcript|created|updated) printf -v "T_$key" '%s' "$val" ;;
+          id|title|status|owner|agent|session|transcript|created|updated|role|tool|model|branch|worktree|run) printf -v "T_$key" '%s' "$val" ;;
           *) T_EXTRA="$T_EXTRA$key: $val$NL" ;;
         esac
       fi
@@ -224,6 +228,12 @@ write_task() {
     printf 'transcript: %s\n' "$T_transcript"
     join_list "$T_blocked_by"; printf 'blocked-by: [%s]\n' "$JOINED"
     join_list "$T_writable"; printf 'writable: [%s]\n' "$JOINED"
+    printf 'role: %s\n' "$T_role"
+    printf 'tool: %s\n' "$T_tool"
+    printf 'model: %s\n' "$T_model"
+    printf 'branch: %s\n' "$T_branch"
+    printf 'worktree: %s\n' "$T_worktree"
+    printf 'run: %s\n' "$T_run"
     printf 'created: %s\n' "$T_created"
     printf 'updated: %s\n' "$T_updated"
     if [ -n "$T_EXTRA" ]; then printf '%s' "$T_EXTRA"; fi
@@ -315,7 +325,7 @@ collect() {
       is_id "$b" || continue
       load_task "$f" || continue
       local title="${T_title//$TAB/ }"
-      rows="$rows$T_updated$US$b$US$T_status$US$T_owner$US$T_agent$US$T_session$US$T_transcript$US$T_blocked_by$US$T_writable$US$T_created$US$arch$US$T_INVALID$US$f$US$title$NL"
+      rows="$rows$T_updated$US$b$US$T_status$US$T_owner$US$T_agent$US$T_session$US$T_transcript$US$T_blocked_by$US$T_writable$US$T_created$US$arch$US$T_INVALID$US$f$US$T_role$US$T_tool$US$T_model$US$T_branch$US$T_worktree$US$T_run$US$title$NL"
     done
   done
   if [ -n "$rows" ]; then ROWS="$(printf '%s' "$rows" | sort -t "$US" -k1,1r -k2,2)"; else ROWS=""; fi
@@ -327,12 +337,12 @@ json_list() { # comma list -> JL ["a","b"]
   JL="[$out]"
 }
 print_rows() { # json(0/1), reads ROWS
-  local upd id st ow ag se tr bl wr cr arch inv file title first=1 s
+  local upd id st ow ag se tr bl wr cr arch inv file rl tl ml br wt rn title first=1 s
   if [ "$1" = 1 ]; then
     jesc "$DIR"; printf '{"version":1,"dir":"%s","tasks":[' "$JESC"
   fi
   [ -n "$ROWS" ] || { [ "$1" = 1 ] && printf ']}\n'; return 0; }
-  while IFS="$US" read -r upd id st ow ag se tr bl wr cr arch inv file title; do
+  while IFS="$US" read -r upd id st ow ag se tr bl wr cr arch inv file rl tl ml br wt rn title; do
     if [ "$1" = 1 ]; then
       [ "$first" = 1 ] || printf ','
       first=0
@@ -346,6 +356,12 @@ print_rows() { # json(0/1), reads ROWS
       jesc "$tr"; printf '"transcript":"%s",' "$JESC"
       json_list "$bl"; printf '"blockedBy":%s,' "$JL"
       json_list "$wr"; printf '"writable":%s,' "$JL"
+      jesc "$rl"; printf '"role":"%s",' "$JESC"
+      jesc "$tl"; printf '"tool":"%s",' "$JESC"
+      jesc "$ml"; printf '"model":"%s",' "$JESC"
+      jesc "$br"; printf '"branch":"%s",' "$JESC"
+      jesc "$wt"; printf '"worktree":"%s",' "$JESC"
+      jesc "$rn"; printf '"run":"%s",' "$JESC"
       jesc "$cr"; printf '"created":"%s",' "$JESC"
       jesc "$upd"; printf '"updated":"%s",' "$JESC"
       if [ "$arch" = 1 ]; then s=true; else s=false; fi; printf '"archived":%s,' "$s"
@@ -418,13 +434,14 @@ cmd_set() {
   ARGV=("${ARGV[@]:1}")
   [ ${#ARGV[@]} -gt 0 ] || die 2 "usage: set <id> key=value ..."
   local S_title="" S_owner="" S_agent="" S_session="" S_transcript="" S_blocked_by="" S_writable="" S_status=""
+  local S_role="" S_tool="" S_model="" S_branch="" S_worktree="" S_run=""
   local HAS=" "
   for pair in "${ARGV[@]}"; do
     case "$pair" in *=*) ;; *) die 2 "expected key=value, got '$pair'" ;; esac
     k="${pair%%=*}"; v="${pair#*=}"
     case "$k" in
       title) sanitize_title "$v"; v="$TITLE_OUT"; [ -n "$v" ] || die 2 "title may not be empty"; S_title="$v" ;;
-      owner|agent|session|transcript)
+      owner|agent|session|transcript|role|tool|model|branch|worktree|run)
         has_nl "$v" && die 2 "$k must be one line"
         trim "$v"; printf -v "S_$k" '%s' "$TRIMMED" ;;
       blocked-by) parse_list "$v"; valid_ids "$LIST_OUT" || die 2 "blocked-by needs task ids (t-<hex>)"; has_nl "$v" && die 2 "blocked-by must be one line"; S_blocked_by="$LIST_OUT" ;;
@@ -434,7 +451,7 @@ cmd_set() {
         [ "$v" = done ] && die 2 "status done is set with 'tasks.sh done'"
         status_ok "$v" || die 2 "invalid status '$v' (open in-progress blocked interrupted review)"
         S_status="$v" ;;
-      *) die 2 "cannot set '$k' (keys: title owner agent session transcript blocked-by writable status)" ;;
+      *) die 2 "cannot set '$k' (keys: title owner agent session transcript blocked-by writable status role tool model branch worktree run)" ;;
     esac
     HAS="$HAS$k "
   done
@@ -452,6 +469,12 @@ cmd_set() {
   case "$HAS" in *" blocked-by "*) T_blocked_by="$S_blocked_by" ;; esac
   case "$HAS" in *" writable "*) T_writable="$S_writable" ;; esac
   case "$HAS" in *" status "*) T_status="$S_status" ;; esac
+  case "$HAS" in *" role "*) T_role="$S_role" ;; esac
+  case "$HAS" in *" tool "*) T_tool="$S_tool" ;; esac
+  case "$HAS" in *" model "*) T_model="$S_model" ;; esac
+  case "$HAS" in *" branch "*) T_branch="$S_branch" ;; esac
+  case "$HAS" in *" worktree "*) T_worktree="$S_worktree" ;; esac
+  case "$HAS" in *" run "*) T_run="$S_run" ;; esac
   T_id="$id"
   write_task "$FOUND" || { lock_release; die 2 "could not write $FOUND"; }
   local ag="$T_agent" se="$T_session" nw="$T_status"
@@ -460,8 +483,14 @@ cmd_set() {
   return 0
 }
 cmd_append() {
-  local id="${ARGV[0]:-}" sec="${ARGV[1]:-}" text blk
-  [ -n "$id" ] && [ -n "$sec" ] || die 2 "usage: append <id> <task|done-when|report|verification|handoff>  (text on stdin)"
+  local id="${ARGV[0]:-}" sec="${ARGV[1]:-}" text blk label=note
+  [ -n "$id" ] && [ -n "$sec" ] || die 2 "usage: append <id> <task|done-when|report|verification|handoff> [--label <text>]  (text on stdin)"
+  if [ ${#ARGV[@]} -gt 2 ]; then
+    [ "${ARGV[2]}" = --label ] && [ ${#ARGV[@]} -eq 4 ] || die 2 "usage: append <id> <section> [--label <text>]"
+    label="${ARGV[3]}"
+    local lre='^[A-Za-z0-9][A-Za-z0-9 ._:/@+()-]{0,119}$'
+    [[ $label =~ $lre ]] || die 2 "invalid label (one line: letters, digits, space . _ : / @ + ( ) -)"
+  fi
   section_heading "$sec" || die 2 "unknown section '$sec' (task done-when report verification handoff)"
   find_file "$id" || die 1 "task not found: $id"
   text="$(clean_text)"
@@ -469,7 +498,7 @@ cmd_append() {
   find_file "$id" || { lock_release; die 1 "task not found: $id"; }
   load_task "$FOUND" || { lock_release; die 2 "task file unreadable: $FOUND"; }
   T_id="$id"
-  blk="### $(now_iso) note$NL$text"
+  blk="### $(now_iso) $label$NL$text"
   append_block "$HEADING" "$blk"
   write_task "$FOUND" || { lock_release; die 2 "could not write $FOUND"; }
   lock_release
@@ -579,10 +608,13 @@ jstring() {
       printf "%s", out
     }'
 }
-# agent class: worker researcher verifier other
+# agent class: worker researcher verifier other (run.sh headless runs: <class>-run)
 agent_class() {
   local t="${1#subdeck:}"
   case "$t" in
+    worker-run) CLASS=worker ;;
+    researcher-run) CLASS=researcher ;;
+    verifier-run) CLASS=verifier ;;
     worker-*) CLASS=worker ;;
     researcher*) CLASS=researcher ;;
     verifier*) CLASS=verifier ;;
@@ -678,14 +710,16 @@ handoff_block() {
   IFS=, read -ra warr <<< "$T_writable"
   for w in "${warr[@]}"; do [ -n "$w" ] || continue; args[${#args[@]}]="$w"; ws="$ws $w"; done
   HB="### $(now_iso) interrupted ($err)${NL}agent: ${T_agent:-$AGENT_ID} (${AGENT_TYPE:-unknown})${NL}"
-  if git -C "$PROJECT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  local g="$PROJECT"
+  [ -n "${SUBDECK_TASK_GIT:-}" ] && [ -d "$SUBDECK_TASK_GIT" ] && g="$SUBDECK_TASK_GIT"
+  if git -C "$g" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     if [ ${#args[@]} -gt 0 ]; then
-      st="$(git -C "$PROJECT" status --porcelain -- "${args[@]}" 2>/dev/null)"
-      df="$(git -C "$PROJECT" diff --stat -- "${args[@]}" 2>/dev/null)"
+      st="$(git -C "$g" status --porcelain -- "${args[@]}" 2>/dev/null)"
+      df="$(git -C "$g" diff --stat -- "${args[@]}" 2>/dev/null)"
       pathspec=" --$ws"
     else
-      st="$(git -C "$PROJECT" status --porcelain 2>/dev/null)"
-      df="$(git -C "$PROJECT" diff --stat 2>/dev/null)"
+      st="$(git -C "$g" status --porcelain 2>/dev/null)"
+      df="$(git -C "$g" diff --stat 2>/dev/null)"
     fi
     n=0; [ -n "$st" ] && n="$(printf '%s\n' "$st" | wc -l | tr -d ' ')"
     HB_FILES="$n"
