@@ -1,0 +1,102 @@
+# SubDeck headless run profiles: the single place for CLI flags (read by run.sh on every run).
+# Format: <tool>.<field>=<value>; '#' comments; CRLF tolerated; the last duplicate wins; tool "_" = defaults for all tools.
+# Token lists are split on spaces; {sp} = a literal space inside a token, {empty} = an empty argument.
+# Placeholders (values): {model} {cwd} {prompt} {prompt_file} {last_file} ({cmd}: the custom command, placeholders quoted).
+# Slots (whole tokens, expand to 0..n tokens): {model_args} = the model field (only when a model is set),
+#   {cwd_args} = the cwd field, {restrict_args} = the restrict field, {user_args} = the role's args setting.
+# Fields: bin argv prompt(stdin|arg|file) model cwd restrict env out(json:<field>|file|stdout) auth_codes auth_re quota_re
+#   auth_hint transcript status(stable|experimental) verified; "_" only: deny_args (bash patterns, compared lower-case).
+# Rules: never add a flag that auto-approves beyond what is listed here; never --no-session-persistence, --bare or
+# --ephemeral (Desk reads the transcripts; --bare skips the SubDeck guard hooks). Quota/auth exit codes are UNVERIFIED for
+# every CLI: the regexes below run on the output tail; adjust this file after the first live runs.
+
+_.prompt=stdin
+_.out=stdout
+_.status=stable
+_.auth_codes=
+_.quota_re=rate.?limit|quota|429|usage limit|resource.?exhausted|too many requests|credits
+_.auth_re=not (logged|signed) in|log ?in required|unauthori[sz]ed|401|403|forbidden|invalid api key|authenticat|could not be validated|set an auth method
+_.deny_args=*dangerously* *bypasspermissions* *yolo* *danger-full-access* -y --auto --allow-all --allow-all-paths --no-sandbox
+
+# Claude Code: hooks run in -p mode, so the SubDeck guard applies. Prompts that would ask are denied.
+claude.bin=claude
+claude.argv=-p --output-format json {model_args} {restrict_args} {user_args}
+claude.prompt=stdin
+claude.model=--model {model}
+claude.cwd=
+claude.restrict=--permission-mode acceptEdits --permission-prompts none --allowedTools Bash --disallowedTools Bash(git{sp}push:*)
+claude.out=json:result
+claude.auth_hint=run `claude` once and log in, or set ANTHROPIC_API_KEY
+claude.transcript=~/.claude/projects/<cwd-slug>/<session_id>.jsonl
+claude.verified=2.1.292
+
+# Codex CLI: exec runs with approval policy never; stdin "-" carries the prompt; -o writes the last message.
+codex.bin=codex
+codex.argv=exec {cwd_args} {model_args} {restrict_args} --json -o {last_file} {user_args} -
+codex.prompt=stdin
+codex.model=-m {model}
+codex.cwd=-C {cwd}
+codex.restrict=-s workspace-write
+codex.out=file
+codex.auth_hint=run `codex login`, or set CODEX_API_KEY
+codex.transcript=$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl
+codex.verified=0.160.1
+
+# Gemini CLI: stdin is appended to the (empty) -p prompt. Consumer logins ended 2026-06-18: API key or Vertex only.
+gemini.bin=gemini
+gemini.argv=-p {empty} {model_args} {restrict_args} -o json {user_args}
+gemini.prompt=stdin
+gemini.model=-m {model}
+gemini.cwd=
+gemini.restrict=--approval-mode auto_edit
+gemini.out=json:response
+gemini.auth_codes=41
+gemini.auth_hint=set GEMINI_API_KEY or use Vertex (GOOGLE_GENAI_USE_VERTEXAI); consumer users: use the agy tool
+gemini.transcript=~/.gemini/tmp/<hash>/chats/
+gemini.verified=0.63.0
+
+# OpenCode: permissive by default; OPENCODE_PERMISSION denies git push and directories outside the cwd.
+opencode.bin=opencode
+opencode.argv=run {cwd_args} {model_args} {user_args} {prompt}
+opencode.prompt=arg
+opencode.model=-m {model}
+opencode.cwd=--dir {cwd}
+opencode.restrict=
+opencode.env=OPENCODE_PERMISSION={"bash":{"*":"allow","git{sp}push*":"deny"},"edit":"allow","external_directory":"deny"}
+opencode.out=stdout
+opencode.auth_hint=run `opencode providers` to log in to a provider
+opencode.transcript=~/.local/share/opencode/opencode.db
+opencode.verified=1.18.35
+
+# GitHub Copilot CLI: --allow-all-tools is required in non-interactive mode; deny rules win over allow; paths stay in the cwd.
+copilot.bin=copilot
+copilot.argv={cwd_args} -p {prompt} {model_args} {restrict_args} --no-ask-user -s {user_args}
+copilot.prompt=arg
+copilot.model=--model {model}
+copilot.cwd=-C {cwd}
+copilot.restrict=--allow-all-tools --deny-tool shell(git{sp}push) --deny-tool shell(git{sp}push:*)
+copilot.out=stdout
+copilot.auth_hint=run `copilot login`, or set COPILOT_GITHUB_TOKEN or GH_TOKEN
+copilot.transcript=$COPILOT_HOME/session-state
+copilot.verified=1.0.92
+
+# Google Antigravity CLI: EXPERIMENTAL, flags from secondary sources only (UNVERIFIED); every run warns.
+agy.bin=agy
+agy.argv=-p {prompt} {model_args} {restrict_args} {user_args}
+agy.prompt=arg
+agy.model=--model {model}
+agy.cwd=
+agy.restrict=--mode accept-edits
+agy.out=stdout
+agy.status=experimental
+agy.auth_hint=log in with your Google account in agy (UNVERIFIED)
+agy.transcript=UNVERIFIED
+agy.verified=none
+
+# custom: roles.<r>.cmd run with bash -c; placeholders in cmd are replaced by single-quoted values. No restrictions.
+custom.bin=bash
+custom.argv=-c {cmd}
+custom.prompt=file
+custom.out=stdout
+custom.auth_hint=see the documentation of your command
+custom.verified=none
