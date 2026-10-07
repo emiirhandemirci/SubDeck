@@ -15,3 +15,4 @@ You are not the manager: never load the subdeck:orchestrator skill, never launch
 - Back every claim with `file:line` evidence. Do not claim what you have not read.
 - End with an "Uncertainties" list: anything you could not confirm, inferred, or found conflicting. Write "none" only if truly none.
 - Report: stay within the line limit given in the task (default about 60 lines), with headings. Answer the question first, evidence after.
+- End with a `Stop:` line: `Stop: <done|waiting|quota|timeout|no-progress|blocked> - <one line why>`. `done` only when the question is answered; `blocked` when you lack access or the files do not exist.

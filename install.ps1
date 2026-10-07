@@ -240,5 +240,5 @@ if ($list -match "(?m)\b$Mkt\b") {
 Write-Host ''
 (& $claude plugin list 2>$null | Out-String) -split "`n" | Select-String -Pattern 'subdeck' -Context 0,3 | Select-Object -First 1 | ForEach-Object { $_.Line; $_.Context.PostContext }
 Write-Host ''
-Write-Host 'Restart Claude Code to load the plugin.'
+Write-Host 'Restart Claude Code to load the plugin (in a running session, /reload-plugins also works; until then subdeck agent types may be reported missing).'
 Write-Host 'Then try /subdeck:status, or start the dashboard with /subdeck:desk.'

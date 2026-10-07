@@ -130,7 +130,7 @@ if ($ModeCurrent) {
 Write-Host ''
 Write-Host "SubDeck $ver installed from $Target (no network used)."
 Write-Host 'Next steps:'
-Write-Host '  1. Restart Claude Code.'
+Write-Host '  1. Restart Claude Code (or run /reload-plugins in a running session).'
 Write-Host '  2. Run /subdeck:status to check the plugin, and /subdeck:desk for the live web view (needs Node.js 22.13+).'
 Write-Host '  3. Smoke test in a throwaway folder: ask "Use a worker to create hello.txt containing hello, then verify it."'
 Write-Host 'Update: unzip a newer bundle and run this installer again. Remove: .\install-offline.ps1 -Uninstall'

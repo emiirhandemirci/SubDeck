@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Tasks:** the manager keeps a task file per delegated job (`tasks.sh`: new, set, append, done, list, ready, show). Files live in the project's state folder by default; `tasks.dir` moves them. Hooks set the status from the agent's start, stop and failure events; `done` needs an approved verifier verdict. Desk gets a Tasks tab.
+- **Report watchdog:** a worker, researcher or verifier that stops without the required `Stop:` / `Tested:` / `Verdict:` line is logged as `report_missing`, notified and shown in Desk as "stopped without report". Agents may no longer end a turn waiting on a background job. Setting `report-check`.
+- **Interrupted handoff:** a usage-limit failure marks the task `interrupted` and writes the uncommitted files and a diff stat into its Handoff section (new `StopFailure` hook); nothing is committed or reverted for you.
+- **"Tested how?":** worker reports need a `Tested:` line; verifier evidence is typed `read`, `executed` or `live`, and behaviour claims need executed or live evidence. New `scripts/verify-checks.sh` (empty or shrinking tests, claimed commands missing from the transcript).
+- **Protected resources:** new guard rule `protected-resources` (default ask) with `protect-ports`, `protect-hosts`, `protect-procs`; plus a lock-file and leave-as-found rule in the rulebook. A guard rail on obvious command text only.
+- **Missing agent types:** install output, README and the session hint now say to run `/reload-plugins` (or restart) after install or update; the manager tells you once if a `subdeck:` agent type is missing.
 - **Desk:** a slow first scan is no longer shown as "no sessions" (sessions appear as they are found, with scan progress), and the first Claude Code scan is faster; Desk now subscribes to changes before the first scan.
 - **Cursor:** sessions are found when `composerHeaders` is missing (falls back to `cursorDiskKV` and per-workspace storage); an unknown layout shows a note instead of an error.
 

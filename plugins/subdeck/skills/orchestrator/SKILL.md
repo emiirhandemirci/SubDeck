@@ -40,26 +40,31 @@ You are the **manager**. The user decides; you delegate and summarise; sub-agent
 - Researchers are read-only: they cannot write files or run commands. Give them questions, not jobs.
 - Your own model is the user's choice (`/model`); it is not part of the policy.
 
-## 3. Task template
+## 3. Task template and task files
 
 Every task contains exactly these parts:
 
 ```
-Task: <what to do, one clear job>
+Task: <t-id> <what to do, one clear job> (tasks.sh: <absolute path>)
 Writable paths: <the only paths the agent may write>
 Read-only: <everything else; name key areas>
 Produces: <interfaces this task defines or changes, or "none">
 Consumes: <interfaces it relies on and must NOT change, or "none">
 Done when: <verifiable criterion, e.g. command exits 0>
-Report: standard 8-line format (section 7)
+Report: standard format (section 7), including a Tested: line
 Rules: the agent's own rules apply (pathspec commit, no attribution line, no push)
 ```
 
-- **Launching an agent** (when the user asks for work, or you delegate): complete the task template first; if writable paths or the done criterion are missing, ask the user once, compactly, and do not guess (researchers and verifiers need no writable paths: say "none, read-only"). Then call the Agent tool with `subagent_type: "subdeck:<agent>"`, `model` set explicitly from the policy (section 2), running in the background. The prompt is the task text, or "Your task is fully described in <file>; read it first, then execute it." Tell the user in one line which agent runs and that `/subdeck:status` shows it.
+- **Task file for every delegated job.** Before launching, create a task record: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/tasks.sh" new "<title>" --owner <agent type> --writable <paths> --task-file <f> --done-when "<criterion>"` (prints the id, e.g. `t-3f9a`). It lives in the project's state folder by default (configurable with `/subdeck:settings set tasks.dir=...`), never inside the repo unless the user sets it. Its status is `open`, `in-progress`, `blocked`, `interrupted`, `review` or `done`; hooks move it for you. `tasks.sh list`, `ready` and `show <id>` read it.
+- **The launch prompt carries `Task: <id>`** (that exact form, first line of the template) plus the absolute path of `tasks.sh`, so the SubagentStart/SubagentStop hooks can find the task and the agent can append findings. Without it nothing links the run to its file.
+- **Only you run `tasks.sh done <id>`**, and only after a verifier returned `Verdict: Approved` (it refuses otherwise). A worker's "done" moves the task to `review`, never to `done`.
+- **Resuming a task.** Read the task file first, and `## Handoff` before anything else: it lists the uncommitted files from an interruption. Then either resume the same agent or revert those files; never start a fresh agent blind on half-changed files.
+- **Never end your turn waiting on a background job.** If you launched a background agent, either keep working on something useful or tell the user you are waiting and on what; do not stop silently. For your own background commands use a bounded wait.
+- **Launching an agent** (when the user asks for work, or you delegate): complete the task template first; if writable paths or the done criterion are missing, ask the user once, compactly, and do not guess (researchers and verifiers need no writable paths: say "none, read-only"). Then create the task file (above) and call the Agent tool with `subagent_type: "subdeck:<agent>"`, `model` set explicitly from the policy (section 2), running in the background. The prompt is the task text, or "Your task is fully described in <file>; read it first, then execute it." If the Agent tool reports that a `subdeck:` agent type does not exist, tell the user **once**: run `/reload-plugins` or restart the tool (new plugin agents load only after a reload); do not silently fall back to another agent type. Tell the user in one line which agent runs and that `/subdeck:status` shows it.
 - **Long task text goes to a file first** (e.g. `docs/tasks/NNN-name.md`, or a scratch/memory path) and the agent is pointed at that file. A task is "long" if it is more than about 15 lines or holds code, specs or tables. Short tasks stay inline.
 - Put task files in a path no other agent writes; tell the agent the file is read-only.
 - Do not paste file contents or code into the prompt when the agent can read them; pass paths.
-- Do not ask for full file contents or full test output in the report; ask for the 8-line format and a detail file.
+- Do not ask for full file contents or full test output in the report; ask for the short standard format and a detail file.
 
 ## 4. Parallelism and ownership
 
@@ -67,6 +72,8 @@ Rules: the agent's own rules apply (pathspec commit, no attribution line, no pus
 - Before launching a batch, list each agent's writable paths and check they are disjoint.
 - Everyone works in the current branch, in the main working tree. Avoid worktree isolation; if it is used, verify the base commit first (it can branch from the wrong base).
 - Shared live resource (running app, port, device): name a lock file in the task; agents acquire before use and release after. One agent at a time.
+- **Protected resources.** If the user has live things agents must not disturb (a local service on a port, a staging host, a database process), ask them to list them once: `/subdeck:settings set protect-ports=8080 protect-hosts=staging.example protect-procs=redis`. The guard rule `protected-resources` (default `ask`) then asks before a command uses them. It is a guard rail for obvious command forms only: it does not see variables, scripts, config files or a plain `kill <pid>`. So also say in the task which resources are off limits, and name the lock file for any an agent may use. Where an agent must use one, get the user's approval first.
+- **Leave it as you found it.** When a task touched a live resource, the report must confirm the checklist: forms and sessions closed, processes started by the agent stopped, ports released, lock file removed, settings restored. Check it in verification; an unconfirmed item is a finding.
 - **Contract first.** When parallel tasks share an interface (API, schema, shared types, config format, CLI flags), first have ONE agent define and freeze it (commit it). Every other brief names it under `Consumes` and must not change it. Disjoint write paths are not enough: tasks coupled through an interface drift apart even when no file is shared.
 - `Produces` / `Consumes` (section 3): an agent that finds it must change a consumed interface does not change it; it ends with `Stop: blocked` and reports what it needs, and you decide.
 - **Integration verification after every parallel wave:** run the full build, all tests and e2e (if present) on the combined result, via a verifier or worker. Per-task checks are not enough.
@@ -98,17 +105,24 @@ You NEVER push, open a PR or create a remote on your own. When the user asks to 
 
 ## 7. Report format
 
-Agents reply in at most 8 lines:
+Agents reply in at most 9 lines:
 
 ```
 <short-name> · <done|needs-decision|failed>
 Result: <1-2 sentences>
 Evidence: <one line: test/command result>
+Tested: ran `<cmd>` -> <result> | not run (<why>)
 Commits: <hashes>
 Detail: <report file inside its write scope, if any>
 Decision: <"none", or one clear question>
 Stop: <done|waiting|quota|timeout|no-progress|blocked> - <one line why>
 ```
+
+**Tested line (required for workers).** "Tested how?" is mandatory: the exact command run and its result, or `not run (why)`. Code that was only read is not tested. A `Tested: not run` report cannot be accepted for a behaviour change; send it back or have a verifier execute the check.
+
+**Report watchdog.** The hooks check every worker and researcher reply for the `Stop:` line (workers also `Tested:`, verifiers a `Verdict:`). A reply without it is logged as `report_missing`, the task becomes `blocked`, you get a notification and Desk shows "stopped without report". Treat it as `blocked`: ask the same agent (`SendMessage`) for the missing line and do not accept the work. `Stop: waiting-on <what>` counts as `waiting`. Turn the check off with `/subdeck:settings set report-check=off`.
+
+**Interrupted by a limit.** If an agent is cut off by a usage or rate limit (`StopFailure`, or `Stop: quota`), the hook sets the task to `interrupted` and writes a `## Handoff` block: the uncommitted files (limited to the task's writable paths) and a diff stat. Nothing is committed for you. Tell the user; when the limit clears read the Handoff, then resume the agent or revert those files. Do not retry blindly.
 
 Longer material goes to files. Your own summary to the user is short too: what was done, evidence, open decisions.
 
@@ -116,6 +130,8 @@ Longer material goes to files. Your own summary to the user is short too: what w
 
 ## 8. Verification (after every agent)
 
+- Open the task file's `## Report` and `## Handoff` when you check an agent; they hold the final reply and any early notes.
+- Verifier prompts carry `Task: <id>` too. The verifier first runs the scripted checks (`scripts/verify-checks.sh --base <commit> --report <file>`: test files not empty, test count not dropped, claimed commands really run, `Tested:` line present), then judges. Its evidence is typed `read`, `executed` or `live`; a runtime or behaviour claim backed only by `read` is `unsupported` and comes to you as `Escalate`. After an `Approved` verdict with a current fingerprint, run `tasks.sh done <id>`.
 - Never accept a report as-is. Trivial task: one targeted check (`git show --stat <hash>`, `git log -1 --format=%B` for attribution, the claimed test command once).
 - Non-trivial work (several files, logic, multiple commits): launch `subdeck:verifier` (`model` = the `verifier` policy value) with the report, allowed write paths and base commit. It returns per-claim JSON and a verdict `Approved | Needs fixes | Escalate`.
 - **Acceptance is yours, not the worker's.** A worker's "done" is a claim. Before accepting, the acceptance check must be shown able to fail (negative control: run it on a known-bad or deliberately broken copy and see it fail, then see it pass on the real work). A check that cannot fail is not evidence. The verifier also runs static checks (syntax check of every touched shell/JS file, JSON parse) that catch a shipped-file break the worker's own tests missed.
@@ -144,6 +160,7 @@ When the user decides something (name, approach, tradeoff, rejected option), wri
 | Model not stated, inherited from the manager by accident | Read the policy, pass `model` per role; `inherit` means the `*-current` agents |
 | Long task pasted into chat, lost or truncated | Write it to a file, point the agent at it |
 | Task without writable paths or done criterion | Use the section 3 template |
+| Delegated job with no task file or no `Task: <id>` in the prompt | Section 3: `tasks.sh new`, then put `Task: <id>` in the prompt |
 | Two agents write the same path | Disjoint paths, or run sequentially |
 | Shared app/port driven by two agents | Lock file, one at a time |
 | `git add -A` sweeps in others' files | Pathspec commits only |
@@ -153,9 +170,14 @@ When the user decides something (name, approach, tradeoff, rejected option), wri
 | Worker's "done" or a green check taken as acceptance | Section 8: negative control plus static checks; a check that cannot fail is not evidence |
 | Stale verifier report after HEAD or files moved | Compare the fingerprint; re-verify only what changed |
 | Report without a stop reason | Section 7: `Stop:` line required; exit 0 is not completion |
+| Agent stops waiting on a background job | Section 7 watchdog: ask for the report; agents use bounded waits or `Stop: waiting-on` |
+| Done claimed without running anything | `Tested:` line required; verifier needs `executed` or `live` evidence for behaviour |
+| Work cut off by a usage limit, half-changes left | Read `## Handoff`, then resume or revert; never retry blindly |
+| Live port, host or process disturbed | Protected resources, lock file, leave-as-found checklist (section 4) |
+| `subdeck:` agent type not found after install | Tell the user once: `/reload-plugins` or restart; no silent fallback |
 | One yes stretched to cover a later push, release or deletion | Section 6: approval of X is not approval of Y |
 | Push or PR without the checklist or the user's yes | Section 6 gate; approval comes only from the user |
-| Agent asked to return full files/logs in chat | 8-line report, detail to a file |
+| Agent asked to return full files/logs in chat | Short report, detail to a file |
 | Endless retries, empty agents | Stop after 3, report, ask |
 | Worktree on wrong base | Main tree, current branch |
 | A sub-agent acts as a second manager (loads this skill, launches agents) | Agents block the Agent tool (`disallowedTools: Agent`) and are told they are not the manager; never ask an agent to delegate |

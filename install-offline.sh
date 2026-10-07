@@ -110,7 +110,7 @@ cat <<EOF
 
 SubDeck $VER installed from $TARGET (no network used).
 Next steps:
-  1. Restart Claude Code.
+  1. Restart Claude Code (or run /reload-plugins in a running session).
   2. Run /subdeck:status to check the plugin, and /subdeck:desk for the live web view (needs Node.js 22.13+).
   3. Smoke test in a throwaway folder: ask "Use a worker to create hello.txt containing hello, then verify it."
 Update: unzip a newer bundle and run this installer again. Remove: ./install-offline.sh --uninstall

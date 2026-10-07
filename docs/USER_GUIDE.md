@@ -18,7 +18,7 @@ SubDeck is a manager + sub-agents toolkit for Claude Code: rules, agents and ski
 claude plugin marketplace add emiirhandemirci/SubDeck && claude plugin install subdeck@subdeck
 ```
 
-Or run `./install.sh` (macOS, Linux, Git Bash) / `.\install.ps1` (Windows PowerShell) from a clone; the script installs, or updates if SubDeck is already installed. Inside a Claude Code terminal session you can use `/plugin marketplace add emiirhandemirci/SubDeck` and `/plugin install subdeck@subdeck`. The VS Code extension has no `/plugin`, so use the terminal CLI; the plugin is then active in the extension too. Restart Claude Code afterwards.
+Or run `./install.sh` (macOS, Linux, Git Bash) / `.\install.ps1` (Windows PowerShell) from a clone; the script installs, or updates if SubDeck is already installed. Inside a Claude Code terminal session you can use `/plugin marketplace add emiirhandemirci/SubDeck` and `/plugin install subdeck@subdeck`. The VS Code extension has no `/plugin`, so use the terminal CLI; the plugin is then active in the extension too. Restart Claude Code afterwards, or run `/reload-plugins` in a running session. Until the plugin is reloaded, agent types such as `subdeck:verifier` may be reported as not found; the manager then tells you once instead of silently using another agent.
 
 **Update:**
 
@@ -100,7 +100,7 @@ Update: build a newer bundle, unzip it and run the installer again. Remove: `.\i
 | `/subdeck:desk` | Starts Desk (or prints its URL if it is already running). | `/subdeck:desk` |
 | `/subdeck:desk stop` | Stops Desk. `status` prints the URL or says it is not running. | `/subdeck:desk stop` |
 | `/subdeck:status` | Prints the live table of running and recently finished sub-agents, including the real model id (MODEL column; on narrow terminals ACTIVITY is dropped first, then MODEL). `--all` shows more. | `/subdeck:status --all` |
-| `/subdeck:settings` | A short grouped table of the settings (model policy, notifications, push and guard rules, context, status line). `help` lists every key with its values, `set key=value ...` changes them, `reset` restores defaults, `--project` writes to this project only. | `/subdeck:settings set notify=on worker=opus` |
+| `/subdeck:settings` | A short grouped table of the settings (model policy, notifications, push and guard rules, tasks, protected resources, context, status line). `help` lists every key with its values, `set key=value ...` changes them, `reset` restores defaults, `--project` writes to this project only. | `/subdeck:settings set notify=on worker=opus` |
 
 That is the whole user-facing surface: three commands. The manager rulebook (delegation, task template, git rules, the pre-push checklist and approval gate) loads automatically and can also be opened with `/subdeck:orchestrator`. You launch agents and ask for pushes by talking to the manager.
 
@@ -262,6 +262,7 @@ SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds a
 | `history-rewrite` | ask | `git reset --hard`, `rebase`, `filter-branch/filter-repo`, `clean -f` |
 | `rm-rf-danger` | deny | recursive delete of `/`, a drive root, `~`/`$HOME`, the project root or their parents |
 | `secret-files` | ask | Write/Edit of `.env*` (not `.env.example`), `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `credentials*.json` |
+| `protected-resources` | ask | commands that use a port, host or process you listed with `protect-ports`, `protect-hosts`, `protect-procs` (see section 9b; inactive while the lists are empty) |
 | `attribution` | off | `git commit` messages containing `Co-Authored-By` or "Generated with" |
 
 - `/subdeck:settings` shows the effective rules.
@@ -274,6 +275,24 @@ SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds a
 **Push modes and protected branches.** `/subdeck:settings set push=ask|branches|off`. The default, `branches`, lets pushes to feature branches through and asks for: a push to a protected branch (explicit refspec, `HEAD`, `src:dst`, a delete), any tag push (`--tags`, `--follow-tags`, `refs/tags/...`), `--all` / `--mirror`, and a `merge`, `rebase` or `reset` while the current branch is protected. `ask` asks for every push; `off` allows every push. Force pushes are always denied, in every mode. Protected branches default to `main`, `master`, `release/*`; change them with `/subdeck:settings set protect-branches=main,develop,release/*` (globs with `*` and `?`, matched against the branch name; a project list replaces the user list). An asked push still needs your explicit yes in the conversation. `git pull` into a protected branch is not covered.
 
 **Protected paths.** Name files or globs your agents must not change without asking: `/subdeck:settings set protect=CLAUDE.md,.github/workflows/**,migrations/**,*.lock` (add `--project` for this repository only; `unprotect=<glob>` removes one). The guard then asks before Write/Edit/MultiEdit/apply_patch on those paths and before obvious shell writes or deletes (`>`, `>>`, `rm`, `mv`, `sed -i`, `git rm`, `git checkout -- <path>`). Globs are relative to the project root, case-insensitive on Windows; a glob without `/` matches the name at any depth, `**` crosses folders. Change the mode with `protected-paths=deny|ask|off`. The list lives in `guard.protectedPaths` in `~/.subdeck/config.json` or the project config in `~/.subdeck/projects/<name>-<hash>/config.json` (project wins). This is a guard rail, not a sandbox: shell globs and variables, other interpreters (python, node, perl), editors and scripts can still change protected files.
+
+## 9b. Tasks, watchdog and protected resources
+
+**Tasks.** For each delegated job the manager creates a task file with `scripts/tasks.sh new "<title>"` and puts `Task: <id>` in the agent's prompt. The file holds the task text, the done criterion, the agent's report, the verification and, after an interruption, a handoff note. It lives in the project's state folder (`~/.subdeck/projects/<name>-<hash>/tasks/`) so nothing lands in your repository; `/subdeck:settings set tasks.dir=docs/tasks` moves it (relative to the project, or an absolute path). Status flow: `open`, `in-progress` (agent started), `review` (worker reported `Stop: done`), `blocked`, `interrupted`, `done`. Only the manager marks a task done, and `tasks.sh done` refuses until the Verification section has `Verdict: Approved`. Desk shows the tasks as a board in the Tasks tab. Commands: `tasks.sh list|ready|show <id>|dir`.
+
+**Report watchdog.** Workers must end with a `Tested:` line and a `Stop:` line, researchers with `Stop:`, verifiers with `Verdict:`. If the hook finds one missing it logs `report_missing`, marks the task `blocked`, sends a "waiting" notification and Desk shows "stopped without report". `Stop: waiting-on <what>` is accepted (counts as `waiting`). `/subdeck:settings set report-check=off` disables the check for agents without a task; it never changes how task statuses work.
+
+**Interrupted handoff.** If an agent dies on a limit (`StopFailure`, or `Stop: quota`) the task becomes `interrupted` and a `## Handoff` block is written: `git status --porcelain` and `git diff --stat` limited to the task's writable paths, plus the agent id. SubDeck does not commit or revert anything. Desk shows "interrupted: N uncommitted files". The manager reads the note, then resumes the agent or reverts those files.
+
+**Tested and evidence kinds.** The worker's `Tested: ran \`<cmd>\` -> <result> | not run (why)` line says how a claim was checked. The verifier first runs `scripts/verify-checks.sh --base <commit> --report <file>` (empty test files, a dropped test count, claimed commands missing from the transcript, a missing `Tested:` line) and types each piece of evidence `read`, `executed` or `live`. Claims about runtime behaviour need `executed` or `live`; otherwise they are `unsupported` and escalate.
+
+**Protected resources.** For live things agents must not disturb:
+
+```
+/subdeck:settings set protect-ports=8080,9000 protect-hosts=staging.example protect-procs=redis
+```
+
+The guard rule `protected-resources` (default `ask`; `deny` or `off` with `protected-resources=deny|off`) then asks before a Bash or PowerShell command that uses `localhost:8080`, `127.0.0.1:8080`, `0.0.0.0:8080`, `--port 8080`, `PORT=8080`, `-p 8080` (the exact forms only), `lsof -i :8080`, a listed host, or `kill`, `pkill`, `killall`, `taskkill /IM` or `Stop-Process -Name` on a listed process. Limits, honestly: it reads the command text only. It does not see a port or host held in a variable, written in a script or config file, chosen by the program itself, or a plain `kill <pid>`; aliases and other interpreters get around it. It is a reminder to ask you first, not a sandbox. For anything shared, also use a lock file named in the task and the "leave it as you found it" checklist (forms closed, processes stopped, ports released) in the agent's report. The rule does nothing while all three lists are empty.
 
 ## 10. Settings: status line
 

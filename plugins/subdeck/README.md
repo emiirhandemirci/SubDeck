@@ -1,6 +1,6 @@
 # SubDeck plugin
 
-SubDeck turns a Claude Code session into a manager of parallel sub-agents. It adds an orchestrator rulebook, seven agents, three slash commands, a few local hooks, and a deterministic guard. All status output comes from bash and awk scripts; the model is never called to produce it.
+SubDeck turns a Claude Code session into a manager of parallel sub-agents. It adds an orchestrator rulebook, seven agents, three slash commands, task files, a few local hooks, and a deterministic guard. All status output comes from bash and awk scripts; the model is never called to produce it.
 
 ## Commands
 
@@ -19,16 +19,22 @@ These three are the whole command surface. The manager's rulebook (model policy,
 | Event | Script | What it does |
 |---|---|---|
 | SessionStart | inline `echo` | Adds one line of context telling Claude to load the orchestrator skill when delegating. Writes nothing. |
-| SubagentStart, SubagentStop | `log-event.sh` | Appends one JSON line per event to `events.jsonl` in the project's state folder (fallback: `events.d/`), and `hook-errors.log` on errors. |
+| SubagentStart, SubagentStop, StopFailure | `log-event.sh` | Appends one JSON line per event to `events.jsonl` in the project's state folder (fallback: `events.d/`), and `hook-errors.log` on errors. It then calls `tasks.sh hook <event>`, which updates the task file (see Tasks); `SUBDECK_TASKS=0` skips that. |
 | Notification (permission prompt, elicitation, agent needs input) | `log-event.sh` | Same event file, so Desk and `/subdeck:status` can show an agent as waiting. |
 | SubagentStop, Notification, Stop | `notify.sh` | Local desktop notification (OS native, silent). **Off by default**; when on, it defaults to the waiting and done events (agent and idle are opt-in). Shows only the project folder name and a fixed reason. Logs attempts (time, event, method, exit code, no content) to `notify.log` in the state folder. |
 | PreToolUse (Bash, PowerShell, Write, Edit, MultiEdit) | `guard.sh` | Allows, asks or denies per the rules below. Writes nothing. |
 
 No hook or script makes network calls or model calls. Nothing is written into your project: per-project state (events, notification log, status-line cache, project settings) lives in `~/.subdeck/projects/<name>-<hash>/`. Older versions wrote `<project>/.subdeck/`; that folder is still read but never written or deleted. Settings live in `~/.subdeck/config.json` (user) and the project's `config.json` in the state folder (project, wins). `SUBDECK_HOME` moves `~/.subdeck`.
 
+## Tasks
+
+`scripts/tasks.sh` keeps one Markdown file per delegated job, by default in `<state folder>/tasks/` (`tasks.dir` in the config moves it; archive of done tasks in `archive/`). Commands: `new`, `set`, `append`, `done`, `list`, `ready`, `show`, `dir`. The manager puts `Task: <id>` in the agent's prompt; the hooks find it and set the status (`open`, `in-progress`, `blocked`, `interrupted`, `review`, `done`). The hook checks the report shape (`Stop:` and `Tested:` for workers, `Stop:` for researchers, `Verdict:` for verifiers); a missing line logs `report_missing` and notifies. A usage-limit failure writes a handoff note (uncommitted files, diff stat) into the task. `done` needs `Verdict: Approved` in the task's Verification section. `scripts/verify-checks.sh` gives the verifier deterministic checks. Settings keys: `tasks.dir`, `report-check`.
+
+After installing or updating the plugin run `/reload-plugins` (or restart the tool); until then new agent types may be reported missing.
+
 ## Guard
 
-The guard is a guard rail, not a sandbox. Default rules: `git-add-all` (deny), `force-push` (deny, in every mode), `rm-rf-danger` (deny), `push` (`branches`), `history-rewrite` (ask), `secret-files` (ask), `protected-paths` (ask, only for globs you configure), `attribution` (off).
+The guard is a guard rail, not a sandbox. Default rules: `git-add-all` (deny), `force-push` (deny, in every mode), `rm-rf-danger` (deny), `push` (`branches`), `history-rewrite` (ask), `secret-files` (ask), `protected-paths` (ask, only for globs you configure), `protected-resources` (ask, only for ports, hosts and process names you configure with `protect-ports`, `protect-hosts`, `protect-procs`; it sees obvious command text only, not variables, scripts, config files or a plain `kill <pid>`), `attribution` (off).
 
 Push modes (`/subdeck:settings set push=ask|branches|off`): `branches` (default) lets pushes to feature branches through and asks for protected branches (default `main`, `master`, `release/*`, change with `protect-branches=...`), tags, `--all` / `--mirror`, and merge/rebase/reset while on a protected branch; `ask` asks for every push; `off` allows pushes. Turn any rule off with `/subdeck:settings set <rule id>=off`, everything with `guard=off`, or set `SUBDECK_GUARD=0`. Any internal error means "allow".
 

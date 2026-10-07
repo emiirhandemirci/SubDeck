@@ -41,7 +41,7 @@ Copilot gets skills, agents and hooks from the plugin itself; Codex plugins cann
 - Update (Claude Code): `claude plugin marketplace update subdeck && claude plugin update subdeck@subdeck`.
 - No internet on the target machine: build a USB bundle with `./make-offline-bundle.sh`; see [Offline install](docs/USER_GUIDE.md#offline-install-no-internet).
 
-Restart the tool, then try `/subdeck:status` or `/subdeck:desk` (Claude Code).
+Restart the tool (in a running Claude Code session `/reload-plugins` also works; until then a new agent type such as `subdeck:verifier` may be reported as not found), then try `/subdeck:status` or `/subdeck:desk` (Claude Code).
 
 ## What you get
 
@@ -66,6 +66,11 @@ Restart the tool, then try `/subdeck:status` or `/subdeck:desk` (Claude Code).
   </tr>
 </table>
 
+- **Tasks:** the manager keeps one small task file per delegated job (`tasks.sh`, stored in your project's SubDeck state folder, or in a folder you choose with `tasks.dir`). Hooks move it between open, in progress, blocked, interrupted and review; only an approved verifier verdict lets the manager mark it done. Desk has a Tasks tab.
+- **Report watchdog:** a worker or researcher that stops without its `Stop:` line (for example while "waiting for a background job") is logged as `report_missing`, notified and shown in Desk as "stopped without report". Turn off with `/subdeck:settings set report-check=off`.
+- **Interrupted work:** when a usage limit cuts an agent off, the task becomes `interrupted` and gets a handoff note: the uncommitted files in its writable paths and a diff stat. Nothing is committed for you; the manager resumes the agent or reverts from the note.
+- **"Tested how?":** every worker report carries `Tested: ran <cmd> -> <result>` or `not run (why)`. The verifier types its evidence `read`, `executed` or `live`, and a behaviour claim backed only by reading is `unsupported`. `scripts/verify-checks.sh` adds deterministic checks (test files not empty, test count not dropped, claimed commands really appear in the transcript).
+- **Protected resources:** `/subdeck:settings set protect-ports=8080 protect-hosts=staging.example protect-procs=redis` makes the guard ask before an agent command uses them. Obvious command forms only; see the limits below.
 - **Waiting list:** click the "N waiting" badge in Desk for every session blocked on you, with what it waits for and how long.
 - **Changed files:** per-agent files with red/green diffs and "also changed by" badges when two agents touch the same file (Claude Code).
 - **Protected paths:** `/subdeck:settings set protect=CLAUDE.md,*.lock` makes the guard ask before agents edit or delete those files.
@@ -145,7 +150,7 @@ SubDeck keeps its per-project records outside your project, in `~/.subdeck/proje
 |---|---|
 | `/subdeck:desk` | Starts (or prints the URL of) Desk; `stop` stops it. |
 | `/subdeck:status` | Live agent table with the real model id per agent (`--all` includes finished agents). |
-| `/subdeck:settings` | Short table of all settings (model policy, notifications, push and guard rules, context, status line); `help`, `set key=value`, `reset`, `--project`. |
+| `/subdeck:settings` | Short table of all settings (model policy, notifications, push and guard rules, tasks, protected resources, context, status line); `help`, `set key=value`, `reset`, `--project`. |
 
 These three are the whole command surface. Launching agents and pushing go through the manager, which follows the rulebook (`/subdeck:orchestrator` opens it by hand). Coming from 0.4? `task` and `pr` are now manager rules; `models`, `notify`, `guard` and `statusline` are keys of `/subdeck:settings`. See the [User Guide](docs/USER_GUIDE.md#4-commands).
 
@@ -179,6 +184,8 @@ Check the manifests with `claude plugin validate .` and `claude plugin validate 
 What SubDeck does not do:
 
 - **No sandbox.** The guard is a rail, not a wall: aliases, shell globs and variables, other interpreters and scripts can get around it.
+- **Protected resources are matched by text.** The guard sees `localhost:8080`, `--port 8080`, a listed host, or `kill`/`pkill` of a listed process name in the command itself. It does not see values in variables, ports set inside scripts or config files, a test runner that picks the port itself, or a plain `kill <pid>`. Tell agents in the task which resources are off limits and use a lock file for shared ones.
+- **The report watchdog checks the shape, not the truth.** A reply with a `Stop:` and `Tested:` line passes even if the claim is wrong; that is what the verifier is for. The interrupted handoff covers uncommitted files in the task's writable paths (the whole repository if none are set), not work in other directories.
 - **Copilot CLI, Codex, Cursor, Antigravity, Gemini CLI and OpenCode are not live-tested.** Support is built from the official docs; see [what works per tool](docs/USER_GUIDE.md#3-install).
 - **Desk reads local files only** and may estimate a state ("running", "idle") from file activity when a tool has no hooks.
 - **"Changed files" misses shell edits.** Only Write, Edit, MultiEdit and NotebookEdit calls are listed, not files written by shell commands.

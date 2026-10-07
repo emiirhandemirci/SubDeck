@@ -209,5 +209,5 @@ fi
 echo
 "$CLAUDE" plugin list 2>/dev/null | grep -i -A3 "subdeck" | head -5
 echo
-echo "Restart Claude Code to load the plugin."
+echo "Restart Claude Code to load the plugin (in a running session, /reload-plugins also works; until then subdeck agent types may be reported missing)."
 echo "Then try /subdeck:status, or start the dashboard with /subdeck:desk."

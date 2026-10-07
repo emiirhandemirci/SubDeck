@@ -28,7 +28,8 @@ Delete this line and the placeholder list at the end once filled in.
 - Every task lists: task, writable paths, read-only areas, done criterion, report format.
 - Write long task texts to a file first and point the agent at it.
 - Protected paths (agents must not touch): {{PROTECTED_PATHS}}
-- Agents report in at most 8 lines; details go to files.
+- Every delegated job gets a task file (`tasks.sh new`); the prompt carries `Task: <id>`. Only the manager runs `tasks.sh done`, after a verifier `Approved`.
+- Agents report in at most 9 lines (including a `Tested:` line); details go to files.
 - Every report ends with a stop reason (done|waiting|quota|timeout|no-progress|blocked); a worker's "done" is never acceptance: the verifier shows the check can fail, runs syntax checks on touched files, and stamps its report with HEAD + a state fingerprint (stale if either changed).
 
 ## Git flow
@@ -45,6 +46,8 @@ Delete this line and the placeholder list at the end once filled in.
 
 - Guard every shared live resource with a lock file (helper in the plugin's `scripts/`). Acquire before use, release after; stale locks time out.
 - Resources needing a lock: {{SHARED_RESOURCES}}
+- Protected resources (ports, hosts, processes; also set them with `/subdeck:settings set protect-ports=... protect-hosts=... protect-procs=...`): {{PROTECTED_RESOURCES}}
+- Leave it as you found it: forms closed, processes you started stopped, ports released, lock removed.
 
 ## Decision log
 
@@ -77,5 +80,6 @@ Delete this line and the placeholder list at the end once filled in.
 - `{{PROTECTED_PATHS}}`: paths no agent may edit (or "none").
 - `{{ATTRIBUTION_POLICY}}`: e.g. "no attribution lines" or the required trailer.
 - `{{SHARED_RESOURCES}}`: apps, ports, devices, or services that need a lock.
+- `{{PROTECTED_RESOURCES}}`: live ports, hosts or process names agents must not touch (or "none").
 - `{{LOCAL_PATHS}}`: machine-specific paths, tools, and CLIs.
 - `{{CURRENT_FOCUS}}`: what the project is working on right now.
