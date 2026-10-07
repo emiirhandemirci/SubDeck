@@ -823,7 +823,7 @@ function pr_cmd(cmd, d, id, k, nw,  i, x, n, v, a, na, j, t, kill) {
   if (NPORT && cmd == "lsof") {
     for (i = k; i <= nw; i++) {
       t = tolower(W[d, id, i]); sub(/^-i/, "", t)
-      if (t ~ /^[]a-z0-9@.[]*:[0-9]+$/) { sub(/.*:/, "", t); for (j = 1; j <= NPORT; j++) if (t + 0 == PORTL[j] + 0) { pr_hit("port " PORTL[j], "Ports"); return } }
+      if (t ~ /:[0-9]+$/ && t !~ /[\/=]/) { sub(/.*:/, "", t); for (j = 1; j <= NPORT; j++) if (t + 0 == PORTL[j] + 0) { pr_hit("port " PORTL[j], "Ports"); return } }
     }
   }
   if (NPORT && cmd == "fuser") {

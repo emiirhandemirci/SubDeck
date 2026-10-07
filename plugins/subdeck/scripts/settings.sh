@@ -5,7 +5,7 @@
 #   bash <plugin>/scripts/settings.sh help                            the 3 commands, every key with options
 #   bash <plugin>/scripts/settings.sh json [--project [<dir>]]        every setting as one JSON object (Desk reads this)
 #   bash <plugin>/scripts/settings.sh set k=v [k=v ...] [--project [<dir>]]   validate all, then write (all or nothing)
-#   bash <plugin>/scripts/settings.sh reset [--project]               reset models, guard, notifications, context
+#   bash <plugin>/scripts/settings.sh reset [--project]               reset models, guard, notifications, context, tasks
 # A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
 # Keys: mode|worker|escalation|researcher|verifier|explore -> models.sh
 #       notify=on|off, notify.events=waiting,done,agent,idle -> notify.sh
@@ -13,6 +13,10 @@
 #       push=ask|branches|off, protect-branches=<list>      -> guard.sh cli push|branches
 #       protect=<list> (replaces), unprotect=<list>         -> guard.sh protect|unprotect (guard.protectedPaths)
 #       context=<tokens>, 0 = auto                          -> config key context.window (written here)
+#       protected-resources=deny|ask|off                    -> guard.sh (guard.rules.protected-resources)
+#       protect-ports|protect-hosts|protect-procs=<list>    -> guard.sh cli ports|hosts|procs (replaces; empty clears)
+#       tasks.dir=<path>, empty = the state dir             -> config key tasks.dir (written here; \ stored as /)
+#       report-check=on|off                                 -> config key tasks.reportCheck (written here)
 #       statusline=on|off                                   -> not written here (the skill edits settings.json)
 # Exit codes: show/help/reset always 0. json 0 (2 on a bad argument). set: 0 on success, 2 + one-line
 # error on stderr for any invalid key/value (nothing is written if any pair is invalid).
@@ -20,7 +24,7 @@
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_KEYS="mode worker escalation researcher verifier explore"
-STATIC_RULES="git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths"
+STATIC_RULES="git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources"
 EVENT_KINDS="waiting done agent idle"
 US=$'\037'
 
@@ -77,9 +81,16 @@ rd_arr() { # file key -> comma-joined items of a top-level-unique string array; 
       print out
     }'
 }
-ctx_members() { # file -> raw top-level members except "context"; return 1 when not a JSON object
+ctx_members() { # file [name] -> raw top-level members except <name> (default "context"); 1 when not a JSON object
   [ -f "$1" ] || return 0
-  tr -d '\r' < "$1" | tr '\n' ' ' | awk '
+  tr -d '\r' < "$1" | tr '\n' ' ' | obj_members "^\"${2:-context}\"[ \t]*:" except
+}
+member_value() { # file name -> raw JSON value of the top-level member <name> (empty when absent or not an object file)
+  [ -f "$1" ] || return 0
+  tr -d '\r' < "$1" | tr '\n' ' ' | obj_members "^\"$2\"[ \t]*:" value
+}
+obj_members() { # stdin: JSON object text; $1 regex on a member, $2 except (print the other members) | value (value of the match)
+  awk -v ex="$1" -v op="$2" '
     { t = t $0 }
     END {
       gsub(/^[ \t]+|[ \t]+$/, "", t)
@@ -104,22 +115,43 @@ ctx_members() { # file -> raw top-level members except "context"; return 1 when 
     }
     function emit() {
       gsub(/^[ \t]+|[ \t]+$/, "", cur)
-      if (cur != "" && cur !~ /^"context"[ \t]*:/) print cur
+      if (cur != "") {
+        if (op == "value") { if (cur ~ ex && !done) { sub(/^"([^"\\]|\\.)*"[ \t]*:[ \t]*/, "", cur); print cur; done = 1 } }
+        else if (cur !~ ex) print cur
+      }
       cur = ""
     }'
 }
-ctx_write() { # file value|remove -> writes the context member, keeping every other member verbatim
-  local f="$1" v="$2" others line body=""
-  if ! others="$(ctx_members "$f")"; then echo "error: $f is not a valid JSON object; left untouched"; return 1; fi
+member_write() { # file name json|remove -> writes one top-level member, keeping every other member verbatim
+  local f="$1" k="$2" v="$3" others line body=""
+  if ! others="$(ctx_members "$f" "$k")"; then echo "error: $f is not a valid JSON object; left untouched"; return 1; fi
   if [ "$v" = remove ]; then
     [ -f "$f" ] || return 0
     if [ -z "$others" ]; then rm -f "$f" 2>/dev/null; return 0; fi
   fi
   mkdir -p "$(dirname "$f")" 2>/dev/null
   while IFS= read -r line; do [ -n "$line" ] && body="$body$line,"; done <<< "$others"
-  [ "$v" = remove ] || body="$body\"context\":{\"window\":$v},"
+  [ "$v" = remove ] || body="$body\"$k\":$v,"
   if printf '{%s}\n' "${body%,}" > "$f" 2>/dev/null; then return 0; fi
   echo "error: could not write $f"; return 1
+}
+ctx_write() { # file value|remove -> writes the context member
+  if [ "$2" = remove ]; then member_write "$1" context remove; else member_write "$1" context "{\"window\":$2}"; fi
+}
+# tasks_write file dirop dir rcop rc: op keep|set|remove for tasks.dir and tasks.reportCheck; other members of
+# "tasks" are kept verbatim; an empty "tasks" object is dropped
+tasks_write() {
+  local f="$1" raw inner="" body="" line d r
+  raw="$(member_value "$f" tasks)"
+  case "$raw" in "{"*) inner="$(printf '%s' "$raw" | obj_members '^"(dir|reportCheck)"[ \t]*:' except)" || inner="" ;; esac
+  d="$(printf '%s' "$raw" | obj_members '^"dir"[ \t]*:' value 2>/dev/null)"
+  r="$(printf '%s' "$raw" | obj_members '^"reportCheck"[ \t]*:' value 2>/dev/null)"
+  case "$2" in set) d="\"$3\"" ;; remove) d="" ;; esac
+  case "$4" in set) r="$5" ;; remove) r="" ;; esac
+  while IFS= read -r line; do [ -n "$line" ] && body="$body$line,"; done <<< "$inner"
+  [ -n "$d" ] && body="$body\"dir\":$d,"
+  [ -n "$r" ] && body="$body\"reportCheck\":$r,"
+  if [ -z "$body" ]; then member_write "$f" tasks remove; else member_write "$f" tasks "{${body%,}}"; fi
 }
 
 lower() { if declare -F sd_lower >/dev/null; then sd_lower "$1"; LOW="$SD_LOWER"; else LOW="$(printf %s "$1" | tr A-Z a-z)"; fi; }
@@ -147,7 +179,13 @@ meta() {
     secret-files) MG=guard; MT=enum; MO="deny ask off"; MD="reading or writing secret files such as .env" ;;
     attribution)  MG=guard; MT=enum; MO="deny ask off"; MD="AI attribution lines in commits and PRs" ;;
     protected-paths) MG=guard; MT=enum; MO="deny ask off"; MD="edits to the files listed under protect" ;;
+    protected-resources) MG=guard; MT=enum; MO="deny ask off"; MD="commands that use a protected port, host or process (lists below)" ;;
     protect)      MG=protect; MT=list; MD="files or globs agents must not edit or delete without approval (set protect= replaces the list)" ;;
+    protect-ports) MG=resources; MT=list; MD="live local ports (1-65535) agents must not use without approval, e.g. 8080,9000" ;;
+    protect-hosts) MG=resources; MT=list; MD="hosts agents must not contact without approval, e.g. staging.example" ;;
+    protect-procs) MG=resources; MT=list; MD="process names agents must not stop or look up without approval, e.g. redis" ;;
+    tasks.dir)    MG=tasks; MT=string; MD="task file directory, relative to the project or absolute; empty = the state dir" ;;
+    report-check) MG=tasks; MT=bool; MO="on off"; MD="flag sub-agents that stop without a report (Stop:/Tested: lines)" ;;
     context)      MG=context; MT=int; MD="context window in tokens for models whose size is unknown; 0 = auto" ;;
     statusline)   MG=statusline; MT=bool; MO="on off"; MD="agent counts in the Claude Code status line (read-only here; the skill edits settings.json)" ;;
     *)            MG=guard; MT=enum; MO="deny ask off"; MD="guard rule" ;;
@@ -221,11 +259,16 @@ END {
   if (sv("guard/rules/push", "ask branches off")) out("push", EV, ES); else out("push", "branches", "default")
   if (lv("guard/protectBranches")) out("protect-branches", EV, ES); else out("protect-branches", "main,master,release/*", "default")
   if (sv("guard/enabled", "true false")) out("guard", (EV == "true") ? "on" : "off", ES); else out("guard", "on", "default")
-  n = split("git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths", RK, " ")
-  split("deny deny ask deny ask off ask", RD, " ")
+  n = split("git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources", RK, " ")
+  split("deny deny ask deny ask off ask ask", RD, " ")
   for (i = 1; i <= n; i++) { if (sv("guard/rules/" RK[i], "deny ask off")) out(RK[i], EV, ES); else out(RK[i], RD[i], "default") }
   if (lv("guard/protectedPaths")) out("protect", EV, ES); else out("protect", "", "default")
+  if (lv("guard/protectPorts")) out("protect-ports", EV, ES); else out("protect-ports", "", "default")
+  if (lv("guard/protectHosts")) out("protect-hosts", EV, ES); else out("protect-hosts", "", "default")
+  if (lv("guard/protectProcs")) out("protect-procs", EV, ES); else out("protect-procs", "", "default")
   if (sv("context/window") && EV ~ /^[0-9]+$/) out("context", EV + 0, ES); else out("context", 0, "default")
+  if (sv("tasks/dir")) out("tasks.dir", EV, ES); else out("tasks.dir", "", "default")
+  if (sv("tasks/reportCheck", "true false")) out("report-check", (EV == "true") ? "on" : "off", ES); else out("report-check", "on", "default")
 }'
 collect() {
   local k v s files=() out sl="" c
@@ -278,11 +321,12 @@ show() {
     if [ "$g" != "$cur" ]; then
       cur="$g"
       case "$g" in models) echo "Models" ;; notify) echo "Notifications" ;; push) echo "Push" ;; guard) echo "Guard" ;;
-        protect) echo "Protected files" ;; context) echo "Context" ;; statusline) echo "Status line" ;; esac
+        protect) echo "Protected files" ;; resources) echo "Protected resources" ;; context) echo "Context" ;;
+        tasks) echo "Tasks" ;; statusline) echo "Status line" ;; esac
     fi
-    case "$k" in protect) [ -n "$v" ] || v="(none)" ;; context) [ "$v" = 0 ] && v="0 (auto)" ;; esac
+    case "$k" in protect|protect-*) [ -n "$v" ] || v="(none)" ;; context) [ "$v" = 0 ] && v="0 (auto)" ;; tasks.dir) [ -n "$v" ] || v="(state dir)" ;; esac
     [ "$s" = default ] && s=""
-    printf '  %-17s %-20s %s\n' "$k" "$v" "$s"
+    printf '  %-19s %-20s %s\n' "$k" "$v" "$s"
   done <<< "$REC"
   echo
   echo "More: /subdeck:settings help"
@@ -295,7 +339,7 @@ SubDeck settings: three commands
 
   /subdeck:settings                      show the current settings (short table)
   /subdeck:settings set key=value ...    change one or more settings; add --project to store them for this project only
-  /subdeck:settings reset [--project]    back to defaults (models, guard, notifications, context)
+  /subdeck:settings reset [--project]    back to defaults (models, guard, notifications, context, tasks)
   (also: json prints every setting as JSON, for tools such as the Desk)
 
 Values come from built-in defaults, then your user config, then the project config (the last one wins).
@@ -308,11 +352,12 @@ EOF
     [ -n "$k" ] || continue
     case "$t" in
       int) r="a number (tokens)" ;;
+      string) r="a path (empty = default)" ;;
       list) if [ -n "$o" ]; then r="comma list of: ${o// /, }"; else r="comma list"; fi ;;
       *) r="${o// /|}" ;;
     esac
-    printf '  %-17s %s\n' "$k" "$r"
-    printf '  %-17s %s\n' "" "$d"
+    printf '  %-19s %s\n' "$k" "$r"
+    printf '  %-19s %s\n' "" "$d"
   done <<< "$REC"
   cat <<'EOF'
 
@@ -324,6 +369,8 @@ Examples
   /subdeck:settings set unprotect=migrations/**
   /subdeck:settings set context=200000
   /subdeck:settings set attribution=deny git-add-all=ask
+  /subdeck:settings set protect-ports=8080,9000 protect-procs=redis --project
+  /subdeck:settings set tasks.dir=docs/tasks report-check=off --project
   /subdeck:settings reset --project
 EOF
 }
@@ -342,6 +389,7 @@ case "$CMD" in
     [ ${#PAIRS[@]} -gt 0 ] || die "set needs key=value pairs, e.g. set notify=on worker=opus"
     RULES=" $STATIC_RULES push "; RE_MODEL="^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$"; RE_NUM="^[0-9]{1,9}$"
     MP=(); GP=(); NV=""; NE=""; GE=""; SL=""; PUSH=""; PB=""; PBSET=0; PRSET=0; PR=""; UP=""; CX=""
+    TDOP=keep; TD=""; RCOP=keep; RC=""; RES=()
     for kv in "${PAIRS[@]}"; do
       k="${kv%%=*}"; v="${kv#*=}"; lower "$v"; lv="$LOW"
       case "$k" in
@@ -375,6 +423,27 @@ case "$CMD" in
         context)
           [[ $v =~ $RE_NUM ]] || die "context must be a whole number of tokens, 0 = auto (got '$v')"
           CX=$((10#$v)) ;;
+        tasks.dir)
+          v="${v//\\//}"
+          [ ${#v} -le 200 ] || die "tasks.dir: at most 200 characters"
+          case "$v" in *\"*|*[[:cntrl:]]*) die "tasks.dir: no quotes or control characters (got '$v')" ;; esac
+          case "/$v/" in */../*) die "tasks.dir: '..' segments are not allowed (got '$v')" ;; esac
+          if [ -n "$v" ]; then TDOP=set; TD="$v"; else TDOP=remove; TD=""; fi ;;
+        report-check)
+          case "$lv" in on|true) RCOP=set; RC=true ;; off|false) RCOP=set; RC=false ;; *) die "report-check must be on or off (got '$v')" ;; esac ;;
+        protect-ports|protect-hosts|protect-procs)
+          IFS=',' read -ra ITS <<< "$v"; RL=""
+          for it in ${ITS[@]+"${ITS[@]}"}; do
+            it="${it#"${it%%[![:space:]]*}"}"; it="${it%"${it##*[![:space:]]}"}"
+            [ -n "$it" ] || continue
+            case "$k" in
+              protect-ports) { [[ $it =~ ^[0-9]{1,5}$ ]] && [ $((10#$it)) -ge 1 ] && [ $((10#$it)) -le 65535 ]; } || die "protect-ports: '$it' is not a port (1-65535)" ;;
+              protect-hosts) [[ $it =~ ^[A-Za-z0-9._:-]+$ ]] || die "protect-hosts: invalid host '$it' (letters, digits, . _ : -)" ;;
+              protect-procs) [[ $it =~ ^[A-Za-z0-9._-]+$ ]] || die "protect-procs: invalid process name '$it' (letters, digits, . _ -)" ;;
+            esac
+            RL="$RL${RL:+,}$it"
+          done
+          RES+=("${k#protect-}$US$RL") ;;
         statusline)
           case "$lv" in on|install) SL=on ;; off|remove) SL=off ;; *) die "statusline must be on or off (got '$v')" ;; esac ;;
         *)
@@ -384,7 +453,7 @@ case "$CMD" in
       esac
     done
     # a corrupt target file must not leave a half-applied set
-    if [ -n "$CX" ] && ! ctx_members "$TARGET" >/dev/null; then die "$TARGET is not a valid JSON object; left untouched"; fi
+    if { [ -n "$CX" ] || [ $TDOP != keep ] || [ $RCOP != keep ]; } && ! ctx_members "$TARGET" >/dev/null; then die "$TARGET is not a valid JSON object; left untouched"; fi
     OUT=""; ERRLINE=""; SNAP=""; SNAPSET=0
     if [ -f "$TARGET" ]; then IFS= read -r -d "" SNAP < "$TARGET"; SNAPSET=1; fi   # restored if any routed write fails
     route() { # run a routed command, keep its first output line, remember the first error
@@ -403,9 +472,13 @@ case "$CMD" in
       [ -n "$PR" ] && route G protect "$PR" $SCOPE
     fi
     [ -n "$UP" ] && route G unprotect "$UP" $SCOPE
+    for r in ${RES[@]+"${RES[@]}"}; do route G "${r%%"$US"*}" "${r#*"$US"}" $SCOPE; done
     [ -n "$GE" ] && route G "$GE" $SCOPE
     if [ -n "$CX" ]; then
       if l="$(ctx_write "$TARGET" "$CX")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
+    fi
+    if [ -z "$ERRLINE" ] && { [ $TDOP != keep ] || [ $RCOP != keep ]; }; then
+      if l="$(tasks_write "$TARGET" $TDOP "$TD" $RCOP "$RC")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
     fi
     if [ -n "$ERRLINE" ]; then
       if [ $SNAPSET -eq 1 ]; then printf "%s" "$SNAP" > "$TARGET"; else rm -f "$TARGET" 2>/dev/null; fi
@@ -420,6 +493,7 @@ case "$CMD" in
     N off $SCOPE | head -1
     N events waiting,done $SCOPE | head -1
     ctx_write "$TARGET" remove >/dev/null
+    member_write "$TARGET" tasks remove >/dev/null
     echo; show ;;
 esac
 exit 0
