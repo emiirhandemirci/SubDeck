@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.1 - 2026-10-07
 
 - **Task files:** new keys `auto` (hook-created tasks), `pack` (wave context pack), `grants` (writable-path extensions), `covers` (batch verification IDs). `tasks.sh verify --covers` checks a whole wave together; `done` requires the latest verdict = Approved.
 - **New tasks.sh commands:** `link` (set agent + session), `verify` (write verdict + fingerprint + covers), `grant` (add path extension with reason), `pack` (write context pack from contract/decisions/file map/tasks), `writable` (list effective paths), `show --section` (read task sections).

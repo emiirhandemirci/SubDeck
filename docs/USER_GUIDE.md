@@ -83,7 +83,7 @@ For a machine with no internet and no GitHub access (for example an intranet PC 
 
 On a machine with internet and a clone of SubDeck:
 
-1. `./make-offline-bundle.sh` (add `--ref v0.8.0` for a tag or commit). It writes `dist/SubDeck-<version>-offline.zip` from tracked files only, plus the installers, `INSTALL.cmd` and `OFFLINE-README.txt`, and prints the SHA-256. Copy the zip to the USB stick; compare the hash on the other side if you like (`Get-FileHash` / `sha256sum`).
+1. `./make-offline-bundle.sh` (add `--ref v0.8.1` for a tag or commit). It writes `dist/SubDeck-<version>-offline.zip` from tracked files only, plus the installers, `INSTALL.cmd` and `OFFLINE-README.txt`, and prints the SHA-256. Copy the zip to the USB stick; compare the hash on the other side if you like (`Get-FileHash` / `sha256sum`).
 
 On the offline machine (needs Claude Code, Git for Windows, and Node.js 22.13+ only for Desk):
 
