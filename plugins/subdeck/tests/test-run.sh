@@ -86,9 +86,11 @@ SUBDECK_ROLE=worker
 SUBDECK_PROJECT=$P
 CLAUDE_PROJECT_DIR=$ST/worktrees/$TD
 GIT_TERMINAL_PROMPT=0
-GIT_CONFIG_COUNT=1
+GIT_CONFIG_COUNT=2
 GIT_CONFIG_KEY_0=url.subdeck-no-push://.pushInsteadOf
 GIT_CONFIG_VALUE_0=
+GIT_CONFIG_KEY_1=core.hooksPath
+GIT_CONFIG_VALUE_1=$ST/runs/$TD/hooks
 OPENCODE_PERMISSION={\"bash\":{\"*\":\"allow\",\"git push*\":\"deny\"},\"edit\":\"allow\",\"external_directory\":\"deny\"}" "dry-run env: run vars, push blocker, profile env"
 has "$DRY" "worktree: $ST/worktrees/$TD (create)" "dry-run names the worktree it would create"
 has "$DRY" "branch: subdeck/$TD" "dry-run branch"
@@ -96,7 +98,7 @@ has "$DRY" "timeout: 1800" "dry-run default timeout"
 [ ! -e "$ST/runs" ] && [ ! -e "$ST/worktrees" ] && ok "dry-run creates nothing" || bad "dry-run created files"
 check "$(field "$TD" status)" "open" "dry-run changes no status"
 check "$(events run_start)$(events run_refused)" "00" "dry-run logs no events"
-check "$(GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=a.b GIT_CONFIG_VALUE_0=1 GIT_CONFIG_KEY_1=c.d GIT_CONFIG_VALUE_1=2 r worker "$TD" --dry-run | grep '^GIT_CONFIG' | tr '\n' ' ')" "GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_2=url.subdeck-no-push://.pushInsteadOf GIT_CONFIG_VALUE_2= " "push blocker appended after git config already in the env"
+check "$(GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=a.b GIT_CONFIG_VALUE_0=1 GIT_CONFIG_KEY_1=c.d GIT_CONFIG_VALUE_1=2 r worker "$TD" --dry-run | grep '^GIT_CONFIG' | tr '\n' ' ')" "GIT_CONFIG_COUNT=4 GIT_CONFIG_KEY_2=url.subdeck-no-push://.pushInsteadOf GIT_CONFIG_VALUE_2= GIT_CONFIG_KEY_3=core.hooksPath GIT_CONFIG_VALUE_3=$ST/runs/$TD/hooks " "push blocker appended after git config already in the env"
 
 # ---------- 3. prompt sections ----------
 mkdir -p "$ST"; ucfg "$ROLES_ALL"
@@ -379,6 +381,85 @@ has "$(git -C "$ST/worktrees/$T1" log --oneline -3)" "fake: touch" "earlier comm
 # ---------- 13. hooks inside a run write to the main project's state ----------
 SUBDECK_PROJECT="$P" bash -c '. "$1"; sd_state_dir "$2"; printf "%s" "$SD_STATE"' _ "$PL/scripts/lib-paths.sh" "$ST/worktrees/$T1" > "$W/sd"
 check "$(cat "$W/sd")" "$ST" "SUBDECK_PROJECT routes a worktree's state to the main project"
+
+# ---------- 13b. renames: the old path counts (git diff --no-renames) ----------
+ucfg "$ROLES_ALL"
+TR="$(newtask "rename" "src")"
+FAKE_CLI_LOG="$W/logr" FAKE_CLI_SH='git mv a.txt src/moved.txt && git commit -qm mv -- a.txt src/moved.txt' r worker "$TR" >/dev/null 2>&1; check "$?" "5" "rename of a non-writable file into a writable dir: violation"
+check "$(cat "$W/logr/1.codex.sh-exit")" "0" "rename committed by the fake CLI"
+has "$(lastmeta "$TR")" '"violations":["a.txt"]' "renamed-away path a.txt is the violation"
+
+# ---------- 13c. push blocker: pushInsteadOf, explicit pushurl, pre-push hook ----------
+R1="$W/r1.git"; R2="$W/r2.git"; R3="$W/r3.git"; git init -q --bare "$R1"; git init -q --bare "$R2"; git init -q --bare "$R3"
+git -C "$P" remote add origin "$R1"; git -C "$P" config remote.origin.pushurl "$R2"
+# pushurl equal to its fetch url: a url rewrite would break fetch, so only the pre-push hook guards it (known gap: --no-verify)
+git -C "$P" remote add same "$R3"; git -C "$P" config remote.same.pushurl "$R3"
+git -C "$P" push -q origin HEAD:refs/heads/control >/dev/null 2>&1
+git -C "$R2" rev-parse -q --verify refs/heads/control >/dev/null && ok "negative control: outside a run the pushurl remote accepts a push" || bad "control push failed"
+TP="$(newtask "push" "src")"
+rm -rf "$W/logp"
+FAKE_CLI_LOG="$W/logp" FAKE_CLI_SH='git push origin HEAD:refs/heads/leak1' r worker "$TP" >/dev/null 2>&1
+[ "$(cat "$W/logp/1.codex.sh-exit")" != 0 ] && ok "push to a remote with pushurl fails inside a run" || bad "push via pushurl succeeded"
+FAKE_CLI_LOG="$W/logp" FAKE_CLI_SH='git push --no-verify origin HEAD:refs/heads/leak2' r worker "$TP" >/dev/null 2>&1
+[ "$(cat "$W/logp/2.codex.sh-exit")" != 0 ] && ok "push --no-verify via pushurl still fails (url rewrite)" || bad "push --no-verify via pushurl succeeded"
+FAKE_CLI_LOG="$W/logp" FAKE_CLI_SH='git push same HEAD:refs/heads/leak3' r worker "$TP" >/dev/null 2>&1
+[ "$(cat "$W/logp/3.codex.sh-exit")" != 0 ] && ok "push where pushurl equals the fetch url fails (pre-push hook)" || bad "push via same succeeded"
+has "$(cat "$W/logp/3.codex.sh-out")" "SubDeck: git push is disabled" "pre-push hook message"
+FAKE_CLI_LOG="$W/logp" FAKE_CLI_SH="git push '$R1' HEAD:refs/heads/leak4" r worker "$TP" >/dev/null 2>&1
+[ "$(cat "$W/logp/4.codex.sh-exit")" != 0 ] && ok "push to a plain URL fails (pushInsteadOf)" || bad "push to URL succeeded"
+FAKE_CLI_LOG="$W/logp" FAKE_CLI_SH='git fetch -q origin' r worker "$TP" >/dev/null 2>&1
+check "$(cat "$W/logp/5.codex.sh-exit")" "0" "fetch still works inside a run"
+check "$(git -C "$R1" for-each-ref | wc -l | tr -d ' ')$(git -C "$R2" for-each-ref refs/heads/leak* | wc -l | tr -d ' ')$(git -C "$R3" for-each-ref | wc -l | tr -d ' ')" "000" "no ref reached any remote"
+has "$(cat "$(ls -t "$ST/runs/$TP"/*.log | head -n 1)")" "warning: remote(s) with an explicit pushurl" "pushurl warning in the run log"
+git -C "$P" remote remove origin; git -C "$P" remote remove same
+
+# ---------- 13d. git dir writes, symlink escapes, ignored files ----------
+TG="$(newtask "gitdir" "src")"
+FAKE_CLI_SH='echo "#!/bin/sh" > "$(git rev-parse --git-common-dir)/hooks/post-commit"; git config --local subdeck.evil 1' r worker "$TG" >/dev/null 2>&1; check "$?" "5" "write to git hooks/config: violation"
+has "$(lastmeta "$TG")" '"violations":["git-dir:config","git-dir:hooks/post-commit"]' "git-dir violations listed"
+has "$(lastevent writable_violation)" '"reason":"git-dir"' "writable_violation reason git-dir"
+check "$(field "$TG" status)" "blocked" "git-dir violation blocks the task"
+rm -f "$(git -C "$P" rev-parse --git-common-dir)/hooks/post-commit" "$P/.git/hooks/post-commit"; git -C "$P" config --unset subdeck.evil
+TG2="$(newtask "gitdir control" "src")"
+FAKE_CLI_TOUCH=src/fine.js r worker "$TG2" >/dev/null 2>&1; check "$?" "0" "negative control: same run without git-dir writes is clean"
+TL="$(newtask "symlink" "src")"
+FAKE_CLI_SH='ln -s /etc/passwd src/abs; ln -s ../../outside src/rel; ln -s ../a.txt src/inner; ln -s s.js src/sib' r worker "$TL" >/dev/null 2>&1; check "$?" "5" "symlink pointing outside the worktree: violation"
+M="$(lastmeta "$TL")"
+has "$M" '"symlink-escape:src/abs -> /etc/passwd"' "absolute escape listed"
+has "$M" '"symlink-escape:src/rel -> ../../outside"' "relative escape listed"
+hasnt "$M" 'src/inner' "link to a file inside the worktree allowed"
+hasnt "$M" 'src/sib' "sibling link allowed"
+has "$(lastevent writable_violation)" '"reason":"symlink-escape"' "writable_violation reason symlink-escape"
+printf 'build/\n' > "$P/.gitignore"; git -C "$P" add .gitignore; git -C "$P" commit -qm ignore
+TI="$(newtask "ignored" "src")"
+FAKE_CLI_SH='mkdir -p build && echo x > build/out.bin' r worker "$TI" >/dev/null 2>&1; check "$?" "0" "gitignored file written: not a violation"
+has "$(t show "$TI")" "warning: gitignored files written (worker codex)
+build/out.bin" "ignored file listed as a warning in the Report"
+has "$(cat "$(ls -t "$ST/runs/$TI"/*.log | head -n 1)")" "warning: 1 gitignored file(s) written" "ignored warning in the run log"
+check "$(field "$TI" status)" "review" "ignored-files warning does not change the status"
+
+# ---------- 13e. caller's Claude Code session identity is not passed on ----------
+TE="$(newtask "env strip" "src")"
+rm -rf "$W/loge"
+CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=sess-abc CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_CODE_REMOTE_SESSION_ID=rs CLAUDE_PID=123 CLAUDE_CODE_OAUTH_TOKEN=keep-me \
+  FAKE_CLI_LOG="$W/loge" r worker "$TE" >/dev/null 2>&1
+E="$(cat "$W/loge/1.codex.env")"
+for v in CLAUDECODE= CLAUDE_CODE_SESSION_ID= CLAUDE_CODE_ENTRYPOINT= CLAUDE_CODE_REMOTE_SESSION_ID= CLAUDE_PID=; do hasnt "$E" "$v" "child env has no $v"; done
+has "$E" "CLAUDE_CODE_OAUTH_TOKEN=keep-me" "auth/config vars are kept"
+CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=sess-abc FAKE_CLI_LOG="$W/loge2" "$FAKE/bin/codex" </dev/null >/dev/null 2>&1
+has "$(cat "$W/loge2/1.codex.env")" "CLAUDE_CODE_SESSION_ID=sess-abc" "negative control: the fake records the var when it is passed"
+
+# ---------- 13f. deny list (run time and settings.sh share _.deny_args) ----------
+TDL="$(newtask "deny2")"
+for a in "--permission-mode auto" "--permission-mode{sp}auto" "--permission-mode=Auto" "--permission-mode bypassPermissions" "--dangerously-skip-permissions" "--add-dir /tmp" "--add-dir=/tmp" "--approve-for-me" "--dangerously-bypass-approvals-and-sandbox" "--yolo" "-y" "--auto" "--allow-all-paths" "--include-directories /x"; do
+  ucfg "{\"roles\":{\"worker\":{\"tool\":\"codex\",\"args\":\"--ok $a\"}}}"
+  r worker "$TDL" --dry-run >/dev/null 2>&1; check "$?" "2" "run.sh denies: $a"
+  ( H2="$(mktemp -d)"; HOME="$H2" bash "$PL/scripts/settings.sh" set roles.worker.tool=codex "roles.worker.args=--ok $a" >/dev/null 2>&1; rc=$?; rm -rf "$H2"; exit $rc ); check "$?" "2" "settings.sh denies: $a"
+done
+ucfg '{"roles":{"worker":{"tool":"claude","args":"--permission-mode plan --effort high"}}}'
+r worker "$TDL" --dry-run >/dev/null 2>&1; check "$?" "0" "negative control: run.sh allows --permission-mode plan"
+( H2="$(mktemp -d)"; HOME="$H2" bash "$PL/scripts/settings.sh" set roles.worker.tool=claude "roles.worker.args=--permission-mode plan --effort high" >/dev/null 2>&1; rc=$?; rm -rf "$H2"; exit $rc ); check "$?" "0" "negative control: settings.sh allows --permission-mode plan"
+ucfg "$ROLES_ALL"
 
 # ---------- 14. bash 3.2 rules ----------
 for pat in 'wait -n' '\$\{[A-Za-z_]+,,\}' '\$\{[A-Za-z_]+\^\^\}' 'declare -A' 'local -A' 'mapfile' 'readarray' 'EPOCHSECONDS' 'local -n' 'declare -n' '[^-]timeout [0-9]'; do

@@ -3,12 +3,15 @@
 # Usage: fake-cli.sh <tool> [args...]   (normally via bin/<tool>, which execs this script)
 # Always reads all of stdin. Behaviour from env:
 #   FAKE_CLI_LOG=<dir>      records <n>.<tool>.argv (one arg per line, newline as \n), .stdin, .cwd, .env
-#                           (sorted; names SUBDECK_* OPENCODE_* COPILOT_* GIT_CONFIG_* GIT_TERMINAL_PROMPT CLAUDE_PROJECT_DIR)
+#                           (sorted; names SUBDECK_* OPENCODE_* COPILOT_* GIT_CONFIG_* GIT_TERMINAL_PROMPT CLAUDE_PROJECT_DIR,
+#                           and CLAUDECODE CLAUDE_PID CLAUDE_CODE_* for the session-identity strip test)
 #   FAKE_CLI_REPLY=<file>   final message: a path, or a name under replies/ (default worker-done.txt)
 #   FAKE_CLI_EXIT=<n>       exit code (default 0)
 #   FAKE_CLI_STDERR=<text>  written to stderr
 #   FAKE_CLI_SLEEP=<s>      delay before any output
 #   FAKE_CLI_TOUCH=a,b      create/append these paths in cwd;  FAKE_CLI_COMMIT=1 commits them (pathspec commit)
+#   FAKE_CLI_SH=<command>   test-only: run with bash -c in the cwd after FAKE_CLI_TOUCH (rename, push, git dir,
+#                           symlink cases); with FAKE_CLI_LOG its exit code goes to <n>.<tool>.sh-exit, its output to .sh-out
 #   FAKE_CLI_MODE=quota|auth  canned stderr, exit 1 (gemini auth: 41), no reply
 # Output: claude one-line JSON (result, session_id fake-0001); gemini pretty JSON {"response":...};
 #   codex JSONL events on stdout and the reply written to the -o file; other tools the reply on stdout.
@@ -31,7 +34,7 @@ if [ -n "${FAKE_CLI_LOG:-}" ]; then
   for a in "$@"; do printf '%s\n' "${a//$'\n'/\\n}" >> "$base.argv.tmp"; done
   printf '%s' "$STDIN" > "$base.stdin"
   pwd > "$base.cwd"
-  env | grep -E '^(SUBDECK_[A-Z_]*|OPENCODE_[A-Z_]*|COPILOT_[A-Z_]*|GIT_CONFIG_[A-Z0-9_]*|GIT_TERMINAL_PROMPT|CLAUDE_PROJECT_DIR)=' | LC_ALL=C sort > "$base.env"
+  env | grep -E '^(SUBDECK_[A-Z_]*|OPENCODE_[A-Z_]*|COPILOT_[A-Z_]*|GIT_CONFIG_[A-Z0-9_]*|GIT_TERMINAL_PROMPT|CLAUDE_PROJECT_DIR|CLAUDECODE|CLAUDE_PID|CLAUDE_CODE_[A-Z0-9_]*)=' | LC_ALL=C sort > "$base.env"
   mv -f "$base.argv.tmp" "$base.argv"
 fi
 
@@ -48,6 +51,12 @@ if [ -n "${FAKE_CLI_TOUCH:-}" ]; then
     git add -- "${TOUCH[@]}" >/dev/null 2>&1
     git -c user.email=fake@cli.invalid -c user.name=fake-cli commit -q -m "fake: touch ${FAKE_CLI_TOUCH}" -- "${TOUCH[@]}" >/dev/null 2>&1
   fi
+fi
+
+if [ -n "${FAKE_CLI_SH:-}" ]; then
+  bash -c "$FAKE_CLI_SH" > "${base:-/dev/null}${base:+.sh-out}" 2>&1
+  rc=$?
+  [ -n "${base:-}" ] && printf '%s\n' "$rc" > "$base.sh-exit"
 fi
 
 case "${FAKE_CLI_MODE:-}" in

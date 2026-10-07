@@ -433,12 +433,33 @@ EOF
 die() { echo "error: $1" >&2; exit 2; }
 
 ROLE_FIXED=" manager worker worker-heavy researcher verifier "
-DENY_EXACT=" -y --auto --allow-all --allow-all-paths --no-sandbox "
 role_name_ok() { case "$ROLE_FIXED" in *" $1 "*) return 0 ;; esac; [[ $1 =~ ^[a-z][a-z0-9-]{0,23}$ ]]; }
-deny_token() { # token -> 0 when it is on the deny list
-  local t="$1"; lower "$t"
-  case "$DENY_EXACT" in *" $t "*) return 0 ;; esac
-  case "$LOW" in *dangerously*|*bypasspermissions*|*yolo*|*danger-full-access*) return 0 ;; esac
+# Deny list for roles.<r>.args: the _.deny_args line of run-profiles.txt (the list run.sh enforces at run time);
+# the fallback below is the same list for an install without that file. Same matching rule as run.sh deny_check:
+# lower-case token, token with {sp} as "=", and "<previous token>=<token>", each against every bash pattern.
+DENY_FALLBACK='*dangerously* *bypasspermissions* *yolo* *danger-full-access* -y --auto --allow-all --allow-all-paths --allow-all-urls --no-sandbox --permission-mode=auto --approve-for-me --add-dir --add-dir=* --include-directories --include-directories=*'
+DENY_PATS=()
+deny_load() {
+  local line list=""
+  if [ -f "$DIR/run-profiles.txt" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      line="${line%$'\r'}"
+      case "$line" in _.deny_args=*) list="${line#_.deny_args=}" ;; esac
+    done < "$DIR/run-profiles.txt"
+  fi
+  [ -n "$list" ] || list="$DENY_FALLBACK"
+  read -ra DENY_PATS <<< "$list"
+}
+deny_token() { # token [previous token] -> 0 when it is on the deny list
+  local t c2 c3="" p
+  [ ${#DENY_PATS[@]} -gt 0 ] || deny_load
+  lower "$1"; t="$LOW"; c2="${t//\{sp\}/=}"
+  if [ -n "${2:-}" ]; then lower "$2"; c3="${LOW//\{sp\}/=}=$t"; fi
+  for p in "${DENY_PATS[@]}"; do
+    lower "$p"
+    # shellcheck disable=SC2053
+    if [[ $t == $LOW ]] || [[ $c2 == $LOW ]] || { [ -n "$c3" ] && [[ $c3 == $LOW ]]; }; then return 0; fi
+  done
   return 1
 }
 jstr_esc() { JS="${1//\\/\\\\}"; JS="${JS//\"/\\\"}"; }
@@ -548,10 +569,10 @@ case "$CMD" in
             args)
               [ ${#v} -le 300 ] || die "$k: at most 300 characters"
               case "$v" in *\"*|*\'*|*\\*) die "$k: quotes and backslashes are not allowed (use {sp} for a space inside a token)" ;; esac
-              IFS=' ' read -ra ATOK <<< "$v"; nv=""
+              IFS=' ' read -ra ATOK <<< "$v"; nv=""; pit=""
               for it in ${ATOK[@]+"${ATOK[@]}"}; do
-                deny_token "$it" && die "$k: '$it' is not allowed (it disables the tool's approval or sandbox)"
-                nv="$nv${nv:+ }$it"
+                deny_token "$it" "$pit" && die "$k: '$it' is not allowed (it disables the tool's approval or sandbox)"
+                nv="$nv${nv:+ }$it"; pit="$it"
               done
               v="$nv" ;;
             cmd)

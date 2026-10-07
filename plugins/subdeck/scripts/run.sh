@@ -231,9 +231,11 @@ split_user_args() {
   read -ra toks <<< "$1"
   for tok in ${toks[@]+"${toks[@]}"}; do UARGS[${#UARGS[@]}]="${tok//\{sp\}/ }"; done
 }
-# deny_check ARGS -> 0 ok, 1 denied (DENIED = the token)
+# deny_check ARGS -> 0 ok, 1 denied (DENIED = the token). Each token is compared lower-case as is, with spaces ({sp})
+# turned into "=", and joined to the previous token with "=" (so "--permission-mode auto" matches --permission-mode=auto).
+# settings.sh applies the same rule to the same list (_.deny_args).
 deny_check() {
-  local tok pat low lpat
+  local tok pat low lpat prev="" c2 c3
   local -a pats
   pget _ deny_args
   read -ra pats <<< "$PV"
@@ -241,11 +243,13 @@ deny_check() {
   DENIED=""
   for tok in ${UARGS[@]+"${UARGS[@]}"}; do
     sd_lower "$tok"; low="$SD_LOWER"
+    c2="${low// /=}"; c3="$prev=$low"
     for pat in ${pats[@]+"${pats[@]}"}; do
       sd_lower "$pat"; lpat="$SD_LOWER"
       # shellcheck disable=SC2053
-      if [[ $low == $lpat ]]; then DENIED="$tok"; return 1; fi
+      if [[ $low == $lpat ]] || [[ $c2 == $lpat ]] || { [ -n "$prev" ] && [[ $c3 == $lpat ]]; }; then DENIED="$tok"; return 1; fi
     done
+    prev="$low"
   done
   return 0
 }
@@ -350,6 +354,37 @@ path_allowed() { # path -> 0 when it matches a writable item (WITEMS, with PREFI
     esac
   done
   return 1
+}
+
+# gitdir_snapshot -> stdout: "<cksum> <name>" for the common git dir's config and hooks/ (and config.worktree)
+gitdir_snapshot() {
+  local cd gd f
+  cd="$(cd "$CWD" && cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd)" || return 0
+  gd="$(cd "$CWD" && cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd)"
+  [ -n "$cd" ] || return 0
+  for f in "$cd/config" "$gd/config.worktree"; do [ -f "$f" ] && printf '%s %s\n' "$(cksum < "$f" | tr ' ' :)" "${f#$cd/}"; done
+  if [ -d "$cd/hooks" ]; then
+    find "$cd/hooks" \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do
+      if [ -L "$f" ]; then printf 'link:%s %s\n' "$(readlink "$f")" "${f#$cd/}"
+      else printf '%s %s\n' "$(cksum < "$f" | tr ' ' :)" "${f#$cd/}"; fi
+    done
+  fi
+}
+# link_escapes REL -> 0 when the symlink TOP/REL points outside TOP (lexically resolved); LINK_T = its target
+link_escapes() {
+  local l="$TOP/$1" t abs topp
+  LINK_T="$(readlink "$l" 2>/dev/null)"
+  t="$LINK_T"
+  case "$t" in /*) abs="$t" ;; *) abs="${l%/*}/$t" ;; esac
+  sd_norm_path "$abs" posix; abs="$SD_NORM"
+  topp="$(phys "$TOP")"
+  for t in "$TOP" "$topp"; do
+    [ -n "$t" ] || continue
+    [ "$abs" = "$t" ] && return 1
+    case "$abs" in "$t"/*) return 1 ;; esac
+  done
+  # a target inside the physical top reached through a symlinked parent counts as inside
+  return 0
 }
 
 # ---------- lock ----------
@@ -666,10 +701,32 @@ ENV_OUT[${#ENV_OUT[@]}]="SUBDECK_ROLE=$ROLE"
 ENV_OUT[${#ENV_OUT[@]}]="SUBDECK_PROJECT=$PROJECT"
 ENV_OUT[${#ENV_OUT[@]}]="CLAUDE_PROJECT_DIR=$CWD"
 ENV_OUT[${#ENV_OUT[@]}]="GIT_TERMINAL_PROMPT=0"
+# Push blocker, three layers: every push URL rewritten to an unknown scheme (pushInsteadOf); explicit
+# remote.<n>.pushurl values (pushInsteadOf ignores them) rewritten with insteadOf unless that would also break a fetch
+# URL; and a SubDeck hooks dir whose pre-push refuses (core.hooksPath: the repo's own hooks do not run in the run).
+HOOKS_DIR="$RUNDIR/hooks"; V_HOOKS="$HOOKS_DIR"
+if [ "$PLAT" = win ] && command -v cygpath >/dev/null 2>&1; then V_HOOKS="$(cygpath -m "$HOOKS_DIR" 2>/dev/null || printf '%s' "$HOOKS_DIR")"; fi
 GCN=0; [[ ${GIT_CONFIG_COUNT:-} =~ ^[0-9]{1,3}$ ]] && GCN=$((10#$GIT_CONFIG_COUNT))
-ENV_OUT[${#ENV_OUT[@]}]="GIT_CONFIG_COUNT=$((GCN + 1))"
-ENV_OUT[${#ENV_OUT[@]}]="GIT_CONFIG_KEY_$GCN=url.subdeck-no-push://.pushInsteadOf"
-ENV_OUT[${#ENV_OUT[@]}]="GIT_CONFIG_VALUE_$GCN="
+GC_KEYS=("url.subdeck-no-push://.pushInsteadOf" "core.hooksPath"); GC_VALS=("" "$V_HOOKS")
+PUSHURLS=""
+if is_git "$PROJECT" || is_git "$CWD" 2>/dev/null; then
+  GDIR="$PROJECT"; is_git "$GDIR" || GDIR="$CWD"
+  PUSHURLS="$(git -C "$GDIR" config --get-regexp '^remote\..*\.pushurl$' 2>/dev/null)"
+  FETCHURLS="$(git -C "$GDIR" config --get-regexp '^remote\..*\.url$' 2>/dev/null | sed 's/^[^ ]* //')"
+  while IFS= read -r pl; do
+    [ -n "$pl" ] || continue
+    pu="${pl#* }"; clash=0
+    while IFS= read -r fu; do [ -n "$fu" ] && case "$fu" in "$pu"*) clash=1 ;; esac; done <<< "$FETCHURLS"
+    [ "$clash" = 0 ] && { GC_KEYS[${#GC_KEYS[@]}]="url.subdeck-no-push://.insteadOf"; GC_VALS[${#GC_VALS[@]}]="$pu"; }
+  done <<< "$PUSHURLS"
+fi
+ENV_OUT[${#ENV_OUT[@]}]="GIT_CONFIG_COUNT=$((GCN + ${#GC_KEYS[@]}))"
+i=0
+while [ $i -lt ${#GC_KEYS[@]} ]; do
+  ENV_OUT[${#ENV_OUT[@]}]="GIT_CONFIG_KEY_$((GCN + i))=${GC_KEYS[i]}"
+  ENV_OUT[${#ENV_OUT[@]}]="GIT_CONFIG_VALUE_$((GCN + i))=${GC_VALS[i]}"
+  i=$((i + 1))
+done
 pget "$TOOL" env
 if [ -n "$PV" ]; then
   read -ra ETOKS <<< "$PV"
@@ -718,12 +775,21 @@ if [ "$USE_WT" = 1 ]; then
 elif [ "$GIT" = 1 ] || is_git "$CWD"; then
   BASE="$(git -C "$CWD" rev-parse HEAD 2>/dev/null)"
 fi
+mkdir -p "$HOOKS_DIR" 2>/dev/null
+printf '#!/bin/sh\necho "SubDeck: git push is disabled inside a SubDeck run; the manager integrates branch subdeck/%s after the user approves." >&2\nexit 1\n' "$TASK" > "$HOOKS_DIR/pre-push"
+chmod +x "$HOOKS_DIR/pre-push" 2>/dev/null
+if [ -n "$PUSHURLS" ]; then
+  logh "warning: remote(s) with an explicit pushurl: $(printf '%s' "$PUSHURLS" | tr '\n' ' ')- push blocked by url rewrite and the SubDeck pre-push hook"
+fi
 CHECK=skipped; is_git "$CWD" && CHECK=ok
-RUNBASE=""; PRE=""
+RUNBASE=""; PRE=""; TOP=""; GSNAP=""; MARKF="$F.marker"
 if [ "$CHECK" = ok ]; then
   RUNBASE="$(git -C "$CWD" rev-parse HEAD 2>/dev/null)"
   [ -n "$RUNBASE" ] || RUNBASE="$(git hash-object -t tree /dev/null)"
   PRE="$(changed_paths "$CWD" "$RUNBASE")"
+  TOP="$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)"
+  GSNAP="$(gitdir_snapshot)"
+  : > "$MARKF"
 fi
 
 write_meta() { # status cliExit exit endedAt(json) sessionId(json) violations(json) commits uncommitted
@@ -790,6 +856,13 @@ trap 'on_signal' INT TERM HUP
 set -m
 (
   cd "$CWD" || exit 126
+  # the caller's Claude Code session identity must not leak into the child (it would look like that session)
+  unset CLAUDECODE CLAUDE_PID CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SSE_PORT \
+    CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CLAUDE_CODE_WORKER_EPOCH CLAUDE_AFTER_LAST_COMPACT \
+    CLAUDE_CODE_DIAGNOSTICS_FILE CLAUDE_CODE_TEE_SDK_STDOUT CLAUDE_SESSION_INGRESS_TOKEN_FILE 2>/dev/null
+  while IFS='=' read -r n _; do
+    case "$n" in CLAUDE_CODE_*SESSION*|CLAUDE_*_SESSION_ID) [[ $n =~ ^[A-Z0-9_]+$ ]] && unset "$n" ;; esac
+  done < <(env 2>/dev/null)
   for e in "${ENV_OUT[@]}"; do export "$e"; done
   exec "$BIN" ${ARGV_OUT[@]+"${ARGV_OUT[@]}"} < "$STDIN_SRC" > "$OUTF" 2>> "$LOGF"
 ) &
@@ -887,26 +960,65 @@ else
 fi
 
 # writable check (always, also on failure)
-VIOL=""; VCOUNT=0; COMMITS=0; UNCOMMITTED=0
+VIOL=""; VCOUNT=0; COMMITS=0; UNCOMMITTED=0; VW=""; VG=""; VS=""; IGN=""; IGNCOUNT=0
+add_viol() { VCOUNT=$((VCOUNT + 1)); [ "$VCOUNT" -le 50 ] && VIOL="$VIOL$1$NL"; }
 if [ "$CHECK" = ok ]; then
   POST="$(changed_paths "$CWD" "$RUNBASE")"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     if [ -n "$PRE" ] && printf '%s\n' "$PRE" | grep -Fxq -- "$p"; then continue; fi
     path_allowed "$p" && continue
-    VCOUNT=$((VCOUNT + 1))
-    [ "$VCOUNT" -le 50 ] && VIOL="$VIOL$p$NL"
+    VW="$VW$p$NL"; add_viol "$p"
   done <<< "$POST"
+  # writes into the git dir (hooks, config) bypass the work-tree diff
+  GSNAP2="$(gitdir_snapshot)"
+  if [ "$GSNAP" != "$GSNAP2" ]; then
+    while IFS= read -r g; do
+      [ -n "$g" ] || continue
+      VG="${VG}git-dir:$g$NL"; add_viol "git-dir:$g"
+    done < <({ printf '%s\n' "$GSNAP"; printf '%s\n' "$GSNAP2"; } | grep -v '^$' | LC_ALL=C sort | uniq -u | sed 's/^[^ ]* //' | LC_ALL=C sort -u)
+  fi
+  # symlinks made or changed in the run that point outside the work tree; ignored files written in the run (warning)
+  if [ -f "$MARKF" ] && [ -n "$TOP" ]; then
+    NEWF="$(find "$TOP" -path "$TOP/.git" -prune -o -newer "$MARKF" \( -type f -o -type l \) -print 2>/dev/null | head -n 5000 | awk -v t="$TOP/" 'index($0, t) == 1 { print substr($0, length(t) + 1) }')"
+    while IFS= read -r p; do
+      [ -n "$p" ] && [ -L "$TOP/$p" ] || continue
+      if link_escapes "$p"; then VS="${VS}symlink-escape:$p -> $LINK_T$NL"; add_viol "symlink-escape:$p -> $LINK_T"; fi
+    done <<< "$NEWF"
+    if [ -n "$NEWF" ]; then
+      IGN="$(printf '%s\n' "$NEWF" | git -C "$TOP" check-ignore --stdin 2>/dev/null)"
+      [ -n "$IGN" ] && IGNCOUNT="$(printf '%s\n' "$IGN" | wc -l | tr -d ' ')"
+    fi
+  fi
+  rm -f "$MARKF" 2>/dev/null
   COMMITS="$(git -C "$CWD" rev-list --count "$RUNBASE..HEAD" 2>/dev/null)"; [[ $COMMITS =~ ^[0-9]+$ ]] || COMMITS=0
   UNCOMMITTED="$(git -C "$CWD" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
 fi
+if [ "$IGNCOUNT" -gt 0 ]; then
+  logh "warning: $IGNCOUNT gitignored file(s) written in this run (not checked against writable): $(printf '%s' "$IGN" | head -n 50 | tr '\n' ' ')"
+  { printf '%s\n' "$IGN" | head -n 50; [ "$IGNCOUNT" -gt 50 ] && printf '(%s more)\n' "$((IGNCOUNT - 50))"; } \
+    | bash "$TASKS_SH" --project "$PROJECT" append "$TASK" report --label "warning: gitignored files written ($ROLE $TOOL)" >> "$LOGF" 2>&1 \
+    || logh "warning: could not append the ignored-files warning to $TASK"
+fi
+jlist() { # lines -> JSON array
+  local out
+  out="$(while IFS= read -r p; do [ -n "$p" ] && { jesc "$p"; printf '"%s"\n' "$JE"; }; done <<< "$1" | head -n 50 | paste -sd, -)"
+  printf '[%s]' "$out"
+}
+violation_event() { # reason lines
+  local n
+  [ -n "$2" ] || return 0
+  n="$(printf '%s' "$2" | grep -c .)"
+  emit_event writable_violation "{\"agent_id\":$(jstr "$RUN_ID"),\"agent_type\":$(jstr "$AGENT_TYPE"),\"session_id\":$(jstr "$RUN_ID"),\"task\":$(jstr "$TASK"),\"role\":$(jstr "$ROLE"),\"tool\":$(jstr "$TOOL"),\"paths\":$(jlist "$2"),\"count\":$n,\"reason\":$(jstr "$1")}"
+}
 VJSON='[]'
 if [ "$VCOUNT" -gt 0 ]; then
   CHECK=violation
-  VJSON="$(while IFS= read -r p; do [ -n "$p" ] && { jesc "$p"; printf '"%s"\n' "$JE"; }; done <<< "$VIOL" | paste -sd, -)"
-  VJSON="[$VJSON]"
+  VJSON="$(jlist "$VIOL")"
   logh "writable violation ($VCOUNT): $(printf '%s' "$VIOL" | tr '\n' ' ')"
-  emit_event writable_violation "{\"agent_id\":$(jstr "$RUN_ID"),\"agent_type\":$(jstr "$AGENT_TYPE"),\"session_id\":$(jstr "$RUN_ID"),\"task\":$(jstr "$TASK"),\"role\":$(jstr "$ROLE"),\"tool\":$(jstr "$TOOL"),\"paths\":$VJSON,\"count\":$VCOUNT}"
+  violation_event writable "$VW"
+  violation_event git-dir "$VG"
+  violation_event symlink-escape "$VS"
   bash "$TASKS_SH" --project "$PROJECT" set "$TASK" status=blocked >> "$LOGF" 2>&1 || logh "warning: could not set $TASK blocked"
   { printf '%s' "$VIOL"; [ "$VCOUNT" -gt 50 ] && printf '(%s more)\n' "$((VCOUNT - 50))"; } \
     | bash "$TASKS_SH" --project "$PROJECT" append "$TASK" report --label "writable violation ($ROLE $TOOL)" >> "$LOGF" 2>&1 \
