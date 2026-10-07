@@ -8,6 +8,7 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, ADAPTERS } from '../server.mjs';
+import './fixtures/tmpclean.mjs';
 
 const SERVER = fileURLToPath(new URL('../server.mjs', import.meta.url));
 

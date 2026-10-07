@@ -13,6 +13,7 @@ import { createTasksReader, runBd } from '../lib/tasks.mjs';
 import { validateAdapterSession } from '../lib/model.mjs';
 import { runBadgeText, runUrl } from '../public/runs.js';
 import { roleRows, roleFieldError, GROUPS, groupItems, ROLE_PRIVACY } from '../public/settings.js';
+import './fixtures/tmpclean.mjs';
 
 const FIX = fileURLToPath(new URL('../../plugins/subdeck/tests/fixtures/runs/state/', import.meta.url));
 const NOW = Date.parse('2026-10-07T12:00:00Z');

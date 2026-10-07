@@ -7,6 +7,7 @@ import path from 'node:path';
 import opencode, { createOpenCodeAdapter, dataDirOf } from '../adapters/opencode.mjs';
 import { deriveState, validateAdapterSession } from '../lib/model.mjs';
 import { buildOpenCodeFixture } from './fixtures/opencode-fixture.mjs';
+import './fixtures/tmpclean.mjs';
 
 function scenario(extra = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-oc-'));

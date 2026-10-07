@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import './fixtures/tmpclean.mjs';
 
 const pub = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 

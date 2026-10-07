@@ -9,6 +9,7 @@ import cursor, { createCursorAdapter } from '../adapters/cursor.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { deriveState, validateAdapterSession } from '../lib/model.mjs';
 import { buildCursorFixture } from './fixtures/cursor-fixture.mjs';
+import './fixtures/tmpclean.mjs';
 
 function scenario() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-cur-'));

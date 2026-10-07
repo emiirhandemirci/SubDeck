@@ -1,6 +1,7 @@
 // desk/test/fixtures/claude-fixture.mjs
 // Synthetic Claude Code transcript records mirroring the real layout (spec 5.1). No real content.
 import fs from 'node:fs';
+import './tmpclean.mjs';
 import os from 'node:os';
 import path from 'node:path';
 

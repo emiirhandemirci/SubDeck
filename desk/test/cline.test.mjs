@@ -7,6 +7,7 @@ import path from 'node:path';
 import cline from '../adapters/cline.mjs';
 import { deriveState, validateAdapterSession } from '../lib/model.mjs';
 import { buildClineFixture, storageRoot, apiReq, BODY } from './fixtures/cline-fixture.mjs';
+import './fixtures/tmpclean.mjs';
 
 const NOW = Date.now();
 const mkHome = () => fs.mkdtempSync(path.join(os.tmpdir(), 'desk-cl-'));

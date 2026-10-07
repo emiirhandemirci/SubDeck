@@ -10,6 +10,7 @@ import { resolveBd, runBd, parseFrontmatter, parseList, parseHandoff, parseTask,
 import { createApi } from '../lib/api.mjs';
 import { readHooks, taskFields } from '../adapters/claude-code.mjs';
 import { groupTasks, handoffSummary, COLUMNS } from '../public/tasks.js';
+import './fixtures/tmpclean.mjs';
 
 const FIX = fileURLToPath(new URL('../../plugins/subdeck/tests/fixtures/tasks/', import.meta.url));
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));

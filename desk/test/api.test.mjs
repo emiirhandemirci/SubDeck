@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createApi } from '../lib/api.mjs';
+import './fixtures/tmpclean.mjs';
 
 const P = 4917;
 const S = (id, over = {}) => ({ id, nativeId: id, tool: 'claude-code', sourceId: 'claude-code', projectId: 'p_1', parentId: null, depth: 0,

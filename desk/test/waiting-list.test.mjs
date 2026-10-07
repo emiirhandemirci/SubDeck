@@ -8,6 +8,7 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { createCore } from '../lib/core.mjs';
 import { createApi } from '../lib/api.mjs';
+import './fixtures/tmpclean.mjs';
 
 const NOW = Date.parse('2026-09-29T12:00:00Z');
 const iso = msAgo => new Date(NOW - msAgo).toISOString();

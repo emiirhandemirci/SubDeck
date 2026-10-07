@@ -7,6 +7,7 @@ import path from 'node:path';
 import codex, { createCodexAdapter } from '../adapters/codex.mjs';
 import { deriveState, validateAdapterSession } from '../lib/model.mjs';
 import { buildCodexFixture, meta, turnContext, started, complete, aborted, userMsg, agentMsg, tokens, toolCall, toolOut, assistantText, BODY } from './fixtures/codex-fixture.mjs';
+import './fixtures/tmpclean.mjs';
 
 function scenario(over = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-cx-'));

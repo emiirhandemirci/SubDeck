@@ -7,6 +7,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import { createApi } from '../lib/api.mjs';
+import './fixtures/tmpclean.mjs';
 
 const P = 4917;
 const TOKEN = 'a'.repeat(48);

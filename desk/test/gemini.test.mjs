@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import gemini from '../adapters/gemini.mjs';
 import { validateAdapterSession, deriveState } from '../lib/model.mjs';
 import { msg, geminiMsg, writeJsonl, writeJson, setMtime, chatsDir } from './fixtures/gemini-fixture.mjs';
+import './fixtures/tmpclean.mjs';
 
 const mk = () => fs.mkdtempSync(path.join(os.tmpdir(), 'desk-gm-'));
 const envOf = (home, NOW = Date.now()) => ({ home, platform: process.platform, vars: {}, now: () => NOW, days: 14 });

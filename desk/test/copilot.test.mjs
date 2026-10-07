@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import copilot, { createCopilotAdapter, parseFlatYaml, vscodeUserDirs } from '../adapters/copilot.mjs';
 import { deriveState, validateAdapterSession } from '../lib/model.mjs';
 import { buildCopilotFixture, ev, BODY } from './fixtures/copilot-fixture.mjs';
+import './fixtures/tmpclean.mjs';
 
 const DEAD_PID = 999999991;
 function envFor(root, NOW) {

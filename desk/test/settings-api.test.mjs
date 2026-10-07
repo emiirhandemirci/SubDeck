@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { createApi, runSettingsSh } from '../lib/api.mjs';
+import './fixtures/tmpclean.mjs';
 
 const P = 4917;
 const TOKEN = 'a'.repeat(48);
