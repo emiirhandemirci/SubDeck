@@ -93,7 +93,8 @@ mkdir -p "$PMS"; ev "$(isoat -99)" SubagentStart r2rrrrrr "$T/s1.jsonl" > "$PMS/
 eq "$(NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$PM\"}}")" "SubDeck ● 2 running" "legacy and state-dir events merged"
 [ "$(ls -A "$PM/.subdeck")" = events.jsonl ] && ok "nothing written into the project" || bad "project written: $(ls -A "$PM/.subdeck")"
 E2="$(mktemp -d)"; mkdir -p "$(sd "$E2")"; ev "$(isoat -100)" SubagentStart r1rrrrrr "$T/s1.jsonl" > "$(sd "$E2")/events.jsonl"
-eq "$(NO_COLOR=1 bash "$SL" <<<"{\"workspace\":{\"current_dir\":\"$E\",\"project_dir\":\"$E2\"}}")" "SubDeck ● 1 running" "candidate with a state dir wins"
+J2="{\"workspace\":{\"current_dir\":\"$E\",\"project_dir\":\"$E2\"}}"   # in a variable: bash 3.2 splits this here-string inside $(...)
+eq "$(NO_COLOR=1 bash "$SL" <<<"$J2")" "SubDeck ● 1 running" "candidate with a state dir wins"
 rm -rf "$PM" "$PMS" "$E2" "$(sd "$E2")"
 
 # speed: cold (cache off) and warm (cache on) with 20 and 200 agents (info only unless SUBDECK_PERF_STRICT=1)
