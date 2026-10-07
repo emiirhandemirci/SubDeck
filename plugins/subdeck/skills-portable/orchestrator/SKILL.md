@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: Rulebook for a session acting as a manager of sub-agents. Use whenever you delegate work, launch agents (in parallel or in sequence), are told to "use subagents", or handle a multi-part request (investigate, then implement, then test). Covers the model policy (per-role models, the settings skill), how to launch an agent, task template, ownership, git rules, pre-push checklist and approval gate, report format, verification, escalation. Load it whenever the session delegates.
+description: Rulebook for a session acting as a manager of sub-agents (in-session, or mapped to other CLIs via run.sh). Use whenever you delegate work, launch agents (in parallel or in sequence), are told to "use subagents", or handle a multi-part request (investigate, then implement, then test). Covers the model policy (per-role models, the settings skill), how to launch an agent, task template, ownership, git rules, pre-push checklist and approval gate, report format, verification, escalation. Load it whenever the session delegates.
 ---
 
 > Portable copy for Codex and Copilot, generated from the Claude Code skill. Launch sub-agents with this tool's own sub-agent mechanism by the plain names below (worker-sonnet, researcher, verifier ...; installed by `install.sh --tool <tool>` when the plugin does not bundle them). Model aliases and the `model` parameter in the policy below are Claude Code settings: in other tools let each agent use its configured model. `<skill dir>` is the directory that contains this SKILL.md.
@@ -72,7 +72,7 @@ Rules: the agent's own rules apply (pathspec commit, no attribution line, no pus
 
 - Any number of agents may run in parallel. The only constraint is ownership: **two agents never get the same write path**; tasks touching the same file run sequentially.
 - Before launching a batch, list each agent's writable paths and check they are disjoint.
-- Everyone works in the current branch, in the main working tree. Avoid worktree isolation; if it is used, verify the base commit first (it can branch from the wrong base).
+- Everyone works in the current branch, in the main working tree. Avoid worktree isolation for in-session agents; if it is used, verify the base commit first (it can branch from the wrong base). Mapped worker runs (section 4b) are the exception: run.sh creates the worktree from the project HEAD and records the base.
 - Shared live resource (running app, port, device): name a lock file in the task; agents acquire before use and release after. One agent at a time.
 - **Protected resources.** If the user has live things agents must not disturb (a local service on a port, a staging host, a database process), ask them to list them once: `the settings skill set protect-ports=8080 protect-hosts=staging.example protect-procs=redis`. The guard rule `protected-resources` (default `ask`) then asks before a command uses them. It is a guard rail for obvious command forms only: it does not see variables, scripts, config files or a plain `kill <pid>`. So also say in the task which resources are off limits, and name the lock file for any an agent may use. Where an agent must use one, get the user's approval first.
 - **Leave it as you found it.** When a task touched a live resource, the report must confirm the checklist: forms and sessions closed, processes started by the agent stopped, ports released, lock file removed, settings restored. Check it in verification; an unconfirmed item is a finding.
@@ -81,6 +81,20 @@ Rules: the agent's own rules apply (pathspec commit, no attribution line, no pus
 - **Integration verification after every parallel wave:** run the full build, all tests and e2e (if present) on the combined result, via a verifier or worker. Per-task checks are not enough.
 - If the project has contract files (schemas, API definitions, shared types), suggest protecting them: `the settings skill set protect=<glob>`.
 - Non-Claude backends: set `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the model's real window and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` for the compaction point (the latter applies to sub-agents too; Claude Code env-vars docs).
+
+## 4b. Mapped roles (opt-in)
+
+The user may map a role to another CLI (Codex, Gemini CLI, OpenCode, Copilot, Claude, a custom command) with `the settings skill set roles.worker.tool=codex roles.worker.model=gpt-5-codex`. This is off by default; with no `roles` setting everything above stays as it is.
+
+- **At session start run `bash "<skill dir>/../../scripts/run.sh" roles` once** (cheap, read-only). It lists each role, its class (worker, researcher, verifier, manager), tool, model and timeout. A role shown with tool `-` is **unmapped**: launch it in-session with the Agent tool exactly as in sections 2 and 3.
+- **A mapped role is delegated with `bash "<skill dir>/../../scripts/run.sh" <role> <task-id>`, started in the background, not with the Agent tool.** Create the task file first (section 3); run.sh builds the prompt from it, adds the class rules, the writable paths and the protected resources, and sets the task status itself. One run per task at a time (a second one exits 4). Workers run in their own git worktree on branch `subdeck/<id>` by default; researchers and verifiers run in the task's worktree if it exists, else in the project directory, and are read-only.
+- **The manager role mapping is informational.** `roles.manager` only records which CLI the user starts as the manager; you cannot launch it, and `run.sh manager` is refused.
+- **After a run, read the evidence, not the exit code:** `bash "<skill dir>/../../scripts/run.sh" tail <id>` (header plus the tail of the run log and output) and the task file's `## Report`. Never trust `done` or exit 0; section 8 applies in full, and a verifier is still needed for non-trivial work.
+- **Exit codes:** 0 ok. 2 refused before launch (config, unmapped role, unknown task, deny-listed args): read the stderr line, fix the setting or task, do not retry blindly. 3 the verifier is the same model as the producer: ask the user to map `roles.verifier` to another model. 4 busy: a run for this task is active; wait or check `run.sh tail`. 5 writable violation: show the user the listed paths; the task is `blocked`; nothing was reverted. 6 auth: tell the user to log in to that CLI (`docs/runs.md` lists the command per tool). 7 quota and 124 timeout: read the task's `## Handoff`, tell the user, do not retry silently. 127 the CLI is not installed or not on PATH: tell the user. Anything else is a failed run: read `run.sh tail` and count it toward the 3-attempt stop (section 9).
+- **The verifier must be a different model than the producer.** Run.sh refuses a mapped verifier whose `tool/model` equals the task's recorded `tool/model` (exit 3, no override). For in-session runs you record the producer yourself at launch: `bash "<skill dir>/../../scripts/tasks.sh" set <id> tool=claude model=<the model you passed>`, and you choose a verifier model that differs; hooks do not enforce this. If the producer is unknown the run goes ahead with a warning; say so in your summary.
+- **Results come back only after the user's explicit yes.** A mapped worker commits on `subdeck/<id>` in its worktree; nothing reaches the user's branch by itself. After verification show `git log --oneline <base>..subdeck/<id>` (the base is in the run meta and the `run.sh tail` header) and a short stat, ask once, and only on a yes run `git merge --ff-only subdeck/<id>` or cherry-pick the listed commits. Then `bash "<skill dir>/../../scripts/run.sh" cleanup <id>` (it keeps the branch). Approval is scoped (section 6): a yes to one merge does not cover another task or a push.
+- **Privacy, once per session:** before the first mapped run say in one sentence which provider(s) will receive the code, the task text and the protected-resource lists (one per mapped tool in `run.sh roles`). SubDeck itself sends nothing anywhere.
+- **Guard coverage differs per tool** (`docs/runs.md`): SubDeck's guard hooks cover Claude runs; for the other tools the worktree, the writable-path check after the run and the push blocker are the safety net. Do not promise more than that.
 
 ## 5. Git rules (tell every agent)
 
@@ -134,6 +148,7 @@ Longer material goes to files. Your own summary to the user is short too: what w
 
 - Open the task file's `## Report` and `## Handoff` when you check an agent; they hold the final reply and any early notes.
 - Verifier prompts carry `Task: <id>` too. The verifier first runs the scripted checks (`scripts/verify-checks.sh --base <commit> --report <file>`: test files not empty, test count not dropped, claimed commands really run, `Tested:` line present), then judges. Its evidence is typed `read`, `executed` or `live`; a runtime or behaviour claim backed only by `read` is `unsupported` and comes to you as `Escalate`. After an `Approved` verdict with a current fingerprint, run `tasks.sh done <id>`.
+- Mapped runs (section 4b): read `run.sh tail <id>` and `## Report`; the verifier is a different model than the producer.
 - Never accept a report as-is. Trivial task: one targeted check (`git show --stat <hash>`, `git log -1 --format=%B` for attribution, the claimed test command once).
 - Non-trivial work (several files, logic, multiple commits): launch `verifier` (`model` = the `verifier` policy value) with the report, allowed write paths and base commit. It returns per-claim JSON and a verdict `Approved | Needs fixes | Escalate`.
 - **Acceptance is yours, not the worker's.** A worker's "done" is a claim. Before accepting, the acceptance check must be shown able to fail (negative control: run it on a known-bad or deliberately broken copy and see it fail, then see it pass on the real work). A check that cannot fail is not evidence. The verifier also runs static checks (syntax check of every touched shell/JS file, JSON parse) that catch a shipped-file break the worker's own tests missed.
@@ -181,7 +196,11 @@ When the user decides something (name, approach, tradeoff, rejected option), wri
 | Push or PR without the checklist or the user's yes | Section 6 gate; approval comes only from the user |
 | Agent asked to return full files/logs in chat | Short report, detail to a file |
 | Endless retries, empty agents | Stop after 3, report, ask |
-| Worktree on wrong base | Main tree, current branch |
+| Worktree on wrong base | Main tree, current branch; for mapped runs run.sh records the base |
+| Mapped role launched with the Agent tool, or an unmapped one with run.sh | Section 4b: `run.sh roles` at session start decides |
+| Mapped run trusted because the exit code was 0 | Section 4b: read `run.sh tail` and `## Report`, then verify |
+| Verifier on the same model as the producer | Section 4b: different model; exit 3 means change `roles.verifier` |
+| Worktree branch merged without asking | Section 4b: show the log, merge only after the user's explicit yes |
 | A sub-agent acts as a second manager (loads this skill, launches agents) | Agents block the Agent tool (`disallowedTools: Agent`) and are told they are not the manager; never ask an agent to delegate |
 | Parallel agents coupled through a shared interface | Contract first; `Produces` / `Consumes`; integration verification after the wave (section 4) |
 
