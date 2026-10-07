@@ -118,14 +118,16 @@ export function resolveTasksDir(projectPath, env) {
 }
 
 // ---- Beads bridge: opt-in (SUBDECK_BEADS=1), read-only, only when .beads/ exists and `bd` runs ----
-const BEADS_STATUS = { open: 'open', in_progress: 'in-progress', 'in-progress': 'in-progress', blocked: 'blocked', deferred: 'blocked', closed: 'done', done: 'done', review: 'review' };
+const BEADS_STATUS = { open: 'open', in_progress: 'in-progress', 'in-progress': 'in-progress', blocked: 'blocked', deferred: 'blocked', closed: 'done', done: 'done', review: 'review', pinned: 'open', hooked: 'in-progress' };
+// Dependency types that block the dependent issue (bd: `blocks`, `conditional-blocks`, `waits-for`); parent-child, related, discovered-from etc. do not.
+const BEADS_BLOCKING = new Set(['blocks', 'conditional-blocks', 'waits-for']);
 export function mapBeads(raw, projectPath) {
   const list = Array.isArray(raw) ? raw : raw && Array.isArray(raw.issues) ? raw.issues : [];
   const out = [];
   for (const b of list.slice(0, 500)) {
     if (!b || typeof b !== 'object' || typeof b.id !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(b.id)) continue;
     const st = BEADS_STATUS[String(b.status || 'open').toLowerCase()];
-    const deps = Array.isArray(b.dependencies) ? b.dependencies.map(d => (typeof d === 'string' ? d : d && (d.depends_on_id || d.id))).filter(x => typeof x === 'string') : [];
+    const deps = Array.isArray(b.dependencies) ? b.dependencies.filter(d => typeof d === 'string' || (d && typeof d === 'object' && (d.type === undefined || BEADS_BLOCKING.has(d.type)))).map(d => (typeof d === 'string' ? d : d.depends_on_id || d.id)).filter(x => typeof x === 'string') : [];
     out.push({ task: {
       id: b.id, title: String(b.title || b.id).slice(0, 200), status: st || 'open', owner: typeof b.assignee === 'string' ? b.assignee : '', agent: '', session: '', transcript: '',
       blockedBy: deps, writable: [], created: typeof b.created_at === 'string' ? b.created_at : '', updated: typeof b.updated_at === 'string' ? b.updated_at : (typeof b.created_at === 'string' ? b.created_at : ''),
@@ -154,14 +156,14 @@ export function resolveBd(cmd, { pathVar = process.env.PATH || '', platform = pr
   return null;
 }
 
-/** `bd list --json` for one project. The cwd must be the project (bd finds its database from it); BEADS_NO_DAEMON asks bd not to start a daemon. */
+/** `bd list --json` for one project. The cwd must be the project (bd finds its database from it); BEADS_DOLT_AUTO_START=0 stops bd from spawning a Dolt server (BEADS_NO_DAEMON/BD_NO_DAEMON are no-ops since bd 0.51). Accepts the bare array or {issues, meta} (--skip-labels). */
 export function runBd(projectPath, { timeoutMs = 5000, cmd = process.env.SUBDECK_BD || 'bd', pathVar, platform } = {}) {
   return new Promise(resolve => {
     const exe = resolveBd(cmd, { pathVar, platform, projectPath });
     if (!exe) return resolve(null);
     let out = '', done = false, timer = null, child;
     const end = v => { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
-    try { child = spawn(exe, ['list', '--json'], { cwd: projectPath, env: { ...process.env, BEADS_NO_DAEMON: '1', BD_NO_DAEMON: '1' }, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }); } catch { return resolve(null); }
+    try { child = spawn(exe, ['list', '--json'], { cwd: projectPath, env: { ...process.env, BEADS_DOLT_AUTO_START: '0' }, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }); } catch { return resolve(null); }
     timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } end(null); }, timeoutMs);
     child.stdout.on('data', c => { if (out.length < 4e6) out += c; });
     child.on('error', () => end(null));

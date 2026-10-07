@@ -358,3 +358,19 @@ test('tab label shows the total and a separate attention marker', async () => {
   assert.equal(l.text, 'Tasks (5) !2');
   assert.equal(l.title, '5 tasks, 2 blocked or interrupted');
 });
+
+test('beads: real bd 1.3.0 list shapes (array and {issues, meta}) map the same', () => {
+  const issues = [
+    { id: 'bd-7f3', title: 'Wire the uploader', status: 'blocked', priority: 1, issue_type: 'task', assignee: 'alice', labels: ['backend'],
+      dependencies: [{ issue_id: 'bd-7f3', depends_on_id: 'bd-2aa', type: 'blocks', created_at: '2026-10-06T08:00:00Z' }, { issue_id: 'bd-7f3', depends_on_id: 'bd-epic', type: 'parent-child' }],
+      created_at: '2026-10-06T08:00:00Z', updated_at: '2026-10-07T09:30:00Z', dependency_count: 2, dependent_count: 0, comment_count: 0 },
+    { id: 'bd-2aa', title: 'Schema', status: 'closed', priority: 2, issue_type: 'bug', labels: [], created_at: '2026-10-05T08:00:00Z', updated_at: '2026-10-06T08:00:00Z', dependency_count: 0, dependent_count: 1, comment_count: 0 },
+  ];
+  const a = mapBeads(issues), b = mapBeads({ issues, meta: { skip_labels: true, count: 2 } });
+  assert.deepEqual(a, b);
+  assert.equal(a[0].task.owner, 'alice');
+  assert.equal(a[0].task.updated, '2026-10-07T09:30:00Z');
+  assert.deepEqual(a[0].task.blockedBy, ['bd-2aa']);
+  assert.equal(a[0].task.status, 'blocked');
+  assert.equal(a[1].task.status, 'done'); assert.equal(a[1].task.owner, '');
+});
