@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 - 2026-10-07
 
 - **Any model, any role (opt-in):** map a role to another CLI with `roles.<role>.tool|model|args|cmd|timeout` (`claude`, `codex`, `gemini`, `agy` experimental, `opencode`, `copilot`, `custom`). New `scripts/run.sh` runs a role headlessly from its task file, in a git worktree on branch `subdeck/<task>` for workers, with a timeout, a writable-path check afterwards and a push blocker. Exit codes classify auth, quota, timeout and violations; `run.sh roles|tail|cleanup` inspect and clean up. Flags per CLI live in `scripts/run-profiles.txt`. Unmapped roles stay in-session sub-agents; without a `roles` setting nothing changes.
 - **Verifier on another model:** a mapped verifier on the same `tool/model` as the task's producer is refused.

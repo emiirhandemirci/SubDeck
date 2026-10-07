@@ -7,7 +7,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-emiirhandemirci-181717?logo=github&logoColor=white)](https://github.com/emiirhandemirci)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Emirhan_Demirci-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/emirhan-demirci-/)
 
-![version](https://img.shields.io/badge/version-0.7.0-6366f1)
+![version](https://img.shields.io/badge/version-0.8.0-6366f1)
 ![node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?logo=nodedotjs&logoColor=white)
 ![plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757)
 ![deps](https://img.shields.io/badge/dependencies-zero-22c55e)
@@ -201,7 +201,7 @@ What SubDeck does not do:
 
 ## Status
 
-v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 added notifications, guard rules and the Desk context-usage bar; v0.5 cut the commands to three; v0.6 added the Desk Settings tab, the branch-aware push guard and state outside the repository; v0.7 added Tasks, the report watchdog, interrupted-work handoff, protected resources and typed test evidence; the next release adds mapped roles (run a role on another CLI or model). See the [CHANGELOG](CHANGELOG.md) for what changed in each release.
+v0.1 (agents, hooks, status renderer, skills, templates) is implemented and was run end to end. v0.4 added notifications, guard rules and the Desk context-usage bar; v0.5 cut the commands to three; v0.6 added the Desk Settings tab, the branch-aware push guard and state outside the repository; v0.7 added Tasks, the report watchdog, interrupted-work handoff, protected resources and typed test evidence; v0.8 added mapped roles (run a role on another CLI or model), the `run.sh` runner and Desk run view. See the [CHANGELOG](CHANGELOG.md) for what changed in each release.
 
 ## License
 
