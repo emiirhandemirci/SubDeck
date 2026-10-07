@@ -340,3 +340,11 @@ test('report_missing / task_interrupted in the same second as the SubagentStart 
   assert.deepEqual(taskFields(info, 'a:a1', info.agents.get('a1'), 0).reportMissing, { at: '2026-10-07T09:00:00.000Z', task: 't-0a01' });
   assert.equal(taskFields(info, 'a:a2', info.agents.get('a2'), 0).interrupted.files, 1);
 });
+
+test('runBd spawns exactly the PATH-resolved bd, not the planted one in the project', { skip: process.platform === 'win32' }, async () => {
+  const proj = tmp('tk-bq-'), bin = tmp('tk-bin-');
+  const mk = (f, who) => fs.writeFileSync(f, `#!/bin/sh\necho '[{"id":"bd-${who}","title":"${who}","status":"open"}]'\n`, { mode: 0o755 });
+  mk(path.join(proj, 'bd'), 'planted'); mk(path.join(bin, 'bd'), 'real');
+  const r = await runBd(proj, { cmd: 'bd', pathVar: `${proj}:${bin}` });
+  assert.deepEqual(r.map(x => x.id), ['bd-real']);
+});
