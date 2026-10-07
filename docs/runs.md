@@ -36,7 +36,7 @@ The manager runs this once at session start. For a mapped role it creates the ta
 | `roles.<role>.cmd` | only with tool `custom`: the command line, must contain `{prompt_file}` | empty |
 | `roles.<role>.timeout` | seconds, 60 to 86400 | 1800 |
 
-A project's `roles.<role>` replaces the user's `roles.<role>` as a whole; the fields are never mixed across scopes. Set the tool first, then the other keys. Flags that auto-approve everything are refused: any token containing `dangerously`, `bypassPermissions`, `yolo` or `danger-full-access`, and the exact tokens `-y`, `--auto`, `--allow-all`, `--allow-all-paths`, `--no-sandbox`.
+A project's `roles.<role>` replaces the user's `roles.<role>` as a whole; the fields are never mixed across scopes. Set the tool first, then the other keys. Claude child runs get a fresh session identity (`CLAUDECODE` and `CLAUDE_CODE_SESSION_ID` are stripped from the environment). Flags that auto-approve everything are refused: any token containing `dangerously`, `bypassPermissions`, `yolo` or `danger-full-access`, and the exact tokens `-y`, `--auto`, `--allow-all`, `--allow-all-paths`, `--no-sandbox`. Per tool, the denied flags also include: claude `--permission-mode auto` or `bypassPermissions`, `--dangerously-skip-permissions`, `--add-dir`; codex `--approve-for-me`, `--dangerously-bypass-approvals-and-sandbox`, `--add-dir`; gemini `--yolo`; opencode `--auto`.
 
 More examples:
 
@@ -93,8 +93,8 @@ Uses your normal Claude Code login. This is the only tool where SubDeck's own gu
 
 1. `run.sh` reads the task file and builds one prompt: the role's rulebook, the headless rules, the writable paths, your protected resources and the task text.
 2. A worker gets its own git worktree at `<state>/worktrees/<task>` on branch `subdeck/<task>`, created from the project's current HEAD (uncommitted changes in your main tree are not copied; `run.sh` warns when some lie in the writable paths). Researchers and verifiers are read-only and use that worktree if it exists, otherwise the project directory.
-3. The CLI runs in the foreground of `run.sh` (the manager starts `run.sh` in the background), with stdin redirected, the timeout enforced and `git push` blocked through the environment.
-4. After the run, `run.sh` compares what changed against the writable paths. Any other path is a violation: the task is marked `blocked`, the paths are listed in the task's Report and `run.sh` exits 5. Nothing is reverted.
+3. The CLI runs in the foreground of `run.sh` (the manager starts `run.sh` in the background), with stdin redirected, the timeout enforced and a push blocker in place: every push URL is rewritten to an unknown scheme (`pushInsteadOf`) and a SubDeck pre-push hook is set through `core.hooksPath` for the run. That disables the repository's own git hooks inside the worker run only. `run.sh` warns when a remote has a separate `pushurl`. This is a guard rail, not a sandbox: a worker that edits its own environment or uses `--no-verify` can get around it. For Claude runs the in-session guard still blocks `git push` as well.
+4. After the run, `run.sh` compares what changed against the writable paths. Any other path is a violation: the task is marked `blocked`, the paths are listed in the task's Report and `run.sh` exits 5. Nothing is reverted. Changes to the shared `.git` hooks or config are flagged (`git-dir`), and so are symlinks that resolve outside the worktree (`symlink-escape`). Gitignored files are only listed as warnings.
 5. Task status follows the same rules as for in-session agents: `review` on a report, `blocked` on a violation or missing report, `interrupted` plus a Handoff block on a quota, auth or timeout failure.
 
 Files per run are in `<state>/runs/<task>/`: the log, the CLI output, the prompt, the final message and a small JSON record. `run.sh tail <task>` shows the latest.
@@ -129,12 +129,12 @@ Auth and quota are recognised from the CLI's exit code and the end of its output
 
 | Tool | SubDeck guard hooks | The tool's own restriction | Always applied by SubDeck |
 |---|---|---|---|
-| `claude` | Yes: hooks run in `claude -p` | `acceptEdits`, prompts denied, `git push` denied | worktree for workers, writable-path check after the run, push blocked through the environment |
+| `claude` | Yes: hooks run in `claude -p` | `acceptEdits`, prompts denied, `git push` denied | worktree for workers, writable-path check after the run, push blocker (`pushInsteadOf` plus a pre-push hook) |
 | `codex`, `copilot` | Only if you installed SubDeck's hooks for that tool; whether they fire in a headless run is not verified | Codex: `workspace-write` sandbox. Copilot: deny list for `git push`, paths in the working directory | same |
 | `gemini`, `opencode`, `agy` | None | Gemini: auto-approve edits only. OpenCode: `OPENCODE_PERMISSION` deny list. agy: accept-edits mode (not verified) | same |
 | `custom` | None | None | same |
 
-In plain words: outside Claude, nothing stops the tool from writing where it can write while it runs; SubDeck notices afterwards (writable-path check, task blocked) and the worktree keeps the damage away from your branch. The checks look at files in the git working tree and at obvious push commands; they are not a sandbox, do not see network traffic or files outside the repository, and a shell command can still reach other directories the tool is allowed to touch. The protected-resource lists are only text in the prompt for non-Claude tools. For anything you cannot afford to lose, run the CLI in a container or a user account without access to it.
+In plain words: outside Claude, nothing stops the tool from writing where it can write while it runs; SubDeck notices afterwards (writable-path check, task blocked) and the worktree keeps the damage away from your branch. The checks look at files in the git working tree and at obvious push commands; they are not a sandbox, do not see network traffic or files outside the repository, and a shell command can still reach other directories the tool is allowed to touch. The protected-resource lists are only text in the prompt for non-Claude tools. The writable check cannot detect writes through absolute paths outside the worktree in general. For anything you cannot afford to lose, or for untrusted work, run the CLI in a container or VM, or in a user account without access to it.
 
 ## Live smoke checklist (once per CLI)
 

@@ -7,6 +7,7 @@
 - **Results only after your yes:** `run.sh` never commits, merges or pushes; the manager integrates `subdeck/<task>` only after your explicit approval.
 - **Rulebook:** new orchestrator section "Mapped roles (opt-in)"; sub-agents know they may be in a headless run (end with `Stop: waiting` and the question). Portable per-class rulebooks are generated into `scripts/roles/`.
 - **Desk:** SubDeck runs appear as a source with a live log view, role/tool/model badges and a roles table in Settings.
+- **Desk fixes:** no horizontal overflow and wrapped titles at 390 px width, the tab label reads "Tasks (N) !M", a hint when temporary projects are hidden, clearer settings placeholders. The Beads bridge now reads the real `bd` 1.3.0 `list --json` output (a plain array or `{issues,meta}`), shows blocking dependencies only, and runs `bd` with `BEADS_DOLT_AUTO_START=0`.
 - **Docs:** new [docs/runs.md](docs/runs.md) (setup and login per CLI, privacy, honest guard coverage per tool, smoke checklist), README privacy note. Gemini CLI consumer tiers ended in June 2026: use an API key or Vertex, or `agy`.
 
 ## 0.7.0 - 2026-10-07
