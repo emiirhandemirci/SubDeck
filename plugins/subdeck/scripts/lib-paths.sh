@@ -108,3 +108,62 @@ sd_state_dir() {
   sd_state_root
   SD_STATE="$SD_ROOT/$SD_KEY"
 }
+
+# sd_iso_epoch ISO -> SD_EPOCH (UTC seconds; "" when not parseable). Accepts YYYY-MM-DDTHH:MM[:SS][Z]. No date(1) flags needed.
+sd_iso_epoch() {
+  SD_EPOCH=""
+  [[ $1 =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2})(:([0-9]{2}))?Z?$ ]] || return 0
+  SD_EPOCH="$(awk -v y="${BASH_REMATCH[1]}" -v m="${BASH_REMATCH[2]}" -v d="${BASH_REMATCH[3]}" -v H="${BASH_REMATCH[4]}" -v M="${BASH_REMATCH[5]}" -v S="${BASH_REMATCH[7]:-0}" 'BEGIN {
+    y += 0; m += 0; d += 0
+    if (m <= 2) y -= 1
+    era = int(y / 400); yoe = y - era * 400
+    mp = (m + 9) % 12
+    doy = int((153 * mp + 2) / 5) + d - 1
+    doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
+    days = era * 146097 + doe - 719468
+    printf "%d", days * 86400 + H * 3600 + M * 60 + S }')"
+}
+
+# sd_quota_recent STATE_DIR -> 0 and SDQ_AT SDQ_RESET SDQ_RESETAT SDQ_WHO when a quota_recent event in
+# <state>/events.jsonl is newer than 60 min or has a resetAt in the future (the newest such event wins)
+sd_quota_recent() {
+  SDQ_AT=""; SDQ_RESET=""; SDQ_RESETAT=""; SDQ_WHO=""
+  local f="$1/events.jsonl" line now at ra
+  [ -f "$f" ] || return 1
+  printf -v now '%(%s)T' -1 2>/dev/null || now="$(date +%s)"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    at=""; ra=""
+    [[ $line =~ \"ts\":\"([^\"]*)\" ]] && at="${BASH_REMATCH[1]}"
+    [[ $line =~ \"resetAt\":\"([^\"]*)\" ]] && ra="${BASH_REMATCH[1]}"
+    local ok=0 e
+    sd_iso_epoch "$at"; e="$SD_EPOCH"
+    [ -n "$e" ] && [ $((now - e)) -lt 3600 ] && ok=1
+    if [ "$ok" = 0 ] && [ -n "$ra" ]; then sd_iso_epoch "$ra"; [ -n "$SD_EPOCH" ] && [ "$SD_EPOCH" -gt "$now" ] && ok=1; fi
+    [ "$ok" = 1 ] || continue
+    SDQ_AT="$at"; SDQ_RESETAT="$ra"; SDQ_RESET=""; SDQ_WHO=""
+    [[ $line =~ \"reset\":\"([^\"]*)\" ]] && SDQ_RESET="${BASH_REMATCH[1]}"
+    [[ $line =~ \"payload\":.*\"agent_type\":\"([^\"]*)\" ]] && SDQ_WHO="${BASH_REMATCH[1]}"
+    [ -n "$SDQ_WHO" ] || { [[ $line =~ \"tool\":\"([^\"]*)\" ]] && SDQ_WHO="${BASH_REMATCH[1]}"; }
+    return 0
+  done < <(grep '"event":"quota_recent"' "$f" 2>/dev/null | tail -n 20 | sed '1!G;h;$!d')
+  return 1
+}
+
+# sd_parse_reset TEXT -> SDR_RESET (raw time text, max 60 chars) and SDR_RESETAT (ISO, UTC) from a quota message.
+# ISO timestamp after "reset" wins; else "reset(s) [at] <H:MM|Ham|H:MMpm> [(tz)]"; none -> both empty.
+sd_parse_reset() {
+  SDR_RESET=""; SDR_RESETAT=""
+  local t="$1" r1='[Rr][Ee][Ss][Ee][Tt][^0-9]{0,40}([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2})(:[0-9]{2})?Z?'
+  local r2='[Rr][Ee][Ss][Ee][Tt][Ss]?( [Aa][Tt])? +([0-9]{1,2}:[0-9]{2} ?([AaPp][Mm])?|[0-9]{1,2} ?[AaPp][Mm])( \(([^)]*)\))?'
+  if [[ $t =~ $r1 ]]; then
+    SDR_RESETAT="${BASH_REMATCH[1]}:${BASH_REMATCH[2]:+${BASH_REMATCH[2]#:}}"
+    case "$SDR_RESETAT" in *:) SDR_RESETAT="${SDR_RESETAT}00" ;; esac
+    SDR_RESETAT="${SDR_RESETAT}Z"
+  elif [[ $t =~ $r2 ]]; then
+    SDR_RESET="${BASH_REMATCH[2]}"
+    SDR_RESET="${SDR_RESET%"${SDR_RESET##*[![:space:]]}"}"
+    [ -n "${BASH_REMATCH[4]}" ] && SDR_RESET="$SDR_RESET (${BASH_REMATCH[5]})"
+    SDR_RESET="${SDR_RESET:0:60}"
+  fi
+}

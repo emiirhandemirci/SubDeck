@@ -8,18 +8,18 @@
 # Precedence: built-in defaults < ~/.subdeck/config.json < project config. The project config lives outside the
 # project in ~/.subdeck/projects/<key>/config.json (lib-paths.sh); a legacy <project>/.subdeck/config.json is
 # still read (below the new file) but never written.
-# Keys: mode (auto|named|current), worker, escalation, researcher, verifier, explore
+# Keys: mode (auto|named|current), worker, escalation, researcher, verifier, explore, light (packaging and doc edits; default haiku)
 # Values: sonnet|opus|haiku|fable|inherit, a full model id (claude-...), or another backend's model id.
 # `set`/`reset` only replace/remove the modelPolicy member; other top-level members are re-emitted verbatim.
 # A file that is not a JSON object is left untouched (message, exit 0).
 # `show` warns when a setting would defeat the policy (CLAUDE_CODE_SUBAGENT_MODEL_FORCE, availableModels).
 # No jq/node. Always exits 0 (a failing injected command would abort the skill).
 
-KEYS="mode worker escalation researcher verifier explore"
+KEYS="mode worker escalation researcher verifier explore light"
 default_of() {
   case "$1" in
     mode) echo auto ;; worker) echo sonnet ;; escalation) echo opus ;;
-    researcher) echo sonnet ;; verifier) echo sonnet ;; explore) echo sonnet ;;
+    researcher) echo sonnet ;; verifier) echo sonnet ;; explore) echo sonnet ;; light) echo haiku ;;
   esac
 }
 

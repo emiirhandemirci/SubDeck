@@ -2,13 +2,14 @@
 # SubDeck deterministic verify checks: facts a verifier can check without reading the code.
 #
 #   verify-checks.sh --base <commit> [--head <ref>] [--report <file>] [--cmd "<command>"]... [--transcript <jsonl>]
-#                    [--json] [--project <dir>]
+#                    [--json] [--project <dir>] [--task <id>]
 #
 #   --base        commit the work started from (required); --head defaults to HEAD
 #   --report      the worker's report text (its Tested: lines are checked and their commands claimed)
 #   --cmd         a command the worker claims to have run (repeatable)
 #   --transcript  the worker's Claude Code transcript (.jsonl) to look the claimed commands up in
 #   --project     the git work tree (default $CLAUDE_PROJECT_DIR, else the current directory)
+#   --task        task id: files changed outside `tasks.sh writable <id>` (writable + grants) are WARNed
 #
 # Checks (one output line each, or one per failing file/command):
 #   empty-tests  test files added or changed in base..head whose committed content is empty or whitespace
@@ -22,21 +23,28 @@
 #                command of a Bash (or PowerShell) tool call in the transcript that has a tool result;
 #                SKIP without a transcript, without claims, or for an unknown transcript format
 #   tested-line  --report without a Tested: line FAILs; "Tested: not run" WARNs
+#   control-chars  an added line (git diff -U0 base..head) holds a byte 0x00-0x08, 0x0B, 0x0C or 0x0E-0x1F
+#                (TAB, LF, CR allowed): FAIL per file "<file>:<line> 0x07 (<n> lines)"; binary files are skipped
+#   tab-in-path  an added line with a TAB after its first non-blank char and a Windows path ("C:<TAB>", "C:\", a
+#                double backslash): WARN per file, same detail shape
+#   writable-scope  files changed in base..head outside the task's effective writable list: WARN per file;
+#                SKIP without --task or with an empty list
 # Output: "PASS|FAIL|WARN|SKIP <id> <detail>" lines, then "verify-checks: <n> failed".
 #   --json: {"version":1,"checks":[{"id","result","detail"}],"failed":n}
 # Exit: 0 no FAIL, 1 any FAIL, 2 usage error (one line on stderr).
 # bash 3.2 + git + awk; no jq/node. Read-only: never changes the work tree or the index.
 
-usage() { echo "verify-checks: $1 (usage: verify-checks.sh --base <commit> [--head <ref>] [--report <file>] [--cmd <command>]... [--transcript <jsonl>] [--json] [--project <dir>])" >&2; exit 2; }
+usage() { echo "verify-checks: $1 (usage: verify-checks.sh --base <commit> [--head <ref>] [--report <file>] [--cmd <command>]... [--transcript <jsonl>] [--json] [--project <dir>] [--task <id>])" >&2; exit 2; }
 
-BASE=""; HEAD_REF=HEAD; REPORT=""; TRANSCRIPT=""; JSON=0; PROJECT=""; CMDS=()
+HERE="${BASH_SOURCE[0]%[/\\]*}"; [ "$HERE" = "${BASH_SOURCE[0]}" ] && HERE="."
+BASE=""; HEAD_REF=HEAD; REPORT=""; TRANSCRIPT=""; JSON=0; PROJECT=""; CMDS=(); TASK=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --base|--head|--report|--cmd|--transcript|--project)
+    --base|--head|--report|--cmd|--transcript|--project|--task)
       [ $# -ge 2 ] || usage "$1 needs a value"
       case "$1" in
         --base) BASE="$2" ;; --head) HEAD_REF="$2" ;; --report) REPORT="$2" ;;
-        --cmd) CMDS+=("$2") ;; --transcript) TRANSCRIPT="$2" ;; --project) PROJECT="$2" ;;
+        --cmd) CMDS+=("$2") ;; --transcript) TRANSCRIPT="$2" ;; --project) PROJECT="$2" ;; --task) TASK="$2" ;;
       esac
       shift 2 ;;
     --base=*) BASE="${1#*=}"; shift ;;
@@ -45,6 +53,7 @@ while [ $# -gt 0 ]; do
     --cmd=*) CMDS+=("${1#*=}"); shift ;;
     --transcript=*) TRANSCRIPT="${1#*=}"; shift ;;
     --project=*) PROJECT="${1#*=}"; shift ;;
+    --task=*) TASK="${1#*=}"; shift ;;
     --json) JSON=1; shift ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) usage "unknown argument '$1'" ;;
@@ -114,6 +123,73 @@ done
 if [ ${#TOUCHED[@]} -eq 0 ]; then add PASS test-count "no test files touched"
 elif [ $after -lt $before ]; then add FAIL test-count "test cases dropped: $before -> $after ($drops)"
 else add PASS test-count "$before -> $after test cases in ${#TOUCHED[@]} touched test file(s)"; fi
+
+# ---------- control-chars and tab-in-path (added lines of base..head) ----------
+SCAN_ADDED_AWK='
+BEGIN { for (i = 1; i < 32; i++) ORD[sprintf("%c", i)] = i }
+/^diff --git / { file = ""; next }
+/^\+\+\+ / { f = substr($0, 5); if (f == "/dev/null") file = ""; else { file = f; sub(/^b\//, "", file) } next }
+/^--- / { next }
+/^@@ / { if (match($0, /\+[0-9]+/)) ln = substr($0, RSTART + 1, RLENGTH - 1) + 0; else ln = 0; next }
+/^\+/ {
+  line = substr($0, 2); here = ln; ln++
+  if (file == "") next
+  if (match(line, /[\001-\010\013\014\016-\037]/)) {
+    if (!(file in CN)) { CF[++ncf] = file; CFL[file] = here; CFB[file] = ORD[substr(line, RSTART, 1)] }
+    CN[file]++
+  }
+  t = line; sub(/^[ \t]+/, "", t)
+  if (index(t, "\t") > 0 && (t ~ /(^|[^A-Za-z])[A-Za-z]:[\\\/\t]/ || index(t, "\\\\") > 0)) {
+    if (!(file in TN)) { TF[++ntf] = file; TFL[file] = here }
+    TN[file]++
+  }
+}
+END {
+  for (i = 1; i <= ncf; i++) printf "C\t%s\t%d\t0x%02x\t%d\n", CF[i], CFL[CF[i]], CFB[CF[i]], CN[CF[i]]
+  for (i = 1; i <= ntf; i++) printf "T\t%s\t%d\t0x09\t%d\n", TF[i], TFL[TF[i]], TN[TF[i]]
+}'
+n_c=0; n_t=0
+while IFS=$'\t' read -r kind f l byte cnt; do
+  case "$kind" in
+    C) add FAIL control-chars "$f:$l $byte ($cnt lines)"; n_c=$((n_c + 1)) ;;
+    T) add WARN tab-in-path "$f:$l $byte ($cnt lines)"; n_t=$((n_t + 1)) ;;
+  esac
+done < <(LC_ALL=C GIT diff --no-color -U0 --no-renames "$B" "$HD" -- 2>/dev/null | LC_ALL=C awk "$SCAN_ADDED_AWK" 2>/dev/null)
+[ $n_c -eq 0 ] && add PASS control-chars "0 files"
+[ $n_t -eq 0 ] && add PASS tab-in-path "0 files"
+
+# ---------- writable-scope ----------
+if [ -z "$TASK" ]; then add SKIP writable-scope "no --task given"
+else
+  WL="$(SUBDECK_METER=0 bash "$HERE/tasks.sh" --project "$PROJECT" writable "$TASK" 2>/dev/null)"; wrc=$?
+  if [ $wrc -ne 0 ] || [ -z "$WL" ]; then add SKIP writable-scope "no writable list for $TASK"
+  else
+    PFX="$(GIT rev-parse --show-prefix 2>/dev/null)"
+    WITEMS=()
+    while IFS= read -r it; do
+      it="${it#"${it%%[![:space:]]*}"}"; it="${it%"${it##*[![:space:]]}"}"
+      while [ "${it#./}" != "$it" ]; do it="${it#./}"; done
+      while [ "${#it}" -gt 1 ] && [ "${it%/}" != "$it" ]; do it="${it%/}"; done
+      [ -n "$it" ] && WITEMS[${#WITEMS[@]}]="$it"
+    done <<< "$WL"
+    path_allowed() { # path -> 0 when it matches a writable item (exact, directory prefix, glob)
+      local p="$1" it
+      for it in ${WITEMS[@]+"${WITEMS[@]}"}; do
+        it="$PFX$it"
+        [ "$p" = "$it" ] && return 0
+        case "$p" in "$it"/*) return 0 ;; esac
+        case "$it" in *[*?]*) [[ $p == $it ]] && return 0 ;; esac
+      done
+      return 1
+    }
+    n_s=0
+    while IFS= read -r -d '' path; do
+      path_allowed "$path" && continue
+      add WARN writable-scope "$path is outside the writable paths of $TASK"; n_s=$((n_s + 1))
+    done < <(GIT diff -z --name-only --no-renames "$B" "$HD" -- 2>/dev/null)
+    [ $n_s -eq 0 ] && add PASS writable-scope "all changed files are inside the writable paths of $TASK"
+  fi
+fi
 
 # ---------- claims from the report ----------
 TESTED_LINES=""

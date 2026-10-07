@@ -310,11 +310,15 @@ task_dir() { TDIR="$(bash "$TASKS_SH" --project "$PROJECT" dir 2>/dev/null)"; }
 # read_task FILE -> TK_title TK_status TK_writable (comma list) TK_tool TK_model TK_worktree
 read_task() {
   local line state=0 key val re='^([a-z][a-z-]*):(.*)$'
-  TK_title=""; TK_status=""; TK_writable=""; TK_tool=""; TK_model=""; TK_worktree=""
+  TK_title=""; TK_status=""; TK_writable=""; TK_tool=""; TK_model=""; TK_worktree=""; TK_grants=""
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     if [ "$state" = 0 ]; then [ "$line" = "---" ] || return 1; state=1; continue; fi
-    [ "$line" = "---" ] && return 0
+    if [ "$line" = "---" ]; then
+      # effective writable = writable + grants (0.8.1)
+      [ -n "$TK_grants" ] && TK_writable="$TK_writable${TK_writable:+,}$TK_grants"
+      return 0
+    fi
     if [[ $line =~ $re ]]; then
       key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
       val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
@@ -322,6 +326,7 @@ read_task() {
         title) TK_title="$val" ;; status) TK_status="$val" ;; tool) TK_tool="$val" ;; model) TK_model="$val" ;;
         worktree) TK_worktree="$val" ;;
         writable) val="${val#\[}"; val="${val%\]}"; TK_writable="$val" ;;
+        grants) val="${val#\[}"; val="${val%\]}"; TK_grants="$val" ;;
       esac
     fi
   done < "$1"
@@ -835,7 +840,7 @@ write_meta running "" "" null null '[]' 0 0
 task_hook() { # event extra-json
   printf '{"hook_event_name":"%s","session_id":%s,"agent_id":%s,"agent_type":%s,"cwd":%s,"prompt":%s%s}' \
     "$1" "$(jstr "$RUN_ID")" "$(jstr "$RUN_ID")" "$(jstr "$AGENT_TYPE")" "$(jstr "$PROJECT")" "$(jstr "Task: $TASK")" "$2" \
-    | SUBDECK_TASK_GIT="$CWD" bash "$TASKS_SH" --project "$PROJECT" hook "$1" >/dev/null 2>&1
+    | SUBDECK_TASK_GIT="$CWD" SUBDECK_QUOTA_LOGGED=1 bash "$TASKS_SH" --project "$PROJECT" hook "$1" >/dev/null 2>&1
 }
 task_set() { bash "$TASKS_SH" --project "$PROJECT" set "$TASK" "$@" >> "$LOGF" 2>&1 || logh "warning: tasks.sh set $* failed"; }
 case "$CLASS" in
@@ -961,6 +966,17 @@ else STATUS=failed; EXIT=1; fi
 case "$STATUS" in
   auth) pget "$TOOL" auth_hint; logh "auth: $PV"; printf 'run.sh: %s needs a login: %s\n' "$TOOL" "$PV" >&2 ;;
 esac
+
+# quota: one quota_recent event (tasks.sh skips its own for this run) and one notification per 60 min
+if [ "$STATUS" = quota ]; then
+  sd_parse_reset "$TAILTXT"
+  QR=null; QA=null
+  [ -n "$SDR_RESET" ] && QR="$(jstr "$SDR_RESET")"
+  [ -n "$SDR_RESETAT" ] && QA="\"$SDR_RESETAT\""
+  sd_quota_recent "$STATE" || { printf '{"session_id":%s,"cwd":%s,"agent_type":%s,"notification_type":"quota_recent","reset":%s}' "$(jstr "$RUN_ID")" "$(jstr "$PROJECT")" "$(jstr "$AGENT_TYPE")" "$([ -n "$SDR_RESET" ] && jstr "$SDR_RESET" || printf '""')" \
+    | CLAUDE_PROJECT_DIR="$PROJECT" bash "$HERE/notify.sh" hook waiting >/dev/null 2>&1; }
+  emit_event quota_recent "{\"agent_id\":$(jstr "$RUN_ID"),\"agent_type\":$(jstr "$AGENT_TYPE"),\"session_id\":$(jstr "$RUN_ID"),\"task\":$(jstr "$TASK"),\"source\":\"run\",\"tool\":$(jstr "$TOOL"),\"reset\":$QR,\"resetAt\":$QA}"
+fi
 
 # task status after the run
 case "$STATUS" in

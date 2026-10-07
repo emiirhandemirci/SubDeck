@@ -7,7 +7,7 @@
 #   bash <plugin>/scripts/settings.sh set k=v [k=v ...] [--project [<dir>]]   validate all, then write (all or nothing)
 #   bash <plugin>/scripts/settings.sh reset [--project]               reset models, guard, notifications, context, tasks, roles
 # A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
-# Keys: mode|worker|escalation|researcher|verifier|explore -> models.sh
+# Keys: mode|worker|escalation|researcher|verifier|explore|light -> models.sh
 #       notify=on|off, notify.events=waiting,done,agent,idle -> notify.sh
 #       guard=on|off, <guard rule id>=deny|ask|off          -> guard.sh
 #       push=ask|branches|off, protect-branches=<list>      -> guard.sh cli push|branches
@@ -17,6 +17,8 @@
 #       protect-ports|protect-hosts|protect-procs=<list>    -> guard.sh cli ports|hosts|procs (replaces; empty clears)
 #       tasks.dir=<path>, empty = the state dir             -> config key tasks.dir (written here; \ stored as /)
 #       report-check=on|off                                 -> config key tasks.reportCheck (written here)
+#       auto-bind=on|off                                    -> config key tasks.autoBind (written here)
+#       commit-pathspec|commit-scope=warn|off               -> guard.sh (guard.rules.<id>; warn-only rules)
 #       roles.<role>.tool|model|args|cmd|timeout=<v>        -> config member "roles" (written here; per role the whole object of one scope wins)
 #       statusline=on|off                                   -> not written here (the skill edits settings.json)
 # Exit codes: show/help/reset always 0. json 0 (2 on a bad argument). set: 0 on success, 2 + one-line
@@ -24,8 +26,8 @@
 # No jq/node.
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODEL_KEYS="mode worker escalation researcher verifier explore"
-STATIC_RULES="git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources"
+MODEL_KEYS="mode worker escalation researcher verifier explore light"
+STATIC_RULES="git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources commit-pathspec commit-scope"
 EVENT_KINDS="waiting done agent idle"
 ROLE_TOOLS="claude codex gemini agy opencode copilot custom"
 US=$'\037'
@@ -140,19 +142,22 @@ member_write() { # file name json|remove -> writes one top-level member, keeping
 ctx_write() { # file value|remove -> writes the context member
   if [ "$2" = remove ]; then member_write "$1" context remove; else member_write "$1" context "{\"window\":$2}"; fi
 }
-# tasks_write file dirop dir rcop rc: op keep|set|remove for tasks.dir and tasks.reportCheck; other members of
-# "tasks" are kept verbatim; an empty "tasks" object is dropped
+# tasks_write file dirop dir rcop rc abop ab: op keep|set|remove for tasks.dir, tasks.reportCheck and tasks.autoBind;
+# other members of "tasks" are kept verbatim; an empty "tasks" object is dropped
 tasks_write() {
-  local f="$1" raw inner="" body="" line d r
+  local f="$1" raw inner="" body="" line d r a
   raw="$(member_value "$f" tasks)"
-  case "$raw" in "{"*) inner="$(printf '%s' "$raw" | obj_members '^"(dir|reportCheck)"[ \t]*:' except)" || inner="" ;; esac
+  case "$raw" in "{"*) inner="$(printf '%s' "$raw" | obj_members '^"(dir|reportCheck|autoBind)"[ \t]*:' except)" || inner="" ;; esac
   d="$(printf '%s' "$raw" | obj_members '^"dir"[ \t]*:' value 2>/dev/null)"
   r="$(printf '%s' "$raw" | obj_members '^"reportCheck"[ \t]*:' value 2>/dev/null)"
+  a="$(printf '%s' "$raw" | obj_members '^"autoBind"[ \t]*:' value 2>/dev/null)"
   case "$2" in set) d="\"$3\"" ;; remove) d="" ;; esac
   case "$4" in set) r="$5" ;; remove) r="" ;; esac
+  case "${6:-keep}" in set) a="$7" ;; remove) a="" ;; esac
   while IFS= read -r line; do [ -n "$line" ] && body="$body$line,"; done <<< "$inner"
   [ -n "$d" ] && body="$body\"dir\":$d,"
   [ -n "$r" ] && body="$body\"reportCheck\":$r,"
+  [ -n "$a" ] && body="$body\"autoBind\":$a,"
   if [ -z "$body" ]; then member_write "$f" tasks remove; else member_write "$f" tasks "{${body%,}}"; fi
 }
 
@@ -169,6 +174,7 @@ meta() {
     researcher)   MG=models; MT=enum; MO="sonnet opus haiku fable inherit"; MD="model for read-only research agents (or a full model id)" ;;
     verifier)     MG=models; MT=enum; MO="sonnet opus haiku fable inherit"; MD="model for the independent verifier (or a full model id)" ;;
     explore)      MG=models; MT=enum; MO="sonnet opus haiku fable inherit"; MD="model for code-exploration agents (or a full model id)" ;;
+    light)        MG=models; MT=enum; MO="sonnet opus haiku fable inherit"; MD="model for packaging, copying, version bumps and doc-only edits (never code or verification; or a full model id)" ;;
     notify)       MG=notify; MT=bool; MO="on off"; MD="desktop notification when you are needed" ;;
     notify.events) MG=notify; MT=list; MO="$EVENT_KINDS"; MD="which events notify: waiting (needs input), done (manager finished), agent (a sub-agent finished), idle (session idle)" ;;
     push)         MG=push; MT=enum; MO="ask branches off"; MD="git push: ask = always ask, branches = ask only for protected branches and tags, off = no check" ;;
@@ -182,12 +188,15 @@ meta() {
     attribution)  MG=guard; MT=enum; MO="deny ask off"; MD="AI attribution lines in commits and PRs" ;;
     protected-paths) MG=guard; MT=enum; MO="deny ask off"; MD="edits to the files listed under protect" ;;
     protected-resources) MG=guard; MT=enum; MO="deny ask off"; MD="commands that use a protected port, host or process (lists below)" ;;
+    commit-pathspec) MG=guard; MT=enum; MO="warn off"; MD="warns when git commit takes a directory pathspec (it picks up other agents work)" ;;
+    commit-scope) MG=guard; MT=enum; MO="warn off"; MD="warns when a commit includes files outside the bound task writable paths" ;;
     protect)      MG=protect; MT=list; MD="files or globs agents must not edit or delete without approval (set protect= replaces the list)" ;;
     protect-ports) MG=resources; MT=list; MD="live local ports (1-65535) agents must not use without approval, e.g. 8080,9000" ;;
     protect-hosts) MG=resources; MT=list; MD="hosts agents must not contact without approval, e.g. staging.example" ;;
     protect-procs) MG=resources; MT=list; MD="process names agents must not stop or look up without approval, e.g. redis" ;;
     tasks.dir)    MG=tasks; MT=string; MD="task file directory, relative to the project or absolute; empty = the state dir" ;;
     report-check) MG=tasks; MT=bool; MO="on off"; MD="flag sub-agents that stop without a report (Stop:/Tested: lines)" ;;
+    auto-bind)    MG=tasks; MT=bool; MO="on off"; MD="create a task automatically for worker and researcher agents started without one" ;;
     context)      MG=context; MT=int; MD="context window in tokens for models whose size is unknown; 0 = auto" ;;
     statusline)   MG=statusline; MT=bool; MO="on off"; MD="agent counts in the Claude Code status line (read-only here; the skill edits settings.json)" ;;
     roles.*.tool)    MG=roles; MT=enum; MO="$ROLE_TOOLS"; MD="CLI that runs this role instead of an in-session sub-agent; empty removes the role mapping at this scope" ;;
@@ -253,8 +262,8 @@ FNR == 1 { flush(); cur = FILENAME }
 { buf = buf " " $0 }
 END {
   flush()
-  n = split("mode worker escalation researcher verifier explore", MK, " ")
-  split("auto sonnet opus sonnet sonnet sonnet", MD, " ")
+  n = split("mode worker escalation researcher verifier explore light", MK, " ")
+  split("auto sonnet opus sonnet sonnet sonnet haiku", MD, " ")
   for (i = 1; i <= n; i++) {
     if (MK[i] == "mode") sv("modelPolicy/mode", "auto named current")
     else if (sv("modelPolicy/" MK[i]) && EV !~ /^[A-Za-z0-9][A-Za-z0-9._:\/@-]*$/) { EV = ""; ES = "default" }
@@ -266,9 +275,9 @@ END {
   if (sv("guard/rules/push", "ask branches off")) out("push", EV, ES); else out("push", "branches", "default")
   if (lv("guard/protectBranches")) out("protect-branches", EV, ES); else out("protect-branches", "main,master,release/*", "default")
   if (sv("guard/enabled", "true false")) out("guard", (EV == "true") ? "on" : "off", ES); else out("guard", "on", "default")
-  n = split("git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources", RK, " ")
-  split("deny deny ask deny ask off ask ask", RD, " ")
-  for (i = 1; i <= n; i++) { if (sv("guard/rules/" RK[i], "deny ask off")) out(RK[i], EV, ES); else out(RK[i], RD[i], "default") }
+  n = split("git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources commit-pathspec commit-scope", RK, " ")
+  split("deny deny ask deny ask off ask ask warn warn", RD, " ")
+  for (i = 1; i <= n; i++) { if (sv("guard/rules/" RK[i], (RK[i] ~ /^commit-/) ? "warn off" : "deny ask off")) out(RK[i], EV, ES); else out(RK[i], RD[i], "default") }
   if (lv("guard/protectedPaths")) out("protect", EV, ES); else out("protect", "", "default")
   if (lv("guard/protectPorts")) out("protect-ports", EV, ES); else out("protect-ports", "", "default")
   if (lv("guard/protectHosts")) out("protect-hosts", EV, ES); else out("protect-hosts", "", "default")
@@ -276,6 +285,7 @@ END {
   if (sv("context/window") && EV ~ /^[0-9]+$/) out("context", EV + 0, ES); else out("context", 0, "default")
   if (sv("tasks/dir")) out("tasks.dir", EV, ES); else out("tasks.dir", "", "default")
   if (sv("tasks/reportCheck", "true false")) out("report-check", (EV == "true") ? "on" : "off", ES); else out("report-check", "on", "default")
+  if (sv("tasks/autoBind", "true false")) out("auto-bind", (EV == "true") ? "on" : "off", ES); else out("auto-bind", "on", "default")
   roles_out()
 }
 # roles: per role the whole object of the first scope (project, legacy project, user) that has it
@@ -424,7 +434,8 @@ Examples
   /subdeck:settings set context=200000
   /subdeck:settings set attribution=deny git-add-all=ask
   /subdeck:settings set protect-ports=8080,9000 protect-procs=redis --project
-  /subdeck:settings set tasks.dir=docs/tasks report-check=off --project
+  /subdeck:settings set tasks.dir=docs/tasks report-check=off auto-bind=off --project
+  /subdeck:settings set light=haiku commit-scope=off
   /subdeck:settings set roles.worker.tool=codex roles.worker.model=gpt-5-codex --project
   /subdeck:settings reset --project
 EOF
@@ -507,13 +518,13 @@ case "$CMD" in
     [ ${#PAIRS[@]} -gt 0 ] || die "set needs key=value pairs, e.g. set notify=on worker=opus"
     RULES=" $STATIC_RULES push "; RE_MODEL="^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$"; RE_NUM="^[0-9]{1,9}$"
     MP=(); GP=(); NV=""; NE=""; GE=""; SL=""; PUSH=""; PB=""; PBSET=0; PRSET=0; PR=""; UP=""; CX=""
-    TDOP=keep; TD=""; RCOP=keep; RC=""; RES=(); ROLELIST=" "
+    TDOP=keep; TD=""; RCOP=keep; RC=""; ABOP=keep; AB=""; RES=(); ROLELIST=" "
     for kv in "${PAIRS[@]}"; do
       k="${kv%%=*}"; v="${kv#*=}"; lower "$v"; lv="$LOW"
       case "$k" in
         mode)
           case "$lv" in auto|named|current) MP+=("mode=$lv") ;; *) die "mode must be auto, named or current (got '$v')" ;; esac ;;
-        worker|escalation|researcher|verifier|explore)
+        worker|escalation|researcher|verifier|explore|light)
           [[ $v =~ $RE_MODEL ]] || die "$k must be sonnet, opus, haiku, fable, inherit or a model id (got '$v')"
           MP+=("$k=$v") ;;
         notify)
@@ -549,6 +560,8 @@ case "$CMD" in
           if [ -n "$v" ]; then TDOP=set; TD="$v"; else TDOP=remove; TD=""; fi ;;
         report-check)
           case "$lv" in on|true) RCOP=set; RC=true ;; off|false) RCOP=set; RC=false ;; *) die "report-check must be on or off (got '$v')" ;; esac ;;
+        auto-bind)
+          case "$lv" in on|true) ABOP=set; AB=true ;; off|false) ABOP=set; AB=false ;; *) die "auto-bind must be on or off (got '$v')" ;; esac ;;
         protect-ports|protect-hosts|protect-procs)
           IFS=',' read -ra ITS <<< "$v"; RL=""
           for it in ${ITS[@]+"${ITS[@]}"}; do
@@ -593,7 +606,10 @@ case "$CMD" in
           case "$lv" in on|install) SL=on ;; off|remove) SL=off ;; *) die "statusline must be on or off (got '$v')" ;; esac ;;
         *)
           if [[ "$RULES" == *" $k "* ]]; then
-            case "$lv" in deny|ask|off) GP+=("$k=$lv") ;; *) die "$k must be deny, ask or off (got '$v')" ;; esac
+            case "$k" in
+              commit-*) case "$lv" in warn|off) GP+=("$k=$lv") ;; *) die "$k must be warn or off (got '$v')" ;; esac ;;
+              *) case "$lv" in deny|ask|off) GP+=("$k=$lv") ;; *) die "$k must be deny, ask or off (got '$v')" ;; esac ;;
+            esac
           else die "unknown key '$k' (run: settings.sh help)"; fi ;;
       esac
     done
@@ -634,7 +650,7 @@ case "$CMD" in
       printf -v "RJ_$rid" '%s' "{$body}"
     done
     # a corrupt target file must not leave a half-applied set
-    if { [ -n "$CX" ] || [ $TDOP != keep ] || [ $RCOP != keep ]; } && ! ctx_members "$TARGET" >/dev/null; then die "$TARGET is not a valid JSON object; left untouched"; fi
+    if { [ -n "$CX" ] || [ $TDOP != keep ] || [ $RCOP != keep ] || [ $ABOP != keep ]; } && ! ctx_members "$TARGET" >/dev/null; then die "$TARGET is not a valid JSON object; left untouched"; fi
     OUT=""; ERRLINE=""; SNAP=""; SNAPSET=0
     if [ -f "$TARGET" ]; then IFS= read -r -d "" SNAP < "$TARGET"; SNAPSET=1; fi   # restored if any routed write fails
     route() { # run a routed command, keep its first output line, remember the first error
@@ -658,8 +674,8 @@ case "$CMD" in
     if [ -n "$CX" ]; then
       if l="$(ctx_write "$TARGET" "$CX")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
     fi
-    if [ -z "$ERRLINE" ] && { [ $TDOP != keep ] || [ $RCOP != keep ]; }; then
-      if l="$(tasks_write "$TARGET" $TDOP "$TD" $RCOP "$RC")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
+    if [ -z "$ERRLINE" ] && { [ $TDOP != keep ] || [ $RCOP != keep ] || [ $ABOP != keep ]; }; then
+      if l="$(tasks_write "$TARGET" $TDOP "$TD" $RCOP "$RC" $ABOP "$AB")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
     fi
     if [ -z "$ERRLINE" ] && [ "$ROLELIST" != " " ]; then
       if l="$(roles_write "$TARGET")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi

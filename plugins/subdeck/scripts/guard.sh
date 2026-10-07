@@ -48,7 +48,7 @@
 #   editors, git checkout <branch> / stash / reset, and cp into a protected directory.
 # bash + awk only; one awk process per hook call.
 
-RULES="git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources"
+RULES="git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources commit-pathspec commit-scope"
 
 if [ $# -eq 0 ] || [ "$1" = hook ]; then
   case "$SUBDECK_GUARD" in 0|off|false|no|OFF|FALSE|NO) exit 0 ;; esac
@@ -155,11 +155,12 @@ function slurp(f,  t, line, r) {
 
 # ---------- config ----------
 function initrules(  i, n, a) {
-  n = split("git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources", a, " ")
+  n = split("git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources commit-pathspec commit-scope", a, " ")
   NRULE = n
   for (i = 1; i <= n; i++) RID[i] = a[i]
   DEF["git-add-all"] = "deny"; DEF["force-push"] = "deny"; DEF["push"] = "branches"
   DEF["history-rewrite"] = "ask"; DEF["rm-rf-danger"] = "deny"; DEF["secret-files"] = "ask"; DEF["attribution"] = "off"; DEF["protected-paths"] = "ask"; DEF["protected-resources"] = "ask"
+  DEF["commit-pathspec"] = "warn"; DEF["commit-scope"] = "warn"
   for (i = 1; i <= n; i++) { MODE[RID[i]] = DEF[RID[i]]; SRC[RID[i]] = "default" }
   ENABLED = 1; ENSRC = "default"; NPL = 0; PLSRC = "default"
   NPB = 3; PB[1] = "main"; PB[2] = "master"; PB[3] = "release/*"; PBSRC = "default"
@@ -188,7 +189,8 @@ function cfgfile(f, src,  t, i, v, id) {
     id = RID[i]
     if (("/guard/rules/" id) in V) {
       v = tolower(V["/guard/rules/" id])
-      if (v == "deny" || v == "ask" || v == "off" || (id == "push" && v == "branches")) { MODE[id] = v; SRC[id] = src }
+      if (id ~ /^commit-/) { if (v == "warn" || v == "off") { MODE[id] = v; SRC[id] = src } }
+      else if (v == "deny" || v == "ask" || v == "off" || (id == "push" && v == "branches")) { MODE[id] = v; SRC[id] = src }
     }
   }
 }
@@ -617,10 +619,11 @@ function git_seg(d, id, k, nw,  x, sc, i, j, ch, len, force, dd, npos, noop, cdi
       if ((dd || x !~ /^-/) && x ~ /^(\.|\.\/|\*|\.\/\*|:\/|:\/\.|:\/\*|:\(top\)|:\(top\)\.)$/) { hit("git-add-all"); return }
     }
   } else if (sc == "commit") {
-    COMMIT = 1
+    COMMIT = 1; dd = 0; npos = 0; noop = ""
     for (i = k; i <= nw; i++) {
       x = W[d, id, i]
-      if (x == "--") break
+      if (dd) { noop = noop (npos++ ? "\037" : "") x; continue }
+      if (x == "--") { dd = 1; continue }
       if (x == "--all") { hit("git-add-all"); return }
       if (x ~ /^--(message|file|author|date|template|reuse-message|reedit-message|fixup|squash|cleanup|trailer|pathspec-from-file)$/) { i++; continue }
       if (x ~ /^-[^-]/) {
@@ -630,8 +633,12 @@ function git_seg(d, id, k, nw,  x, sc, i, j, ch, len, force, dd, npos, noop, cdi
           if (ch == "a") { hit("git-add-all"); return }
           if (index("mFCct", ch)) { if (j == len) i++; break }
         }
+        continue
       }
+      if (x ~ /^-/) continue
+      noop = noop (npos++ ? "\037" : "") x
     }
+    NCM++; CMDIR[NCM] = cdir; CMSPEC[NCM] = noop
   } else if (sc == "push") {
     force = 0; dd = 0; npos = 0
     for (i = k; i <= nw; i++) {
@@ -856,6 +863,76 @@ function pr_cmd(cmd, d, id, k, nw,  i, x, n, v, a, na, j, t, kill) {
     if (kill) pr_names(d, id, k, nw, "nmM", "^--namespace$")
   }
 }
+# ---------- warn-only commit rules (commit-pathspec, commit-scope): never deny, never ask ----------
+function addwarn(m) { WARNS = WARNS (WARNS == "" ? "" : " | ") m }
+function isdir(p) { return index(p, "\047") == 0 && system("test -d " sq(p)) == 0 }
+function run_lines(cmd, arr,  n, l) {
+  n = 0
+  while ((cmd | getline l) > 0) { sub(/\r$/, "", l); arr[++n] = l }
+  close(cmd)
+  return n
+}
+function wr_allowed(p, n,  i, it) {
+  for (i = 1; i <= n; i++) {
+    it = WRI[i]
+    if (p == it || index(p, it "/") == 1) return 1
+    if (it ~ /[*?]/ && p ~ globre(it)) return 1
+  }
+  return 0
+}
+function commit_warnings(raw,  c, n, i, a, w, seen, tid, aid, tcmd, nl, lines, j, nw, files, nf, fseen, cmd, sp, ns, out, no, onames, tsh, specq, nbad) {
+  WARNS = ""
+  for (c = 1; c <= NCM; c++) {
+    ns = (CMSPEC[c] == "") ? 0 : split(CMSPEC[c], sp, "\037")
+    if (MODE["commit-pathspec"] == "warn") {
+      for (i = 1; i <= ns; i++) {
+        w = sp[i]
+        if (w in seen) continue
+        if (w == "." || w ~ /[\/\\]$/ || (w != "" && isdir(isabs(w) ? w : CMDIR[c] "/" w))) {
+          seen[w] = 1
+          addwarn("SubDeck guard (commit-pathspec, warning): \"" w "\" is a directory; the commit takes every changed file under it, including other agents\047 work. Commit explicit file paths.")
+        }
+      }
+    }
+    if (MODE["commit-scope"] == "warn") {
+      tsh = ENVIRON["SD_GUARD_TASKS"]; tid = ENVIRON["SUBDECK_TASK"]; aid = ""
+      if (tsh == "" || index(tsh, "\047") || index(PROJ, "\047") || index(CMDIR[c], "\047")) continue
+      if (tid == "") {
+        if (match(raw, /"agent_id"[ \t]*:[ \t]*"[A-Za-z0-9._-]+"/)) { aid = substr(raw, RSTART, RLENGTH); sub(/^"agent_id"[ \t]*:[ \t]*"/, "", aid); sub(/"$/, "", aid) }
+        if (aid == "") continue
+        tcmd = "SUBDECK_METER=0 bash " sq(tsh) " --project " sq(PROJ) " writable --agent " sq(aid) " --with-id 2>/dev/null"
+      } else {
+        if (tid !~ /^t-[0-9a-f]+$/) continue
+        tcmd = "SUBDECK_METER=0 bash " sq(tsh) " --project " sq(PROJ) " writable " sq(tid) " --with-id 2>/dev/null"
+      }
+      nl = run_lines(tcmd, lines)
+      nw = 0; tid = ""
+      for (j = 1; j <= nl; j++) {
+        if (lines[j] ~ /^# t-[0-9a-f]+$/) { tid = substr(lines[j], 3); continue }
+        it = lines[j]; while (substr(it, 1, 2) == "./") it = substr(it, 3)
+        while (length(it) > 1 && substr(it, length(it), 1) == "/") it = substr(it, 1, length(it) - 1)
+        if (it != "") WRI[++nw] = it
+      }
+      if (nw == 0 || tid == "") continue
+      nf = 0; split("", fseen); split("", files)
+      if (ns > 0) {
+        specq = ""
+        for (i = 1; i <= ns; i++) { if (index(sp[i], "\047")) { specq = "BAD"; break }; specq = specq " " sq(sp[i]) }
+        if (specq == "BAD") continue
+        cmd = "git -C " sq(CMDIR[c]) " -c core.quotepath=off diff --name-only HEAD --" specq " 2>/dev/null"
+        no = run_lines(cmd, onames); for (i = 1; i <= no; i++) if (!(onames[i] in fseen)) { fseen[onames[i]] = 1; files[++nf] = onames[i] }
+        cmd = "git -C " sq(CMDIR[c]) " -c core.quotepath=off diff --cached --name-only --" specq " 2>/dev/null"
+        no = run_lines(cmd, onames); for (i = 1; i <= no; i++) if (!(onames[i] in fseen)) { fseen[onames[i]] = 1; files[++nf] = onames[i] }
+      } else {
+        cmd = "git -C " sq(CMDIR[c]) " -c core.quotepath=off diff --cached --name-only 2>/dev/null"
+        no = run_lines(cmd, onames); for (i = 1; i <= no; i++) if (!(onames[i] in fseen)) { fseen[onames[i]] = 1; files[++nf] = onames[i] }
+      }
+      nbad = 0; out = ""
+      for (i = 1; i <= nf; i++) if (!wr_allowed(files[i], nw)) { nbad++; if (nbad <= 5) out = out (nbad > 1 ? ", " : "") files[i] }
+      if (nbad > 0) addwarn("SubDeck guard (commit-scope, warning): " nbad " staged file(s) outside the writable paths of " tid ": " out (nbad > 5 ? " (+" (nbad - 5) " more)" : "") ". Unstage them or ask the manager for a grant.")
+    }
+  }
+}
 function reason(id) {
   if (id == "git-add-all") return "SubDeck guard (git-add-all): staging everything at once (git add -A/--all/-u/., git commit -a) can pick up unrelated, generated or secret files. Stage explicit paths (git add <file> ...) and commit with a pathspec (git commit -m \"...\" -- <paths>)."
   if (id == "force-push") return "SubDeck guard (force-push): a force push rewrites remote history. Push without --force/-f/--force-with-lease/+refspec, or ask the user to run it by hand."
@@ -891,7 +968,7 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
   initrules(); cfgfile(uf, "user"); if (lf != "" && lf != pf) cfgfile(lf, "project"); if (pf != "") cfgfile(pf, "project")
   if (!ENABLED) return
   HOMEN = norm(ENVIRON["HOME"]); PROJN = norm(PROJ); CUR = norm(cwd); if (CUR == "") CUR = PROJN
-  DENYID = ""; ASKID = ""; PUSHINFO = ""; split("", CB); COMMIT = 0; NOPRES = 0; PPINFO = ""; pp_prepare()
+  WARNS = ""; DENYID = ""; ASKID = ""; PUSHINFO = ""; split("", CB); COMMIT = 0; NCM = 0; NOPRES = 0; PPINFO = ""; pp_prepare()
   RESINFO = ""; RESLIST = ""; pr_prepare()
   if (tool == "Bash" || tool == "PowerShell") {
     if (cmd == "") return
@@ -899,6 +976,7 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
     PSM = (tool == "PowerShell")
     analyze(cmd, 0)
     if (COMMIT) { low = tolower(cmd); if (index(low, "co-authored-by") || index(low, "generated with")) hit("attribution") }
+    if (NCM > 0) commit_warnings(t)
   } else if (tool == "Write" || tool == "Edit" || tool == "MultiEdit") {
     if (fp != "" && secret_path(fp)) hit("secret-files")
     pp_check(fp, 0)
@@ -914,7 +992,11 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
       }
     }
   }
-  if (DENYID != "") { dec = "deny"; id = DENYID } else if (ASKID != "") { dec = "ask"; id = ASKID } else return
+  if (DENYID == "" && ASKID == "") {
+    if (WARNS != "") printf "{\"systemMessage\":\"%s\",\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"%s\"}}\n", jesc(WARNS), jesc(WARNS)
+    return
+  }
+  if (DENYID != "") { dec = "deny"; id = DENYID } else { dec = "ask"; id = ASKID }
   # the other modes /subdeck:settings accepts for this rule (push: ask|branches|off, the rest: deny|ask|off)
   np = split(id == "push" ? "ask branches off" : "deny ask off", pl, " "); pp = ""
   for (pi = 1; pi <= np; pi++) if (pl[pi] != MODE[id]) pp = pp (pp == "" ? "" : "|") pl[pi]
@@ -922,6 +1004,7 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
   if (id == "protected-paths") rs = rs " (or unprotect=<glob>)"
   if (id == "protected-resources") rs = rs " (or change protect-ports=, protect-hosts=, protect-procs=)"
   if (id == "push" && MODE[id] == "branches") rs = rs " (or protect-branches=<glob>[,<glob>])"
+  if (WARNS != "") rs = rs " | " WARNS
   # Codex documents only deny for PreToolUse: an "ask" becomes a deny that tells the model to ask the user first
   if (dec == "ask" && ENVIRON["SUBDECK_TOOL"] == "codex") { dec = "deny"; rs = "Ask the user for approval first; retry only if they approve. " rs }
   if (ENVIRON["SUBDECK_TOOL"] == "copilot")
@@ -977,7 +1060,7 @@ function do_dump(  t, i, id, v) {
   }
   for (i = 1; i <= NRULE; i++) {
     id = RID[i]
-    if (("/guard/rules/" id) in V) { v = tolower(V["/guard/rules/" id]); if (v == "deny" || v == "ask" || v == "off" || (id == "push" && v == "branches")) print "rule " id " " v }
+    if (("/guard/rules/" id) in V) { v = tolower(V["/guard/rules/" id]); if (id ~ /^commit-/ ? (v == "warn" || v == "off") : (v == "deny" || v == "ask" || v == "off" || (id == "push" && v == "branches"))) print "rule " id " " v }
   }
 }
 BEGIN {
@@ -1004,7 +1087,9 @@ if [ $# -eq 0 ] || [ "$1" = hook ]; then
   if [ -n "$GP" ] && . "$GH/lib-paths.sh" 2>/dev/null; then
     sd_state_dir "$GP"; SD_GUARD_PF="$SD_STATE/config.json"; SD_GUARD_LF="$SD_LEGACY/config.json"
   fi
-  export SD_GUARD_PF SD_GUARD_LF
+  SD_GUARD_TASKS=""; [ -f "$GH/tasks.sh" ] && SD_GUARD_TASKS="$GH/tasks.sh"
+  case "$SD_GUARD_TASKS" in ""|/*|[A-Za-z]:*) ;; *) SD_GUARD_TASKS="$(pwd)/$SD_GUARD_TASKS" ;; esac
+  export SD_GUARD_PF SD_GUARD_LF SD_GUARD_TASKS
   if [ "$GREAD" = 1 ]; then awk -v mode=hook "$GUARD_AWK" <<< "$GIN" 2>/dev/null
   else awk -v mode=hook "$GUARD_AWK" 2>/dev/null; fi
   exit 0
@@ -1166,7 +1251,8 @@ case "$CMD" in
     for kv in "${PAIRS[@]}"; do
       k="${kv%%=*}"; v="$(printf '%s' "${kv#*=}" | tr 'A-Z' 'a-z')"
       if ! valid_rule "$k"; then echo "error: unknown rule '$k' (rules: $RULES)"; ERR=1
-      else case "$v" in deny|ask|off) NEW+=("$k=$v") ;; branches) if [ "$k" = push ]; then NEW+=("$k=$v"); else echo "error: invalid mode '$v' for $k (valid: deny, ask, off)"; ERR=1; fi ;; *) echo "error: invalid mode '$v' for $k (valid: deny, ask, off; push also: branches)"; ERR=1 ;; esac; fi
+      else case "$k:$v" in commit-*:warn|commit-*:off) NEW+=("$k=$v"); continue ;; commit-*:*) echo "error: invalid mode '$v' for $k (valid: warn, off)"; ERR=1; continue ;; esac
+        case "$v" in deny|ask|off) NEW+=("$k=$v") ;; branches) if [ "$k" = push ]; then NEW+=("$k=$v"); else echo "error: invalid mode '$v' for $k (valid: deny, ask, off)"; ERR=1; fi ;; *) echo "error: invalid mode '$v' for $k (valid: deny, ask, off; push also: branches)"; ERR=1 ;; esac; fi
     done
     if [ $ERR -ne 0 ]; then echo "nothing written."; exit 0; fi
     update keep "${NEW[@]}"
