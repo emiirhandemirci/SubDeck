@@ -1,7 +1,7 @@
 // 0.8.2 Desk clarity: one primary badge per row, one actionable secondary badge, quota banner, token chip.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rowBadges, statusLegend, quotaText, laterSuccess, cumulativeTokensText, cumulativeTokensTitle } from '../public/format.js';
+import { rowBadges, statusLegend, parseResetText, quotaText, laterSuccess, cumulativeTokensText, cumulativeTokensTitle } from '../public/format.js';
 
 const FAIL = { quota: 'quota', test: 'tests failed', unknown: 'failed' };
 
@@ -52,7 +52,12 @@ test('quota banner: local reset time, unknown reset, 5 h expiry, later success, 
   const at = '2026-10-07T04:42:00.000Z', now = Date.parse(at) + 600000;
   assert.match(quotaText({ at, reset: null, resetAt: null }, { now }), /^Quota limit hit at \d{1,2}:\d{2}.*\(local\); reset time unknown/);
   assert.match(quotaText({ at, reset: null, resetAt: '2026-10-07T09:00:00Z' }, { now }), /resets at \d{1,2}:\d{2}.* \(local\)/);
-  assert.match(quotaText({ at, reset: '5pm (UTC)', resetAt: null }, { now }), /resets 5pm \(UTC\)/);
+  assert.match(quotaText({ at, reset: '5pm (Nope/Zone)', resetAt: null }, { now }), /resets 5pm [(]Nope\/Zone[)]/);   // unparsable zone: the text
+  assert.equal(parseResetText('5pm (UTC)', Date.parse(at)), Date.parse('2026-10-07T17:00:00Z'));
+  assert.equal(parseResetText('3:30 PM (UTC)', Date.parse(at)), Date.parse('2026-10-07T15:30:00Z'));
+  assert.equal(parseResetText('4am (Europe/Istanbul)', Date.parse(at)), Date.parse('2026-10-08T01:00:00Z'));   // next occurrence after the event
+  assert.ok(Number.isNaN(parseResetText('11:20pm', Date.parse(at))));   // no zone: shown as text
+  assert.match(quotaText({ at, reset: '5pm (UTC)', resetAt: null }, { now }), /resets at \d{1,2}:\d{2}.* \(local\)/);
   assert.equal(quotaText({ at, reset: null, resetAt: null }, { now: Date.parse(at) + 5.1 * 3600000 }), null);
   assert.notEqual(quotaText({ at, reset: null, resetAt: '2026-10-08T09:00:00Z' }, { now: Date.parse(at) + 6 * 3600000 }), null);   // known future reset keeps it
   assert.equal(quotaText({ at, reset: null, resetAt: null }, { now, laterRun: true }), null);

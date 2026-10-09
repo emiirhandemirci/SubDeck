@@ -261,6 +261,26 @@ export function agentTokensText(s) {
   return s && Number.isFinite(s.agentTokens) ? `agents ${formatTokens(s.agentTokens)} tokens` : null;
 }
 
+/** "5pm (Europe/Istanbul)", "3:30 PM (UTC)" -> the next such wall-clock time after `afterMs`, as epoch ms; NaN without a valid IANA zone or time. */
+export function parseResetText(text, afterMs) {
+  const m = /^\s*(\d{1,2})(?::(\d{2}))?\s*([AaPp][Mm])?\s*\(([^)]+)\)\s*$/.exec(String(text || ''));
+  if (!m) return NaN;
+  let h = Number(m[1]); const min = m[2] ? Number(m[2]) : 0;
+  if (m[3]) { if (h < 1 || h > 12) return NaN; h = (h % 12) + (/^p/i.test(m[3]) ? 12 : 0); }
+  if (h > 23 || min > 59) return NaN;
+  const zone = m[4].trim();
+  const offsetAt = ms => {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }).formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+    return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(ms / 1000) * 1000;
+  };
+  try {
+    const o = offsetAt(afterMs);
+    const z = new Date(afterMs + o);   // wall clock of the zone at the quota event, read as UTC fields
+    let t = Date.UTC(z.getUTCFullYear(), z.getUTCMonth(), z.getUTCDate(), h, min) - offsetAt(afterMs);
+    if (t <= afterMs) t += 86400000;
+    return t;
+  } catch { return NaN; }
+}
 const QUOTA_HIDE_MS = 5 * 3600 * 1000;
 const QUOTA_DISMISS_KEY = 'desk.quotaDismissed';
 /** Quota banner text, or null (no quota event, older than 5 h with no known future reset, dismissed, or a later agent run succeeded).
@@ -271,7 +291,8 @@ export function quotaText(q, opts = {}) {
   if (!Number.isFinite(at)) return null;
   const now = Number.isFinite(opts.now) ? opts.now : Date.now();
   if (opts.laterRun || (opts.dismissedAt && opts.dismissedAt === q.at)) return null;
-  const resetMs = q.resetAt ? Date.parse(q.resetAt) : NaN;
+  let resetMs = q.resetAt ? Date.parse(q.resetAt) : NaN;
+  if (!Number.isFinite(resetMs) && q.reset) resetMs = parseResetText(q.reset, at);
   if (now - at > QUOTA_HIDE_MS && !(Number.isFinite(resetMs) && resetMs > now)) return null;
   const hm = ms => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   if (Number.isFinite(resetMs)) {
