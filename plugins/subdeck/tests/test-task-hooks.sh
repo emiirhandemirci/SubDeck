@@ -406,6 +406,17 @@ hbtask hb5; T_HB5="$HID"; hbtool hb5 '- **Result:** ok\r\n  **Tested:** ran `t` 
 fire SubagentStop hb5 worker-sonnet "Report delivered."
 check "$(field $T_HB5 status)" "review" "hand-back with markdown bullets, bold labels and CRLF is accepted"
 
+# ---- quota reset parsing: common message formats ----
+. "$PL/scripts/lib-paths.sh"
+pr() { sd_parse_reset "$1"; printf '%s|%s' "$SDR_RESET" "$SDR_RESETAT"; }
+check "$(pr "You've hit your limit - resets 5pm (Europe/Istanbul)")" "5pm (Europe/Istanbul)|" "reset parse: 5pm (zone)"
+check "$(pr "Your limit will reset at 3:30 PM (UTC)")" "3:30 PM (UTC)|" "reset parse: 3:30 PM (UTC)"
+check "$(pr "5-hour limit reached - resets 11:20pm")" "11:20pm|" "reset parse: 11:20pm"
+check "$(pr "Limit reached. Resets at 4 AM")" "4 AM|" "reset parse: 4 AM"
+check "$(pr "limit reached, resets at 2026-10-07T15:30:00Z")" "|2026-10-07T15:30:00Z" "reset parse: ISO timestamp"
+check "$(pr "rate limit exceeded, try again later")" "|" "reset parse: no reset time -> unknown"
+
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
