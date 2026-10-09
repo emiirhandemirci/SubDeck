@@ -43,6 +43,8 @@ test('parseMeta: version, status, ids and bounds', () => {
 test('adapter on the shared runs fixture: sessions, states, failure kinds, run field', { skip: !haveFix }, async () => {
   const root = copyFix();
   const dir = path.join(root, 'proj-00000000', 'runs', 't-0b02');
+  const old = new Date(NOW - 86400000);   // checkout mtimes must not decide the newest write
+  for (const f of fs.readdirSync(dir)) fs.utimesSync(path.join(dir, f), old, old);
   const fresh = new Date(NOW - 20000);   // the running run wrote its log 20 s ago
   fs.utimesSync(path.join(dir, '20261007T103000Z.log'), fresh, fresh);
   fs.writeFileSync(path.join(dir, 'bad.json'), '{ nope');   // not a ts-named meta: ignored
