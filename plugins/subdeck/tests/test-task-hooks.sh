@@ -378,6 +378,34 @@ check "$(events quota_recent)" "$((Q0 + 3))" "other failure types log no quota_r
 printf '{"hook_event_name":"StopFailure","session_id":"r1","agent_id":"run-x","agent_type":"worker-run","cwd":"%s","error_type":"rate_limit"}' "$P" | SUBDECK_QUOTA_LOGGED=1 bash "$TS" --project "$P" hook StopFailure
 check "$(events quota_recent)" "$((Q0 + 3))" "SUBDECK_QUOTA_LOGGED=1 skips the hook's quota_recent"
 
+# ---- hand-back reports (final message is a stub, the report is the SubagentHandback call) ----
+HBT="$W/sessions/$SID/subagents"
+hbtask() { # agent-id : creates a task + transcript; sets HID
+  HID="$(newtask)"
+  printf '{"type":"user","message":{"content":"Task: %s"}}\n' "$HID" > "$HBT/agent-$1.jsonl"
+  fire SubagentStart "$1" worker-sonnet ""
+}
+hbtool() { printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"SubagentHandback","input":{"message":"%s"}}]}}\n' "$2" >> "$HBT/agent-$1.jsonl"; }
+hbstub() { printf '{"type":"assistant","message":{"content":[{"type":"text","text":"Report delivered."}]}}\n' >> "$HBT/agent-$1.jsonl"; }
+M0="$(events report_missing)"
+hbtask hb1; T_HB1="$HID"; hbtool hb1 'x · done\nResult: ok\nTested: ran `t` -> 1 passed\nStop: done - ok'; hbstub hb1
+fire SubagentStop hb1 worker-sonnet "Report delivered."
+check "$(field $T_HB1 status)" "review" "hand-back report counts as the report (stub final message)"
+check "$(events report_missing)" "$M0" "hand-back report: no report_missing"
+has "$(t show $T_HB1)" "Stop: done - ok" "hand-back text stored in Report"
+hbtask hb2; T_HB2="$HID"; hbstub hb2
+fire SubagentStop hb2 worker-sonnet "Report delivered."
+check "$(events report_missing)" "$((M0 + 1))" "stub final message without any hand-back still reports missing"
+hbtask hb3; T_HB3="$HID"; hbtool hb3 'only prose, no Stop line'; hbstub hb3
+fire SubagentStop hb3 worker-sonnet "Report delivered."
+check "$(events report_missing)" "$((M0 + 2))" "hand-back without Stop/Tested still reports missing"
+hbtask hb4; T_HB4="$HID"; hbtool hb4 'old\nTested: ran `t` -> 1\nStop: blocked - old'; printf '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n' >> "$HBT/agent-hb4.jsonl"
+fire SubagentStop hb4 worker-sonnet "$OKMSG"
+check "$(field $T_HB4 status)" "review" "a well-formed final message wins over an older hand-back"
+hbtask hb5; T_HB5="$HID"; hbtool hb5 '- **Result:** ok\r\n  **Tested:** ran `t` -> 1 passed\r\n> **Stop:** done - ok'; hbstub hb5
+fire SubagentStop hb5 worker-sonnet "Report delivered."
+check "$(field $T_HB5 status)" "review" "hand-back with markdown bullets, bold labels and CRLF is accepted"
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

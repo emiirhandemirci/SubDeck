@@ -1028,9 +1028,9 @@ agent_class() {
 # shape_check CLASS TEXT -> MISSING (space separated names), STOPW (last Stop word, lower case), VERDICT
 shape_check() {
   local class="$1" line have_stop=0 have_tested=0 have_verdict=0
-  local re_stop='^[[:space:]]*Stop:[[:space:]]*([A-Za-z][A-Za-z-]*)'
-  local re_tested='^[[:space:]]*Tested:[[:space:]]*(ran|not run)([^A-Za-z]|$)'
-  local re_verdict='^[[:space:]]*Verdict:[[:space:]]*(Approved|Needs fixes|Escalate)'
+  local re_stop='^[[:space:]>*_`#-]*Stop[*_`]*:[*_`]*[[:space:]]*([A-Za-z][A-Za-z-]*)'
+  local re_tested='^[[:space:]>*_`#-]*Tested[*_`]*:[*_`]*[[:space:]]*(ran|not run)([^A-Za-z]|$)'
+  local re_verdict='^[[:space:]>*_`#-]*Verdict[*_`]*:[*_`]*[[:space:]]*(Approved|Needs fixes|Escalate)'
   STOPW=""; VERDICT=""; MISSING=""
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
@@ -1308,6 +1308,28 @@ h_fail() {
   interrupt_task "$ERRTYPE"
   return 0
 }
+# An agent that hands its report back with the SubagentHandback tool ends with a short stub message
+# ("report delivered"); the real report is that tool call's `message`. When the last assistant message
+# is not a well-formed report, use the latest hand-back message of the agent transcript instead.
+handback_message() { # -> V ("" when none)
+  V=""
+  [ -n "$TR_PATH" ] && [ -f "$TR_PATH" ] || return 0
+  local line
+  line="$(tail -c 1048576 "$TR_PATH" 2>/dev/null | grep -F '"name":"SubagentHandback"' | tail -n 1)"
+  [ -n "$line" ] || return 0
+  line="${line#*\"name\":\"SubagentHandback\"}"
+  V="$(jstring message "$line")"
+}
+handback_fallback() {
+  [ -n "$TR_PATH" ] || return 0
+  if [ -n "$MSG" ]; then
+    shape_check "$CLASS" "$MSG"
+    [ -z "$MISSING" ] && return 0
+  fi
+  handback_message
+  [ -n "$V" ] && MSG="$V"
+  return 0
+}
 hook_main() {
   HOOK_EVENT="${ARGV[0]:-}"
   case "$HOOK_EVENT" in SubagentStart|SubagentStop|StopFailure) ;; *) return 0 ;; esac
@@ -1328,6 +1350,7 @@ hook_main() {
       elif auto_bind_ok; then auto_create; fi ;;
     SubagentStop)
       find_task_id SubagentStop
+      handback_fallback
       if [ -z "$TID" ] && auto_bind_ok; then auto_create; fi
       # an agent without a task is not tracked: no report_missing, no notification
       [ -n "$TID" ] && with_task "$TID" h_stop_main
