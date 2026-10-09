@@ -375,3 +375,20 @@ test('beads: real bd 1.3.0 list shapes (array and {issues, meta}) map the same',
   assert.equal(a[0].task.status, 'blocked');
   assert.equal(a[1].task.status, 'done'); assert.equal(a[1].task.owner, '');
 });
+
+test('watcher: a full re-check requested while a check is running (check(null) while busy) does not throw and re-runs', async () => {
+  let calls = 0, release;
+  const gate = new Promise(r => { release = r; });
+  const rd = { dirs: () => [], signature: async () => { calls++; if (calls === 1) await gate; return 's' + calls; } };
+  const errors = [];
+  const onErr = e => errors.push(e);
+  process.on('uncaughtException', onErr); process.on('unhandledRejection', onErr);
+  const w = createTasksWatcher({ reader: rd, getProjects: () => [{ id: 'p_1', path: '/p' }], onChange() {}, pollMs: 20, debounceMs: 10, watchFn: () => { throw new Error('no fs.watch'); } });
+  await new Promise(r => setTimeout(r, 120));   // the poll fires while the first check waits on the gate
+  release();
+  await new Promise(r => setTimeout(r, 150));
+  w.close();
+  process.off('uncaughtException', onErr); process.off('unhandledRejection', onErr);
+  assert.deepEqual(errors, []);
+  assert.ok(calls >= 2, 'a later check ran');
+});

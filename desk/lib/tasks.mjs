@@ -292,7 +292,7 @@ export function createTasksReader({ env = null, now = Date.now, beads = runBd, b
     for (const e of ev) {
       if (e.event !== 'quota_recent') continue;
       const resetAt = typeof e.pl.resetAt === 'string' && Number.isFinite(Date.parse(e.pl.resetAt)) ? e.pl.resetAt : null;
-      if (!(nowMs - e.t < 3600000 || (resetAt && Date.parse(resetAt) > nowMs))) continue;
+      if (!(nowMs - e.t < 5 * 3600000 || (resetAt && Date.parse(resetAt) > nowMs))) continue;
       if (!quota || e.ts > quota.at) quota = { at: e.ts, reset: typeof e.pl.reset === 'string' ? e.pl.reset.slice(0, 60) : null, resetAt };
     }
     let calls = 0, bytes = 0, since = null;
@@ -368,11 +368,11 @@ export function createTasksWatcher({ reader, getProjects, onChange, pollMs = 500
   const sigs = new Map();     // project id -> signature
   const watchers = new Map(); // dir -> FSWatcher
   const dirOwners = new Map();// dir -> Set(project id)
-  let timer = null, poll = null, closed = false, busy = false;
+  let timer = null, poll = null, closed = false, busy = false, dirtyAll = false;
   const dirty = new Set();
 
   async function check(ids) {
-    if (closed || busy) { for (const i of ids) dirty.add(i); return; }
+    if (closed || busy) { if (ids) for (const i of ids) dirty.add(i); else dirtyAll = true; return; }
     busy = true;
     try {
       const changed = [];
@@ -386,7 +386,8 @@ export function createTasksWatcher({ reader, getProjects, onChange, pollMs = 500
       }
       if (changed.length && !closed) { try { onChange(changed); } catch { /* listener errors never stop the watcher */ } }
     } finally { busy = false; }
-    if (dirty.size) { const d = [...dirty]; dirty.clear(); check(d); }
+    if (dirtyAll) { dirtyAll = false; dirty.clear(); check(null); }
+    else if (dirty.size) { const d = [...dirty]; dirty.clear(); check(d); }
   }
 
   function schedule(ids) {

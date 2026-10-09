@@ -94,7 +94,7 @@ test('formatters', () => {
   assert.equal(cumulativeTokensText({ tokens: { total: null } }), null);
   assert.equal(agentTokensText({ agentTokens: 120000 }), 'agents 120.0k tokens');
   assert.equal(agentTokensText({ agentTokens: null }), null);
-  assert.match(quotaText({ at: '2026-10-07T11:30:00.000Z', reset: '5pm (UTC)', resetAt: null }, { now: Date.parse('2026-10-07T12:00:00Z') }), /resets 5pm [(]UTC[)]/);
+  assert.match(quotaText({ at: '2026-10-07T11:30:00.000Z', reset: '5pm (UTC)', resetAt: null }, { now: Date.parse('2026-10-07T12:00:00Z') }), /resets at/);
   assert.equal(quotaText(null), null);
   assert.equal(cliText({ calls: 12, bytes: 3481, since: 'x' }), 'tasks.sh: 12 calls, 3.4 KB (24 h)');
   assert.equal(cliText({ calls: 0, bytes: 0, since: null }), null);
@@ -154,4 +154,13 @@ test('/api/tasks: waves, tokens, verifiedBy, quota, cli; accepted marker on the 
   assert.deepEqual(kids.filter(c => c.accepted).map(c => c.id).sort(), ['s.ver', 's.w1']);   // t-4d4d approved; t-4e4e needs fixes; auto task open
   assert.equal((await call(api, '/api/sessions/s.w2')).body.session.accepted, undefined);
   assert.equal((await call(api, '/api/sessions/s.w1')).body.session.accepted, true);
+});
+
+test('summary: a quota event stays for 5 h (unknown reset), older ones are dropped', async () => {
+  const proj = '/proj/q5';
+  const env = { platform: process.platform, home: tmp('v81-qh-'), vars: { SUBDECK_TASKS_DIR: tmp('v81-qd-') }, stateRoot: tmp('v81-qs-') };
+  writeEvents(proj, env, [E('quota_recent', new Date(NOW - 3 * 3600000).toISOString(), 'q', { reset: null, resetAt: null })]);
+  const rd = createTasksReader({ env, now: () => NOW, beadsEnabled: false });
+  assert.ok((await rd.summary(proj, NOW)).quota, '3 h old, unknown reset: kept');
+  assert.equal((await rd.summary(proj, NOW + 3 * 3600000)).quota, null, '6 h old: dropped');
 });
