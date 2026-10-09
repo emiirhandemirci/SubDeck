@@ -440,3 +440,13 @@ button.danger:hover { background: var(--danger-bg); filter: brightness(1.1); }
 .tsummary { display: flex; flex-direction: column; gap: 2px; margin: 0 0 10px; font-size: 13px; overflow-wrap: anywhere; }
 .tsummary-wave { font-family: var(--mono); font-size: 12px; }
 .cli-note { font-size: 12px; margin-left: 8px; }
+
+/* 0.8.2: status legend, quota banner dismiss */
+.pane { position: relative; }
+.pane-head { display: flex; align-items: center; gap: var(--s2); margin: 0 var(--s3) var(--s3) 0; }
+.pane-head h2 { margin-bottom: 0; }
+.legend-pop { top: 40px; left: var(--s3); }
+.quota-banner { display: flex; align-items: flex-start; gap: var(--s2); justify-content: space-between; }
+.banner-x { flex: none; border: 0; background: transparent; color: inherit; font-size: 18px; line-height: 1; padding: 0 6px; border-radius: 6px; cursor: pointer; }
+.banner-x:hover { background: var(--hover); }
+.tag.fail { cursor: help; }

@@ -1,6 +1,6 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
-import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText, agentBadges, cumulativeTokensText, agentTokensText, quotaText, cliText } from './format.js';
+import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText, cumulativeTokensText, cumulativeTokensTitle, agentTokensText, quotaBanner, laterSuccess, cliText, rowBadges, statusLegend } from './format.js';
 import { initSettings } from './settings.js';
 import { initTasks } from './tasks.js';
 import { runBadgeText, RUN_STATUS_LABEL, mountRunLog } from './runs.js';
@@ -36,19 +36,13 @@ function failureBadge(s) {
   b.title = `Failure (${kind})${detail}`;
   return b;
 }
-function noticeBadges(s) {   // task watchdog: an agent that ended without the required report, or was cut off mid-task
-  const out = [];
-  if (s && s.reportMissing) { const b = el('span', 'tag notice', 'stopped without report'); b.title = `The agent stopped without a Stop:/Tested: report${s.reportMissing.task ? ` (task ${s.reportMissing.task})` : ''}`; out.push(b); }
-  if (s && s.interrupted) {
-    const f = s.interrupted.files;
-    const b = el('span', 'tag notice', 'interrupted');
-    b.title = `Interrupted (${s.interrupted.errorType || 'unknown'})${Number.isInteger(f) ? `, ${f} uncommitted file${f === 1 ? '' : 's'}` : ''}${s.interrupted.task ? `, task ${s.interrupted.task}` : ''}`;
-    out.push(b);
-  }
-  for (const x of agentBadges(s)) { const b = el('span', x.cls, x.text); b.title = x.title; out.push(b); }
-  return out;
+function rowStatus(s) {   // one primary status badge, at most one actionable secondary badge; bookkeeping lives in the tooltip
+  const r = rowBadges(s, FAIL_LABEL);
+  const p = el('span', `state-word ${r.primary.cls}`, r.primary.text); p.title = r.primary.title;
+  const out = [p];
+  if (r.secondary) { const b = el('span', r.secondary.cls, r.secondary.text); b.title = r.secondary.title; out.push(b); }
+  return { nodes: out, details: r.details };
 }
-function stateWord(state) { return el('span', `state-word chip ${state}`, STATE_LABEL[state] || state); }
 // Waiting count: server-side per-project counts when available, else what the selected project's tree shows.
 function updateWaiting() {
   const own = S.sessions.reduce((n, s) => n + (s.state === 'waiting') + s.children.filter(c => c.state === 'waiting').length, 0);
@@ -234,6 +228,7 @@ function renderSrcPanel() {
     for (const line of sourceTip(s).split('\n')) r.append(el('div', 'pop-sub', line));
     box.append(r);
   }
+  { const cl = cliText(S.projInfo && S.projInfo.cli); if (cl) { box.append(el('h3', 'pop-h', 'Task script (selected project)')); const r = el('div', 'pop-row'); r.append(el('div', 'pop-sub', cl)); box.append(r); } }
   box.append(el('h3', 'pop-h', `Not detected (${absent.length})`));
   if (!absent.length) box.append(el('p', 'pop-empty', 'Every supported tool was found.'));
   for (const s of absent) {
@@ -242,6 +237,26 @@ function renderSrcPanel() {
     box.append(r);
   }
 }
+// ---------- status legend ("?" in the Agent map header) ----------
+const lg = { open: false };
+function renderLegend() {
+  const box = $('legendPanel');
+  box.replaceChildren();
+  box.append(el('h3', 'pop-h', 'Status of a row'));
+  for (const x of statusLegend().filter(x => x.kind === 'state')) { const r = el('div', 'pop-row'); r.append(el('div', 'pop-name', x.word), el('div', 'pop-sub', x.tip)); box.append(r); }
+  box.append(el('h3', 'pop-h', 'Extra badge (only when you should act)'));
+  for (const x of statusLegend().filter(x => x.kind === 'extra')) { const r = el('div', 'pop-row'); r.append(el('div', 'pop-name', x.word), el('div', 'pop-sub', x.tip)); box.append(r); }
+  box.append(el('p', 'pop-empty', 'Task key, accepted and not tracked are in the row tooltip and the detail pane.'));
+}
+function setLegend(open) {
+  lg.open = open;
+  if (open) renderLegend();
+  $('legendPanel').hidden = !open;
+  $('legendBtn').setAttribute('aria-expanded', String(open));
+}
+$('legendBtn').addEventListener('click', () => setLegend(!lg.open));
+document.addEventListener('click', ev => { if (lg.open && !ev.target.closest('#legendPanel, #legendBtn')) setLegend(false); });
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && lg.open) { setLegend(false); $('legendBtn').focus(); } });
 function openSrcPanel(opener) {
   const same = sp.open && sp.opener === opener;
   if (sp.open) closeSrcPanel(false);
@@ -360,9 +375,9 @@ function sessionLine(s, cls) {
   line.dataset.id = s.id;
   line.tabIndex = s.id === S.selectedSession ? 0 : -1;
   line.setAttribute('aria-selected', String(s.id === S.selectedSession));
-  line.append(dot(s.state), el('span', 'title', T(s.title)), stateWord(s.state));
-  const fb = failureBadge(s); if (fb) line.append(fb);
-  for (const nb of noticeBadges(s)) line.append(nb);
+  const rs = rowStatus(s);
+  line.append(dot(s.state), el('span', 'title', T(s.title)), ...rs.nodes);
+  if (rs.details.length) line.title = rs.details.join('. ');
   const was = S.prevState.get(s.id);
   if (was !== undefined && was !== s.state) line.classList.add('changed');   // one short pulse; the animation ends by itself
   S.prevState.set(s.id, s.state);
@@ -370,7 +385,7 @@ function sessionLine(s, cls) {
   if (rb) { const b = el('span', 'tag runbadge', rb); b.title = `Headless run: ${rb}`; line.append(b); }
   else if (s.agentType && cls === 'agent') line.append(el('span', 'tag mono', s.agentType));
   const ct = s.parentId ? cumulativeTokensText(s) : agentTokensText(s);
-  if (ct) { const c = el('span', 'tag tokens', ct); c.title = s.parentId ? 'Cumulative usage of this agent: input + cache writes + output tokens over all its turns; cache reads shown separately' : 'Cumulative tokens of this session\'s agents'; line.append(c); }
+  if (ct) { const c = el('span', 'tag tokens', ct); c.title = s.parentId ? cumulativeTokensTitle(s) : 'Cumulative tokens of the agents of this session'; line.append(c); }
   const u = contextUsage(s, S.ctxWindow);
   line.append(el('span', 'meta-line muted', u ? `${formatDuration(s.durationMs)} · ${u.pct === null ? u.text : `${formatTokens(u.tokens)} · ${u.pct}%`}` : formatDuration(s.durationMs)));
   if (u && u.pct !== null) line.append(usageBar(u));
@@ -390,10 +405,8 @@ function renderMapInner() {
   ph.append(el('span', 'name', S.project.name));
   const pht = projectTokens(S.project); if (pht) ph.append(pht);
   box.append(ph);
-  const qt = quotaText(S.projInfo && S.projInfo.quota);
-  if (qt) { const q = el('div', 'notice-banner', qt); q.setAttribute('role', 'status'); box.append(q); }
-  const cl = cliText(S.projInfo && S.projInfo.cli);
-  if (cl) ph.append(el('span', 'muted cli-note', cl));
+  const qb = quotaBanner(S.projInfo && S.projInfo.quota, { laterRun: laterSuccess(S.sessions, S.projInfo && S.projInfo.quota) });
+  if (qb) box.append(qb);
   for (const s of S.sessions) {
     const card = el('div', `card st-${s.state}`);   // sessions arrive waiting-first from the API
     const head = sessionLine(s, 'head');
@@ -686,10 +699,8 @@ function renderDetailInner(box) {
   const st = el('span'); st.append(dot(s.state), document.createTextNode(` ${STATE_LABEL[s.state]} (${SOURCE_LABEL[s.stateSource]})`));
   row('State', st);
   const fd = failureBadge(s); if (fd) row('Failure', fd);
-  const nbs = noticeBadges(s); if (nbs.length) { const w = el('span', 'refs'); for (const nb of nbs) w.append(nb, document.createTextNode(' ')); row('Notice', w); }
-  if (s.taskId) row('Task', s.taskId);
-  else if (s.parentId && s.tracked === false) row('Task', 'not tracked');
-  { const ct = s.parentId ? cumulativeTokensText(s) : agentTokensText(s); if (ct) row(s.parentId ? 'Cumulative tokens' : 'Agent tokens', ct); }
+  { const r = rowBadges(s, FAIL_LABEL); if (r.secondary) { const b = el('span', r.secondary.cls, r.secondary.text); b.title = r.secondary.title; row('Notice', b); } if (r.details.length) row('Task info', r.details.join('. ')); }
+  { const ct = s.parentId ? cumulativeTokensText(s) : agentTokensText(s); if (ct) row(s.parentId ? 'Cumulative tokens' : 'Agent tokens', s.parentId ? cumulativeTokensText(s, true) : ct); }
   if (s.run) {
     const rb = runBadgeText(s.run);
     if (rb) row('Run', rb);

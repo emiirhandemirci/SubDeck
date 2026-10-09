@@ -1,6 +1,6 @@
 // desk/public/tasks.js
 import { runBadgeText, RUN_STATUS_LABEL, mountRunLog } from './runs.js';
-import { formatTokens, quotaText, cliText, waveText } from './format.js';
+import { formatTokens, quotaBanner, waveText } from './format.js';
 // Tasks tab: one card per task file (and Beads item), columns by status. Read-only; data only via textContent.
 
 export const COLUMNS = [
@@ -143,12 +143,11 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
     const flat = [];
     for (const p of shown) for (const t of p.tasks) flat.push({ p, t });
     for (const p of shown) {
-      const notes = [quotaText(p.quota), cliText(p.cli)].filter(Boolean);
       const ws = p.waves || [];
-      if (!notes.length && !ws.length) continue;
+      const qb = quotaBanner(p.quota, {});
+      if (!qb && !ws.length) continue;
       const sum = el('div', 'tsummary');
-      if (quotaText(p.quota)) sum.append(el('div', 'notice-banner', quotaText(p.quota)));
-      if (cliText(p.cli)) sum.append(el('div', 'muted tsummary-cli', multi ? `${p.projectName}: ${cliText(p.cli)}` : cliText(p.cli)));
+      if (qb) sum.append(qb);
       for (const w of ws) { const r = el('div', 'tsummary-wave', waveText(w)); r.title = `${w.agents} agent${w.agents === 1 ? '' : 's'}: ${w.tasks.join(', ')}`; sum.append(r); }
       box.append(sum);
     }

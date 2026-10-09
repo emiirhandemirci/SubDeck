@@ -89,11 +89,12 @@ test('readUsage: cumulative per agent, streamed message ids once, cache reads ap
 });
 
 test('formatters', () => {
-  assert.equal(cumulativeTokensText({ tokens: { total: 175, cached: 2200 } }), '175 used, 2.2k cached');
+  assert.equal(cumulativeTokensText({ tokens: { total: 175, cached: 2200 } }), '175 used');
+  assert.equal(cumulativeTokensText({ tokens: { total: 175, cached: 2200 } }, true), '175 used, 2.2k cached');
   assert.equal(cumulativeTokensText({ tokens: { total: null } }), null);
   assert.equal(agentTokensText({ agentTokens: 120000 }), 'agents 120.0k tokens');
   assert.equal(agentTokensText({ agentTokens: null }), null);
-  assert.match(quotaText({ at: '2026-10-07T11:30:00.000Z', reset: '5pm (UTC)', resetAt: null }), /11:30Z; resets 5pm \(UTC\)/);
+  assert.match(quotaText({ at: '2026-10-07T11:30:00.000Z', reset: '5pm (UTC)', resetAt: null }, { now: Date.parse('2026-10-07T12:00:00Z') }), /resets 5pm [(]UTC[)]/);
   assert.equal(quotaText(null), null);
   assert.equal(cliText({ calls: 12, bytes: 3481, since: 'x' }), 'tasks.sh: 12 calls, 3.4 KB (24 h)');
   assert.equal(cliText({ calls: 0, bytes: 0, since: null }), null);

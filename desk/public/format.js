@@ -241,11 +241,19 @@ export function agentBadges(s) {
   return out;
 }
 
-/** "120.0k tokens, 2.1M cached" of an agent (cumulative usage), else null. */
-export function cumulativeTokensText(s) {
+/** "43k used" of an agent (cumulative usage); the cached count goes to the tooltip (cumulativeTokensTitle). full=true adds it, for the detail pane. */
+export function cumulativeTokensText(s, full = false) {
   const t = s && s.tokens;
   if (!t || !Number.isFinite(t.total)) return null;
-  return `${formatTokens(t.total)} used${Number.isFinite(t.cached) && t.cached > 0 ? `, ${formatTokens(t.cached)} cached` : ''}`;
+  return `${formatTokens(t.total)} used${full && Number.isFinite(t.cached) && t.cached > 0 ? `, ${formatTokens(t.cached)} cached` : ''}`;
+}
+
+/** Tooltip of the token chip: what is counted and the cached amount. */
+export function cumulativeTokensTitle(s) {
+  const t = s && s.tokens;
+  if (!t || !Number.isFinite(t.total)) return null;
+  const c = Number.isFinite(t.cached) && t.cached > 0 ? ` ${formatTokens(t.cached)} more tokens were served from cache and are not counted.` : '';
+  return `Tokens this agent used over all its turns (input + cache writes + output).${c}`;
 }
 
 /** "agents: 120.0k tokens" for a session header (sum over its sub-agents), else null. */
@@ -253,11 +261,41 @@ export function agentTokensText(s) {
   return s && Number.isFinite(s.agentTokens) ? `agents ${formatTokens(s.agentTokens)} tokens` : null;
 }
 
-/** Quota banner text, or null. */
-export function quotaText(q) {
+const QUOTA_HIDE_MS = 5 * 3600 * 1000;
+const QUOTA_DISMISS_KEY = 'desk.quotaDismissed';
+/** Quota banner text, or null (no quota event, older than 5 h with no known future reset, dismissed, or a later agent run succeeded).
+ *  opts: { now, laterRun, dismissedAt }. Times are shown in the viewer's local time. */
+export function quotaText(q, opts = {}) {
   if (!q || !q.at) return null;
-  const hm = new Date(q.at).toISOString().slice(11, 16);
-  return `Quota limit hit ${hm}Z; resets ${q.reset || (q.resetAt ? q.resetAt : 'unknown')}. Check before launching agents.`;
+  const at = Date.parse(q.at);
+  if (!Number.isFinite(at)) return null;
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+  if (opts.laterRun || (opts.dismissedAt && opts.dismissedAt === q.at)) return null;
+  const resetMs = q.resetAt ? Date.parse(q.resetAt) : NaN;
+  if (now - at > QUOTA_HIDE_MS && !(Number.isFinite(resetMs) && resetMs > now)) return null;
+  const hm = ms => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (Number.isFinite(resetMs)) {
+    const day = new Date(resetMs).toDateString() === new Date(now).toDateString() ? '' : ` ${new Date(resetMs).toLocaleDateString([], { month: 'short', day: 'numeric' })}`;
+    return `Quota limit hit; resets at ${hm(resetMs)}${day} (local). Check before launching agents.`;
+  }
+  if (q.reset) return `Quota limit hit; resets ${q.reset}. Check before launching agents.`;
+  return `Quota limit hit at ${hm(at)} (local); reset time unknown. Check before launching agents.`;
+}
+
+/** Remembered dismissal (the quota event time) of the quota banner; storage may be unavailable. */
+export function quotaDismissedAt() { try { return localStorage.getItem(QUOTA_DISMISS_KEY) || null; } catch { return null; } }
+export function dismissQuota(at) { try { localStorage.setItem(QUOTA_DISMISS_KEY, String(at)); } catch { /* storage unavailable */ } }
+/** Banner element with a dismiss button; null when quotaText hides it. onChange runs after a dismiss. */
+export function quotaBanner(q, opts, onChange) {
+  const text = quotaText(q, { dismissedAt: quotaDismissedAt(), ...opts });
+  if (!text) return null;
+  const d = document.createElement('div'); d.className = 'notice-banner quota-banner'; d.setAttribute('role', 'status');
+  const t = document.createElement('span'); t.textContent = text;
+  const x = document.createElement('button'); x.type = 'button'; x.className = 'banner-x'; x.textContent = '\u00d7';
+  x.setAttribute('aria-label', 'Dismiss quota notice'); x.title = 'Dismiss until the next quota limit';
+  x.addEventListener('click', () => { dismissQuota(q.at); d.remove(); if (onChange) onChange(); });
+  d.append(t, x);
+  return d;
 }
 
 /** "tasks.sh: 12 calls, 3.4 KB (24 h)" or null without calls. */
@@ -270,4 +308,58 @@ export function cliText(c) {
 /** "w1: 3 tasks, 120.0k tokens" */
 export function waveText(w) {
   return `${w.id}: ${w.tasks.length} task${w.tasks.length === 1 ? '' : 's'}, ${w.tokens === null || w.tokens === undefined ? 'no token data' : `${formatTokens(w.tokens)} tokens`}`;
+}
+
+// ---- 0.8.2: one primary status badge per row, at most one actionable secondary badge ----
+
+/** Row status words: one primary badge per agent row. */
+export const ROW_STATE = { running: 'running', waiting: 'waiting', finished: 'done', failed: 'failed', idle: 'stopped', stale: 'stopped', unknown: 'stopped' };
+const ROW_TIP = {
+  running: 'Running: the agent is working. Nothing to do.',
+  waiting: 'Waiting: the agent is blocked on your input (permission, question or plan approval). Open it and answer.',
+  done: 'Done: the agent finished its turn. Read its report if you have not.',
+  failed: 'Failed: the agent ended with an error. Open it to see the reason, then resume or re-launch.',
+  stopped: 'Stopped: the agent is not running and gave no finish signal. Check it, then resume or ignore.',
+};
+const SECOND_TIP = {
+  interrupted: 'Interrupted: the agent was cut off mid-task (rate limit, kill or session end). Its task has a handoff note; resume the agent or revert its files.',
+  'no report': 'No report: the agent ended without a Stop:/Tested: report (also not as a hand-back message). Ask it for the report.',
+  'long report': 'Long report: the final report is over 9 lines. Re-instruct the agent; do not re-read it.',
+};
+/** Legend entries for the "?" popover: [{ word, tip, kind: 'state'|'extra' }]. */
+export function statusLegend() {
+  return [
+    ...['running', 'waiting', 'done', 'failed', 'stopped'].map(w => ({ word: w, tip: ROW_TIP[w], kind: 'state' })),
+    ...Object.keys(SECOND_TIP).map(w => ({ word: w, tip: SECOND_TIP[w], kind: 'extra' })),
+  ];
+}
+
+/** { primary: { text, cls, title }, secondary: { text, cls, title } | null, details: [string] } for an agent/session row.
+ *  Bookkeeping (task key, accepted, not tracked) goes to details only. failKinds maps failure kinds to labels. */
+export function rowBadges(s, failKinds = {}) {
+  const word = ROW_STATE[s && s.state] || 'stopped';
+  const primary = { text: word, cls: `chip ${s && s.state}`, title: ROW_TIP[word] };
+  let secondary = null;
+  const f = s && s.state === 'failed' ? (s.failure && typeof s.failure === 'object' ? s.failure : {}) : null;
+  const sec = (text, title) => ({ text, cls: 'tag notice', title: title || SECOND_TIP[text] });
+  if (f) {
+    if (f.kind && f.kind !== 'unknown' && failKinds[f.kind]) secondary = { text: failKinds[f.kind], cls: 'tag fail', title: `Failure (${f.kind})${typeof f.detail === 'string' && f.detail ? `: ${f.detail}` : ''}. Open the agent for details.` };
+  } else if (s && s.interrupted) {
+    const n = s.interrupted.files;
+    secondary = sec('interrupted', `${SECOND_TIP.interrupted} Cause: ${s.interrupted.errorType || 'unknown'}${Number.isInteger(n) ? `, ${n} uncommitted file${n === 1 ? '' : 's'}` : ''}.`);
+  } else if (s && s.reportMissing) secondary = sec('no report');
+  else if (s && s.reportTooLong) secondary = sec('long report', `${SECOND_TIP['long report']}${Number.isInteger(s.reportTooLong.lines) ? ` (${s.reportTooLong.lines} lines)` : ''}`);
+  const details = [];
+  if (s && s.taskId) details.push(`Task ${s.taskId}`);
+  else if (s && s.parentId && s.tracked === false) details.push('Not tracked: no task, so no report check or notification');
+  if (s && s.accepted) details.push('Accepted: its task is done or approved; later notifications from it are stale');
+  return { primary, secondary, details };
+}
+
+/** True when an agent run that finished after the quota event exists in the given sessions (the limit evidently cleared). */
+export function laterSuccess(sessions, q) {
+  const at = q && q.at ? Date.parse(q.at) : NaN;
+  if (!Number.isFinite(at)) return false;
+  const ok = c => c && c.state === 'finished' && !c.reportMissing && !c.interrupted && c.updatedAt && Date.parse(c.updatedAt) > at + 1000;
+  return (sessions || []).some(s => ok(s) || (s.children || []).some(ok));
 }
