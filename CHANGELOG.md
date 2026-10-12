@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.2 - 2026-10-12
+
+- **Agent reports:** agents that finish with the built-in handback call are no longer shown as "stopped without report". The report check also tolerates markdown formatting (bold, backticks, list marks) and CRLF line endings around `Stop:`, `Tested:` and `Verdict:`.
+- **Desk status:** one status badge per row, a legend for the badges and tooltips that explain each state. A token chip shows usage per row; metering (CLI call counts) moved into the info popover.
+- **Quota banner:** reset times are shown in your local time (text times with an IANA zone are converted), quota events are kept for 5 hours, and the banner can be dismissed.
+- **Desk writes:** bell and settings changes now survive a Desk restart (a stale token is refreshed and the write retried), write errors are shown instead of failing silently, and writes queue behind a running `settings.sh`.
+- **Fix:** the Desk watcher no longer misses a change while it is busy scanning.
+
 ## 0.8.1 - 2026-10-07
 
 - **Task files:** new keys `auto` (hook-created tasks), `pack` (wave context pack), `grants` (writable-path extensions), `covers` (batch verification IDs). `tasks.sh verify --covers` checks a whole wave together; `done` requires the latest verdict = Approved.
