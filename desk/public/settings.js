@@ -1,6 +1,7 @@
 // desk/public/settings.js
 // Settings tab and theme switch. Reads GET /api/settings, writes POST /api/settings (the server runs settings.sh); data only via textContent.
 
+import { writeJSON } from './token.js';
 export const GROUPS = [
   ['models', 'Models'], ['notify', 'Notifications'], ['push', 'Push'], ['guard', 'Guard rules'],
   ['protect', 'Protected paths'], ['resources', 'Protected resources'], ['tasks', 'Tasks'], ['roles', 'Roles'], ['context', 'Context window'], ['statusline', 'Status line'],
@@ -136,13 +137,9 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
   async function post(set, label, ok) {
     st.busy = true; st.gen++; st.msg = { bad: false, text: `Saving ${label}…` }; render();
     try {
-      const meta = document.querySelector('meta[name="subdeck-token"]');
       const p = project();
-      const r = await fetch('/api/settings', { method: 'POST', cache: 'no-store',
-        headers: { 'Content-Type': 'application/json', 'X-SubDeck-Token': meta ? meta.content : '' },
-        body: JSON.stringify({ set, project: st.scope === 'project' && p ? p.id : null }) });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) st.msg = { bad: true, text: body.error || `Save failed (${r.status})` };
+      const r = await writeJSON('/api/settings', { set, project: st.scope === 'project' && p ? p.id : null });
+      if (!r.ok) st.msg = { bad: true, text: r.error };
       else { st.msg = { bad: false, text: `Saved ${label}` }; if (ok) ok(); }
     } catch { st.msg = { bad: true, text: 'Save failed: Desk is unreachable' }; }
     st.busy = false;

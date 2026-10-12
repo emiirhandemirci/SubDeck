@@ -2,6 +2,7 @@
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
 import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText, cumulativeTokensText, cumulativeTokensTitle, agentTokensText, quotaBanner, laterSuccess, cliText, rowBadges, statusLegend } from './format.js';
 import { initSettings } from './settings.js';
+import { writeJSON } from './token.js';
 import { initTasks } from './tasks.js';
 import { runBadgeText, RUN_STATUS_LABEL, mountRunLog } from './runs.js';
 
@@ -184,17 +185,19 @@ async function loadNotify() {
   renderBell();
   if (settingsUi) settingsUi.setNotify(S.notify);
 }
+let bellErrTimer = null;
+function bellError(text) {
+  const n = $('bellErr'); if (!n) return;
+  clearTimeout(bellErrTimer);
+  n.textContent = text || ''; n.hidden = !text;
+  if (text) bellErrTimer = setTimeout(() => bellError(''), 8000);
+}
 async function toggleNotify() {
-  const meta = document.querySelector('meta[name="subdeck-token"]');
   const want = !(S.notify === true);
-  try {
-    const r = await fetch('/api/settings/notify', { method: 'POST', cache: 'no-store',
-      headers: { 'Content-Type': 'application/json', 'X-SubDeck-Token': meta ? meta.content : '' }, body: JSON.stringify({ enabled: want }) });
-    if (!r.ok) throw new Error(String(r.status));
-    S.notify = (await r.json()).enabled === true;
-    renderBell(); if (settingsUi) settingsUi.setNotify(S.notify);
-  } catch { /* keep the old state; re-read below */ }
-  await loadNotify();
+  const r = await writeJSON('/api/settings/notify', { enabled: want });
+  if (r.ok && r.body.enabled === want) bellError('');
+  else bellError(r.ok ? 'Notification setting was not applied.' : `Could not change notifications: ${r.error}. Reload this page if it keeps failing.`);
+  await loadNotify();   // the control always shows the server value, also after a failed write
 }
 if ($('bell')) $('bell').addEventListener('click', () => { toggleNotify(); });
 

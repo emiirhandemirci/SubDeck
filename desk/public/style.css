@@ -264,6 +264,8 @@ ol.calls code { border: 0; background: transparent; padding: 0; color: var(--tex
 
 .bell-note { font-weight: 400; font-size: 12px; color: var(--muted); }
 .bell.overridden { border-style: dashed; }
+.bell-err { max-width: 320px; padding: 2px 8px; border-radius: var(--r-sm); font-size: 12px; color: var(--failed); border: 1px solid color-mix(in srgb, var(--failed) 35%, transparent); background: color-mix(in srgb, var(--failed) 10%, transparent); }
+.bell-err[hidden] { display: none; }
 
 /* ---------- changed files ---------- */
 .conflicts { margin: 10px 0; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--idle) 55%, var(--border)); background: color-mix(in srgb, var(--idle) 10%, transparent); border-radius: var(--r); font-size: 13px; }

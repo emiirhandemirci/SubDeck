@@ -22,6 +22,7 @@ const STATIC = {
   '/settings.js': ['settings.js', 'text/javascript; charset=utf-8'],
   '/tasks.js': ['tasks.js', 'text/javascript; charset=utf-8'],
   '/runs.js': ['runs.js', 'text/javascript; charset=utf-8'],
+  '/token.js': ['token.js', 'text/javascript; charset=utf-8'],
 };
 const CSP = "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:";
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -313,7 +314,12 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     let body;
     try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid body' }); }
     if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.enabled !== 'boolean' || Object.keys(body).length !== 1) return json(res, 400, { error: 'body must be {"enabled": true|false}' });
-    const w = writeNotifyEnabled(configFile, body.enabled);
+    // Same queue as POST /api/settings: settings.sh does its own read-modify-write of this file, so the two must not interleave.
+    const prev = setChain;
+    let release; setChain = new Promise(r => { release = r; });
+    await prev;
+    let w;
+    try { w = writeNotifyEnabled(configFile, body.enabled); } finally { release(); }
     settingsGen++; settingsCache.clear();   // the Settings tab reads this value; never serve a stale cached copy
     return w.ok ? json(res, 200, { enabled: w.enabled }) : json(res, 500, { error: w.error });
   }
