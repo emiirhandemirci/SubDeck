@@ -34,6 +34,13 @@ export function resumeLines(t) {
   return out;
 }
 
+/** Compact checkpoint timeline of a task: the newest commit/rewind checkpoints (and steps), oldest first, as { rows: [{ at, hash, text }], more }. */
+export function checkpointRows(t, max = 5) {
+  const all = (t && t.checkpoints || []).filter(c => c && c.kind !== 'rewind');
+  const rows = all.slice(-max).map(c => ({ at: c.at, hash: c.kind === 'commit' ? String(c.hash || '').slice(0, 7) : 'step', text: c.text || '' }));
+  return { rows, more: Math.max(0, all.length - rows.length) };
+}
+
 /** Rule events of the last 24 h, newest first, as rows { time, agent, rule, text, agentSessionId }; empty list = nothing to show. */
 export function ruleEventRows(p, nowMs = Date.now()) {
   return (p && p.ruleEvents || []).filter(e => e && Number.isFinite(Date.parse(e.at)) && nowMs - Date.parse(e.at) <= 86400000)
@@ -120,6 +127,18 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
     if (t.status === 'interrupted' && t.handoff && t.handoff.fileList && t.handoff.fileList.length) {
       const fl = el('div', 'tcard-paths mono muted', t.handoff.fileList.slice(0, 8).join('\n') + (t.handoff.fileList.length > 8 ? `\n+${t.handoff.fileList.length - 8} more` : ''));
       fl.style.whiteSpace = 'pre-wrap'; fl.title = 'Uncommitted files at the interruption (git status --porcelain)'; c.append(fl);
+    }
+    {
+      const cp = checkpointRows(t);
+      if (cp.rows.length) {
+        const box = el('div', 'tcard-checkpoints muted'); box.title = 'Checkpoints: commits made by the task agent and recorded steps (tasks.sh history ' + t.id + ')';
+        if (cp.more) box.append(el('div', null, `+${cp.more} earlier`));
+        for (const r of cp.rows) {
+          const row = el('div', 'tcard-cp'); row.append(el('span', null, relativeTime(r.at, Date.now())), el('span', 'mono', r.hash), el('span', null, r.text));
+          box.append(row);
+        }
+        c.append(box);
+      }
     }
     if (t.writable.length) c.append(el('div', 'tcard-paths mono muted', t.writable.join(', ')));
     if (t.lastRun) {

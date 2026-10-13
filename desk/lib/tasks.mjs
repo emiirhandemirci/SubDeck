@@ -102,6 +102,31 @@ export function parseProgress(text) {
   return last;
 }
 
+/** Checkpoints of the Progress section, oldest first: [{ at, kind: 'commit'|'step'|'rewind', hash, text }] (names only; capped at 200). */
+export function parseCheckpoints(text) {
+  if (!text) return [];
+  const lines = String(text).split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^###\s+(\S+)\s+(step|commit|rewind)\s*$/.exec(lines[i]);
+    if (!m) continue;
+    const b = { at: m[1], kind: m[2], hash: '', text: '' };
+    let dn = '', nx = '', to = '';
+    for (let j = i + 1; j < lines.length && !lines[j].startsWith('### '); j++) {
+      let x;
+      if ((x = /^commit:\s*(\S+)\s*(.*)$/.exec(lines[j]))) { b.hash = x[1].slice(0, 40); b.text = x[2].trim().slice(0, 120); }
+      else if ((x = /^done:\s*(.*)$/.exec(lines[j]))) dn = x[1].trim();
+      else if ((x = /^next:\s*(.*)$/.exec(lines[j]))) nx = x[1].trim();
+      else if ((x = /^to:\s*(.*)$/.exec(lines[j]))) to = x[1].trim();
+    }
+    if (b.kind === 'step') b.text = (dn || nx).slice(0, 120);
+    else if (b.kind === 'rewind') b.text = ('rewound to #' + to).slice(0, 120);
+    out.push(b);
+    if (out.length >= 200) break;
+  }
+  return out;
+}
+
 /** Latest `### <time> verify (<by>)` block of the Verification section: { at, by, fingerprint, covers } or null. */
 export function parseVerification(text) {
   if (!text) return null;
@@ -141,7 +166,7 @@ export function parseTask(text, id, { archived = false, file = null } = {}) {
     role: fm.role || '', tool: fm.tool || '', model: fm.model || '', branch: fm.branch || '', worktree: fm.worktree || '', run: fm.run || '', created: fm.created || '', updated: fm.updated || '',
     auto: fm.auto === 'true', pack: /^[a-z0-9][a-z0-9-]{0,39}$/.test(fm.pack || '') ? fm.pack : '', grants: parseList(fm.grants), covers: parseList(fm.covers),
     verdict: latestVerdict(sections.verification),
-    question: (fm.question || '').slice(0, 300), lastStep: parseProgress(sections.progress),
+    question: (fm.question || '').slice(0, 300), lastStep: parseProgress(sections.progress), checkpoints: parseCheckpoints(sections.progress),
     archived, invalid, file,
   };
   const vb = parseVerification(sections.verification);

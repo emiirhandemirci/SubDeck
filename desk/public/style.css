@@ -387,6 +387,9 @@ button.danger:hover { background: var(--danger-bg); filter: brightness(1.1); }
 .tcard-question { font-size: 12px; font-weight: 600; color: var(--waiting); overflow-wrap: anywhere; }
 .tcard-resume { font-size: 12px; overflow-wrap: anywhere; }
 .tcard-paths { font-size: 11px; }
+.tcard-checkpoints { font-size: 11px; display: grid; gap: 1px; }
+.tcard-cp { display: flex; gap: 6px; min-width: 0; }
+.tcard-cp > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .tcard-body { margin: 4px 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; font-family: var(--mono); font-size: 12px; background: var(--raised); border-radius: var(--r-sm); padding: var(--s2); }
 .linklike { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
 .linklike:hover { text-decoration: underline; }

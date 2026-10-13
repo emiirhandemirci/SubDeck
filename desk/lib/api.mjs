@@ -204,7 +204,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
   let runsNow = new Map();
   function taskOut(t, bySession, pid) {
     const r = runsNow.get(`${pid}/${t.task.id}`);
-    return { auto: false, pack: '', grants: [], covers: [], verdict: '', question: '', lastStep: null, verifiedBy: null, wave: null, tokens: null, ...t.task, agentSessionId: (t.task.agent && bySession.get(t.task.agent)) || null, handoff: t.handoff || null,
+    return { auto: false, pack: '', grants: [], covers: [], verdict: '', question: '', lastStep: null, checkpoints: [], verifiedBy: null, wave: null, tokens: null, ...t.task, agentSessionId: (t.task.agent && bySession.get(t.task.agent)) || null, handoff: t.handoff || null,
       lastRun: r ? { ts: r.ts, status: r.status, role: r.role, tool: r.tool, model: r.model } : null };
   }
   // ---- runs (read-only): metas come from the subdeck-run source; logs are read on demand ----
