@@ -4,10 +4,14 @@
 #
 # Usage: tasks.sh [--project <dir>] <command> ...
 #   new "<title>" [--owner T] [--writable a,b] [--blocked-by t-x,t-y] [--task <text>|--task-file <f>] [--done-when <text>] [--pack <wave>]   -> id
-#   set <id> key=value ...     keys: title owner agent session transcript blocked-by writable status (not done)
+#   set <id> key=value ...     keys: title owner agent session transcript blocked-by writable status (not done, not needs-user)
 #                              role tool model branch worktree run (headless runs, written by run.sh), pack
 #   append <id> <task|done-when|report|verification|handoff> [--label <text>]
 #                              text on stdin, added as a "### <time> note" block (or "### <time> <label>")
+#   step <id> [--done "<what finished>"] [--next "<next step>"]   resume point: appends a timestamped block to "## Progress"
+#                              (append-only, one line each, max 200 chars); an interruption copies the latest one into "## Handoff"
+#   ask <id> [--by manager|autopilot|user|agent] <text|->   park the task as needs-user with a question (key question, "## Question")
+#   answer <id> <text|-> [--status s]   record the answer, status back to what it was before the ask (in-progress by default)
 #   link <id> <agentId> [--session <sid>] [--transcript <abs>]   bind an agent to a task; archives that agent's auto task
 #   verify <id>[,<id>...] --verdict Approved|Needs-fixes|Escalate --by <agentId> [--fingerprint <fp>]   (or --covers <ids>)
 #                              one Verification block per task, covers = all ids of the call
@@ -17,10 +21,11 @@
 #   done <id>[,<id>...] [--force]   every latest verdict must be Approved (auto tasks need none); moves files to archive/
 #   list [--status s] [--all] [--json|--tsv]   default: one terse line "<id> <status> <owner|-> <title>"; --tsv = id status owner agent updated title
 #   ready [--json|--tsv]       open tasks whose blocked-by ids all exist and are done; warns on stderr after a quota_recent event
-#   show <id> [--section task|done-when|report|verification|handoff]   the file verbatim (live or archive), or one section's body
+#   show <id> [--section task|done-when|report|verification|handoff|progress|question]   the file verbatim (live or archive), or one section's body
 #   dir                        the resolved task dir (not created)
 #   hook <SubagentStart|SubagentStop|StopFailure>   payload on stdin; called by log-event.sh; always exits 0
-#                              auto-bind (worker/researcher without a task), report_too_long (> 9 lines), quota_recent
+#                              auto-bind (worker/researcher without a task), report_too_long (> 9 lines), quota_recent;
+#                              a reply with a Decision other than none, or Stop: waiting..., sets the task to needs-user
 # Every CLI call except hook appends one tasks_cli event (bytes written, exit code); SUBDECK_METER=0 turns that off.
 # Exit codes (CLI): 0 ok, 1 id not found, 2 usage / invalid value, 3 done refused, 4 lock busy.
 # Task dir: env SUBDECK_TASKS_DIR, else config tasks.dir (project config wins over ~/.subdeck/config.json),
@@ -32,7 +37,7 @@ LC_COLLATE=C
 HERE="${BASH_SOURCE[0]%[/\\]*}"; [ "$HERE" = "${BASH_SOURCE[0]}" ] && HERE="."
 . "$HERE/lib-paths.sh" 2>/dev/null || { echo "tasks.sh: lib-paths.sh missing" >&2; exit 2; }
 
-STATUSES="open in-progress blocked interrupted review done"
+STATUSES="open in-progress blocked interrupted review needs-user done"
 ID_RE='^t-[0-9a-f]{4,12}$'
 US=$'\037'
 TAB=$'\t'
@@ -204,7 +209,7 @@ load_task() {
   local line state=0 key val
   T_id=""; T_title=""; T_status=""; T_owner=""; T_agent=""; T_session=""; T_transcript=""
   T_blocked_by=""; T_writable=""; T_created=""; T_updated=""; T_EXTRA=""; T_BODY=""; T_INVALID=0
-  T_role=""; T_tool=""; T_model=""; T_branch=""; T_worktree=""; T_run=""; T_auto=""; T_pack=""; T_grants=""; T_covers=""
+  T_role=""; T_tool=""; T_model=""; T_branch=""; T_worktree=""; T_run=""; T_auto=""; T_pack=""; T_grants=""; T_covers=""; T_question=""
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     if [ "$state" = 0 ]; then
@@ -221,7 +226,7 @@ load_task() {
           covers) parse_list "$val"; T_covers="$LIST_OUT" ;;
           auto) [ "$val" = true ] && T_auto=true ;;
           pack) T_pack="$val" ;;
-          id|title|status|owner|agent|session|transcript|created|updated|role|tool|model|branch|worktree|run) printf -v "T_$key" '%s' "$val" ;;
+          id|title|status|owner|agent|session|transcript|created|updated|role|tool|model|branch|worktree|run|question) printf -v "T_$key" '%s' "$val" ;;
           *) T_EXTRA="$T_EXTRA$key: $val$NL" ;;
         esac
       fi
@@ -257,6 +262,7 @@ write_task() {
     printf 'branch: %s\n' "$T_branch"
     printf 'worktree: %s\n' "$T_worktree"
     printf 'run: %s\n' "$T_run"
+    if [ -n "$T_question" ]; then printf 'question: %s\n' "$T_question"; fi
     if [ "$T_auto" = true ]; then printf 'auto: true\n'; fi
     if [ -n "$T_pack" ]; then printf 'pack: %s\n' "$T_pack"; fi
     if [ -n "$T_grants" ]; then join_list "$T_grants"; printf 'grants: [%s]\n' "$JOINED"; fi
@@ -297,7 +303,7 @@ get_section() {
 section_heading() { # name -> HEADING
   case "$1" in
     task) HEADING="## Task" ;; done-when) HEADING="## Done when" ;; report) HEADING="## Report" ;;
-    verification) HEADING="## Verification" ;; handoff) HEADING="## Handoff" ;; *) return 1 ;;
+    verification) HEADING="## Verification" ;; handoff) HEADING="## Handoff" ;; progress) HEADING="## Progress" ;; question) HEADING="## Question" ;; *) return 1 ;;
   esac
 }
 sanitize_title() { # STR -> TITLE_OUT
@@ -403,7 +409,7 @@ collect() {
       load_task "$f" || continue
       local title="${T_title//$TAB/ }"
       latest_verdict "$T_BODY"
-      rows="$rows$T_updated$US$b$US$T_status$US$T_owner$US$T_agent$US$T_session$US$T_transcript$US$T_blocked_by$US$T_writable$US$T_created$US$arch$US$T_INVALID$US$f$US$T_role$US$T_tool$US$T_model$US$T_branch$US$T_worktree$US$T_run$US$T_auto$US$T_pack$US$T_grants$US$T_covers$US$LV$US$title$NL"
+      rows="$rows$T_updated$US$b$US$T_status$US$T_owner$US$T_agent$US$T_session$US$T_transcript$US$T_blocked_by$US$T_writable$US$T_created$US$arch$US$T_INVALID$US$f$US$T_role$US$T_tool$US$T_model$US$T_branch$US$T_worktree$US$T_run$US$T_auto$US$T_pack$US$T_grants$US$T_covers$US$LV$US$T_question$US$title$NL"
     done
   done
   if [ -n "$rows" ]; then ROWS="$(printf '%s' "$rows" | sort -t "$US" -k1,1r -k2,2)"; else ROWS=""; fi
@@ -416,12 +422,12 @@ json_list() { # comma list -> JL ["a","b"]
 }
 JSON_TAIL=""
 print_rows() { # mode (0 terse, 1 json, 2 tsv), reads ROWS
-  local upd id st ow ag se tr bl wr cr arch inv file rl tl ml br wt rn au pk gr cv vd title first=1 s
+  local upd id st ow ag se tr bl wr cr arch inv file rl tl ml br wt rn au pk gr cv vd qs title first=1 s
   if [ "$1" = 1 ]; then
     jesc "$DIR"; printf '{"version":1,"dir":"%s","tasks":[' "$JESC"
   fi
   [ -n "$ROWS" ] || { [ "$1" = 1 ] && printf ']%s}\n' "$JSON_TAIL"; return 0; }
-  while IFS="$US" read -r upd id st ow ag se tr bl wr cr arch inv file rl tl ml br wt rn au pk gr cv vd title; do
+  while IFS="$US" read -r upd id st ow ag se tr bl wr cr arch inv file rl tl ml br wt rn au pk gr cv vd qs title; do
     if [ "$1" = 1 ]; then
       [ "$first" = 1 ] || printf ','
       first=0
@@ -450,6 +456,7 @@ print_rows() { # mode (0 terse, 1 json, 2 tsv), reads ROWS
       json_list "$gr"; printf '"grants":%s,' "$JL"
       json_list "$cv"; printf '"covers":%s,' "$JL"
       jesc "$vd"; printf '"verdict":"%s",' "$JESC"
+      jesc "$qs"; printf '"question":"%s",' "$JESC"
       jesc "$file"; printf '"file":"%s"}' "$JESC"
     elif [ "$1" = 2 ]; then
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$st" "$ow" "$ag" "$upd" "$title"
@@ -499,7 +506,7 @@ cmd_new() {
   need_lock
   new_id "$title" || { lock_release; die 2 "could not generate a free id"; }
   local cand="$NEWID"
-  T_id="$cand"; T_title="$title"; T_status=open; T_owner="$owner"; T_agent=""; T_session=""; T_transcript=""
+  T_id="$cand"; T_title="$title"; T_status=open; T_owner="$owner"; T_agent=""; T_session=""; T_transcript=""; T_question=""
   T_blocked_by="$blocked"; T_writable="$writable"; T_pack="$pack"; now_iso_to T_created; T_updated="$T_created"; T_EXTRA=""
   T_BODY="## Task$NL"
   if [ "$have_task" = 1 ]; then T_BODY="$T_BODY$(printf '%s' "$task" | clean_text)$NL"; fi
@@ -533,6 +540,7 @@ cmd_set() {
       status)
         trim "$v"; v="$TRIMMED"
         [ "$v" = done ] && die 2 "status done is set with 'tasks.sh done'"
+        [ "$v" = needs-user ] && die 2 "status needs-user is set with 'tasks.sh ask'"
         status_ok "$v" || die 2 "invalid status '$v' (open in-progress blocked interrupted review)"
         S_status="$v" ;;
       *) die 2 "cannot set '$k' (keys: title owner agent session transcript blocked-by writable status role tool model branch worktree run pack)" ;;
@@ -545,6 +553,9 @@ cmd_set() {
   find_file "$id" || { lock_release; die 1 "task not found: $id"; }
   load_task "$FOUND" || { lock_release; die 2 "task file unreadable: $FOUND"; }
   local old="$T_status"
+  if [ "$old" = needs-user ]; then
+    case "$HAS" in *" status "*) lock_release; die 3 "task $id is waiting for an answer: use 'tasks.sh answer $id <text>'" ;; esac
+  fi
   case "$HAS" in *" title "*) T_title="$S_title" ;; esac
   case "$HAS" in *" owner "*) T_owner="$S_owner" ;; esac
   case "$HAS" in *" agent "*) T_agent="$S_agent" ;; esac
@@ -577,6 +588,7 @@ cmd_append() {
     [[ $label =~ $lre ]] || die 2 "invalid label (one line: letters, digits, space . _ : / @ + ( ) -)"
   fi
   section_heading "$sec" || die 2 "unknown section '$sec' (task done-when report verification handoff)"
+  case "$sec" in progress) die 2 "the Progress section is written with 'tasks.sh step'" ;; question) die 2 "the Question section is written with 'tasks.sh ask' and 'tasks.sh answer'" ;; esac
   find_file "$id" || die 1 "task not found: $id"
   text="$(clean_text)"
   need_lock
@@ -604,6 +616,9 @@ cmd_done() {
     find_file "$id" || { lock_release; die 1 "task not found: $id"; }
     [ "$FOUND_ARCH" = 1 ] && continue
     load_task "$FOUND" || { lock_release; die 2 "task file unreadable: $FOUND"; }
+    if [ "$T_status" = needs-user ]; then
+      lock_release; die 3 "refused: $id is waiting for an answer (use 'tasks.sh answer $id <text>')"
+    fi
     if [ "$force" = 0 ] && [ "$T_auto" != true ]; then
       latest_verdict "$T_BODY"
       if [ "$LV" != Approved ]; then
@@ -681,12 +696,164 @@ cmd_show() {
     esac
     ARGV=("${ARGV[@]:1}")
   done
-  [ -n "$id" ] || die 2 "usage: show <id> [--section task|done-when|report|verification|handoff]"
+  [ -n "$id" ] || die 2 "usage: show <id> [--section task|done-when|report|verification|handoff|progress|question]"
   if [ -n "$sec" ]; then section_heading "$sec" || die 2 "unknown section '$sec' (task done-when report verification handoff)"; fi
   find_file "$id" || die 1 "task not found: $id"
   if [ -z "$sec" ]; then cat "$FOUND"; return 0; fi
   load_task "$FOUND" || die 2 "task file unreadable: $FOUND"
   get_section "$T_BODY" "$HEADING" | awk '{ l[NR] = $0 } END { a = 1; while (a <= NR && l[a] == "") a++; b = NR; while (b >= a && l[b] == "") b--; for (i = a; i <= b; i++) print l[i] }'
+}
+
+# ---------- progress, ask, answer ----------
+# last_step BODY -> LS_AT LS_DONE LS_NEXT (latest "### <time> step" block of ## Progress; empty when none)
+last_step() {
+  LS_AT=""; LS_DONE=""; LS_NEXT=""
+  local line sec in=0 re_h='^###[[:space:]]+([^[:space:]]+)[[:space:]]+step[[:space:]]*$'
+  sec="$(get_section "$1" "## Progress")"
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ $line =~ $re_h ]]; then LS_AT="${BASH_REMATCH[1]}"; LS_DONE=""; LS_NEXT=""; in=1; continue; fi
+    [ "$in" = 1 ] || continue
+    case "$line" in
+      "done: "*) LS_DONE="${line#done: }" ;;
+      "next: "*) LS_NEXT="${line#next: }" ;;
+    esac
+  done <<< "$sec"
+}
+# last_asked_from BODY -> ASKED_FROM (status before the latest ask, from the "### <time> asked (<by>, from <status>)" block)
+last_asked_from() {
+  ASKED_FROM=""
+  local line re='^###[[:space:]]+[^[:space:]]+[[:space:]]+asked[[:space:]]+\([^,)]*,[[:space:]]*from[[:space:]]+([a-z-]+)\)'
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ $line =~ $re ]]; then ASKED_FROM="${BASH_REMATCH[1]}"; fi
+  done <<< "$(get_section "$1" "## Question")"
+}
+cmd_step() {
+  local id="" dn="" nx="" have_d=0 have_n=0 a n=0
+  while [ ${#ARGV[@]} -gt 0 ]; do
+    a="${ARGV[0]}"
+    case "$a" in
+      --done|--next)
+        [ ${#ARGV[@]} -ge 2 ] || die 2 "$a needs a value"
+        if [ "$a" = --done ]; then dn="${ARGV[1]}"; have_d=1; else nx="${ARGV[1]}"; have_n=1; fi
+        ARGV=("${ARGV[@]:1}") ;;
+      -*) die 2 "unknown option $a" ;;
+      *) n=$((n + 1)); [ "$n" = 1 ] || die 2 "unexpected argument '$a'"; id="$a" ;;
+    esac
+    ARGV=("${ARGV[@]:1}")
+  done
+  [ -n "$id" ] && { [ "$have_d" = 1 ] || [ "$have_n" = 1 ]; } || die 2 'usage: step <id> --done "<what finished>" --next "<next step>"'
+  has_nl "$dn" && die 2 "--done must be one line"
+  has_nl "$nx" && die 2 "--next must be one line"
+  trim "$dn"; dn="$TRIMMED"; trim "$nx"; nx="$TRIMMED"
+  [ -n "$dn$nx" ] || die 2 "--done or --next needs text"
+  [ "${#dn}" -le 200 ] && [ "${#nx}" -le 200 ] || die 2 "--done and --next are limited to 200 characters"
+  if [[ $dn$nx =~ [[:cntrl:]] ]]; then die 2 "--done and --next may not contain control characters"; fi
+  find_file "$id" || die 1 "task not found: $id"
+  [ "$FOUND_ARCH" = 0 ] || die 2 "task $id is archived"
+  need_lock
+  find_file "$id" || { lock_release; die 1 "task not found: $id"; }
+  [ "$FOUND_ARCH" = 0 ] || { lock_release; die 2 "task $id is archived"; }
+  load_task "$FOUND" || { lock_release; die 2 "task file unreadable: $FOUND"; }
+  T_id="$id"
+  local blk="### $(now_iso) step"
+  [ -n "$dn" ] && blk="$blk${NL}done: $dn"
+  [ -n "$nx" ] && blk="$blk${NL}next: $nx"
+  append_block "## Progress" "$blk"
+  write_task "$FOUND" || { lock_release; die 2 "could not write $FOUND"; }
+  lock_release
+  return 0
+}
+# ask_apply BY QUESTION-FULL-TEXT : T_* loaded and locked; sets needs-user, appends the asked block, queues events.
+# Sets ASK_NOOP=1 when the task already waits on the same question.
+ask_apply() {
+  local by="$1" full="$2" first from="$T_status"
+  ASK_NOOP=0
+  first="${full%%$'\n'*}"; trim "$first"; first="${TRIMMED:0:300}"
+  trim "$first"; first="$TRIMMED"
+  if [ "$from" = needs-user ]; then
+    if [ "$T_question" = "$first" ]; then ASK_NOOP=1; return 0; fi
+    last_asked_from "$T_BODY"; from="${ASKED_FROM:-in-progress}"
+  fi
+  T_question="$first"; T_status=needs-user
+  append_block "## Question" "### $(now_iso) asked ($by, from $from)${NL}${full:0:4000}"
+  jesc "$first"
+  queue_status "$T_id" "$from" needs-user
+  queue_event needs_user "$(printf '{"agent_id":"%s","session_id":"%s","task":"%s","question":"%s","by":"%s","from":"%s"}' "$(safe_tok "${T_agent:-$AGENT_ID}")" "$(safe_tok "${T_session:-$SESSION_ID}")" "$T_id" "$JESC" "$by" "$from")"
+  NOTIFY_Q="${NOTIFY_Q}needs_user$NL"
+}
+cmd_ask() {
+  local id="" by=manager text="" have=0 a n=0
+  while [ ${#ARGV[@]} -gt 0 ]; do
+    a="${ARGV[0]}"
+    case "$a" in
+      --by) [ ${#ARGV[@]} -ge 2 ] || die 2 "--by needs a value"; by="${ARGV[1]}"; ARGV=("${ARGV[@]:1}") ;;
+      -)
+        n=$((n + 1)); if [ "$n" = 1 ]; then die 2 "usage: ask <id> [--by manager|autopilot|user|agent] <text|->"; fi
+        text="$(clean_text)"; have=1 ;;
+      -*) die 2 "unknown option $a" ;;
+      *) n=$((n + 1)); if [ "$n" = 1 ]; then id="$a"; elif [ "$n" = 2 ]; then text="$a"; have=1; else die 2 "unexpected argument '$a'"; fi ;;
+    esac
+    ARGV=("${ARGV[@]:1}")
+  done
+  case "$by" in manager|autopilot|user|agent) ;; *) die 2 "--by must be manager, autopilot, user or agent" ;; esac
+  [ -n "$id" ] && [ "$have" = 1 ] || die 2 "usage: ask <id> [--by manager|autopilot|user|agent] <text|->"
+  text="$(printf '%s' "$text" | clean_text)"
+  trim "$text"; [ -n "$TRIMMED" ] || die 2 "the question may not be empty"
+  find_file "$id" || die 1 "task not found: $id"
+  [ "$FOUND_ARCH" = 0 ] || die 3 "task $id is done"
+  need_lock
+  find_file "$id" || { lock_release; die 1 "task not found: $id"; }
+  [ "$FOUND_ARCH" = 0 ] || { lock_release; die 3 "task $id is done"; }
+  load_task "$FOUND" || { lock_release; die 2 "task file unreadable: $FOUND"; }
+  T_id="$id"
+  AGENT_ID=""; SESSION_ID=""; AGENT_TYPE="${AGENT_TYPE:-}"
+  ask_apply "$by" "$text"
+  if [ "$ASK_NOOP" = 1 ]; then lock_release; return 0; fi
+  write_task "$FOUND" || { lock_release; die 2 "could not write $FOUND"; }
+  lock_release
+  flush_queue
+  return 0
+}
+cmd_answer() {
+  local id="" text="" st="" have=0 a n=0
+  while [ ${#ARGV[@]} -gt 0 ]; do
+    a="${ARGV[0]}"
+    case "$a" in
+      --status) [ ${#ARGV[@]} -ge 2 ] || die 2 "--status needs a value"; st="${ARGV[1]}"; ARGV=("${ARGV[@]:1}") ;;
+      -)
+        n=$((n + 1)); if [ "$n" = 1 ]; then die 2 "usage: answer <id> <text|-> [--status s]"; fi
+        text="$(clean_text)"; have=1 ;;
+      -*) die 2 "unknown option $a" ;;
+      *) n=$((n + 1)); if [ "$n" = 1 ]; then id="$a"; elif [ "$n" = 2 ]; then text="$a"; have=1; else die 2 "unexpected argument '$a'"; fi ;;
+    esac
+    ARGV=("${ARGV[@]:1}")
+  done
+  [ -n "$id" ] && [ "$have" = 1 ] || die 2 "usage: answer <id> <text|-> [--status s]"
+  [ "${SUBDECK_AUTOPILOT:-}" = 1 ] && die 3 "answer is for the user: an autopilot run may not answer a question"
+  text="$(printf '%s' "$text" | clean_text)"
+  trim "$text"; [ -n "$TRIMMED" ] || die 2 "the answer may not be empty"
+  if [ -n "$st" ]; then
+    status_ok "$st" && [ "$st" != done ] && [ "$st" != needs-user ] || die 2 "invalid --status '$st' (open in-progress blocked interrupted review)"
+  fi
+  find_file "$id" || die 1 "task not found: $id"
+  [ "$FOUND_ARCH" = 0 ] || die 3 "task $id is done"
+  need_lock
+  find_file "$id" || { lock_release; die 1 "task not found: $id"; }
+  load_task "$FOUND" || { lock_release; die 2 "task file unreadable: $FOUND"; }
+  [ "$T_status" = needs-user ] || { lock_release; die 3 "task $id is not waiting for an answer (status $T_status)"; }
+  T_id="$id"
+  last_asked_from "$T_BODY"
+  local to="${st:-${ASKED_FROM:-in-progress}}"
+  case "$to" in needs-user|done) to=in-progress ;; esac
+  append_block "## Question" "### $(now_iso) answer${NL}${text:0:4000}"
+  T_question=""; T_status="$to"
+  local ag="$T_agent" se="$T_session"
+  write_task "$FOUND" || { lock_release; die 2 "could not write $FOUND"; }
+  lock_release
+  emit_status_event "$id" needs-user "$to" cli "$ag" "$se"
+  return 0
 }
 
 # quota_check: ready's quota warning (stderr) and the "quota" member of ready --json
@@ -868,10 +1035,10 @@ cmd_writable() {
   [ -n "$id" ] || [ -n "$aid" ] || die 2 "usage: writable <id> | writable --agent <agentId>"
   local wr="" gr=""
   if [ -n "$aid" ]; then
-    local upd i st ow ag se tr bl w cr arch inv file rl tl ml br wt rn au pk g cv vd title found=0
+    local upd i st ow ag se tr bl w cr arch inv file rl tl ml br wt rn au pk g cv vd qs title found=0
     collect 0
     [ -n "$ROWS" ] || exit 1
-    while IFS="$US" read -r upd i st ow ag se tr bl w cr arch inv file rl tl ml br wt rn au pk g cv vd title; do
+    while IFS="$US" read -r upd i st ow ag se tr bl w cr arch inv file rl tl ml br wt rn au pk g cv vd qs title; do
       if [ "$ag" = "$aid" ]; then wr="$w"; gr="$g"; tid="$i"; found=1; break; fi
     done <<< "$ROWS"
     [ "$found" = 1 ] || exit 1
@@ -1028,13 +1195,15 @@ agent_class() {
 # shape_check CLASS TEXT -> MISSING (space separated names), STOPW (last Stop word, lower case), VERDICT
 shape_check() {
   local class="$1" line have_stop=0 have_tested=0 have_verdict=0
-  local re_stop='^[[:space:]>*_`#-]*Stop[*_`]*:[*_`]*[[:space:]]*([A-Za-z][A-Za-z-]*)'
+  local re_stop='^[[:space:]>*_`#-]*Stop[*_`]*:[*_`]*[[:space:]]*([A-Za-z][A-Za-z-]*)(.*)'
   local re_tested='^[[:space:]>*_`#-]*Tested[*_`]*:[*_`]*[[:space:]]*(ran|not run)([^A-Za-z]|$)'
   local re_verdict='^[[:space:]>*_`#-]*Verdict[*_`]*:[*_`]*[[:space:]]*(Approved|Needs fixes|Escalate)'
-  STOPW=""; VERDICT=""; MISSING=""
+  local re_decision='^[[:space:]>*_`#-]*Decision[*_`]*:[*_`]*[[:space:]]*(.*)$'
+  STOPW=""; STOPREST=""; DECISION=""; VERDICT=""; MISSING=""
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
-    if [[ $line =~ $re_stop ]]; then have_stop=1; STOPW="${BASH_REMATCH[1]}"; fi
+    if [[ $line =~ $re_stop ]]; then have_stop=1; STOPW="${BASH_REMATCH[1]}"; STOPREST="${BASH_REMATCH[2]}"; fi
+    if [[ $line =~ $re_decision ]]; then DECISION="${BASH_REMATCH[1]}"; fi
     if [[ $line =~ $re_tested ]]; then have_tested=1; fi
     if [[ $line =~ $re_verdict ]]; then have_verdict=1; VERDICT="${BASH_REMATCH[1]}"; fi
   done <<< "$2"
@@ -1044,6 +1213,26 @@ shape_check() {
     researcher) [ "$have_stop" = 1 ] || MISSING="Stop" ;;
     *) [ "$have_stop" = 1 ] || MISSING="Stop"; [ "$have_tested" = 1 ] || MISSING="$MISSING${MISSING:+ }Tested" ;;
   esac
+}
+# decision_question -> DECQ (not DQ: that is jesc's quote character): the question a reply hands to the user ("" when it asks nothing). Reads DECISION, STOPW, STOPREST
+# from shape_check: a Decision line other than none, or a Stop word starting with "waiting".
+decision_question() {
+  DECQ=""
+  local d="${DECISION//$'\r'/}" c lc
+  trim "$d"; d="$TRIMMED"
+  c="$d"
+  while :; do case "$c" in *'*'|*'_'|*'`') c="${c%?}" ;; '*'*|'_'*|'`'*) c="${c#?}" ;; *) break ;; esac; done
+  trim "$c"; sd_lower "$TRIMMED"; lc="$SD_LOWER"
+  if [ -n "$lc" ] && ! [[ $lc =~ ^(none|nil|n/a|-)([^a-z0-9]|$) ]]; then DECQ="${d:0:300}"; return 0; fi
+  case "$STOPW" in
+    waiting*)
+      d="${STOPREST//$'\r'/}"
+      d="${d#"${d%%[![:space:]\-:.]*}"}"; trim "$d"; d="$TRIMMED"
+      while :; do case "$d" in *'*'|*'_'|*'`') d="${d%?}" ;; *) break ;; esac; done
+      trim "$d"; d="$TRIMMED"
+      DECQ="${d:0:300}"; [ -n "$DECQ" ] || DECQ="the agent is waiting for a decision (see the Report)" ;;
+  esac
+  return 0
 }
 missing_json() { # "Stop Tested" -> ["Stop","Tested"]
   local m out=""
@@ -1128,6 +1317,8 @@ handoff_block() {
   IFS=, read -ra warr <<< "$T_writable"
   for w in "${warr[@]}"; do [ -n "$w" ] || continue; args[${#args[@]}]="$w"; ws="$ws $w"; done
   HB="### $(now_iso) interrupted ($err)${NL}agent: ${T_agent:-$AGENT_ID} (${AGENT_TYPE:-unknown})${NL}"
+  last_step "$T_BODY"
+  if [ -n "$LS_AT" ]; then HB="${HB}last done: ${LS_DONE:-(none recorded)}${NL}next: ${LS_NEXT:-(none recorded)}${NL}"; fi
   local g="$PROJECT"
   [ -n "${SUBDECK_TASK_GIT:-}" ] && [ -d "$SUBDECK_TASK_GIT" ] && g="$SUBDECK_TASK_GIT"
   if git -C "$g" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -1234,7 +1425,7 @@ auto_create() {
   T_id="$NEWID"; T_title="$title"; T_status=in-progress; T_owner="${AGENT_TYPE#subdeck:}"
   T_agent="$AGENT_ID"; T_session="$SESSION_ID"; T_transcript="$TR_PATH"
   T_blocked_by=""; T_writable=""; T_role=""; T_tool=""; T_model=""; T_branch=""; T_worktree=""; T_run=""
-  T_auto=true; T_pack=""; T_grants=""; T_covers=""; T_EXTRA=""
+  T_auto=true; T_pack=""; T_grants=""; T_covers=""; T_question=""; T_EXTRA=""
   now_iso_to T_created; T_updated="$T_created"
   T_BODY="## Task${NL}${NL}## Done when${NL}${NL}## Report${NL}${NL}## Verification${NL}${NL}## Handoff${NL}"
   T_KEEP_UPDATED=1
@@ -1277,10 +1468,19 @@ h_stop() {
     return 0
   fi
   [ "$T_status" = done ] && return 1
+  [ "$T_status" = needs-user ] && return 1   # waits for tasks.sh answer; hook transitions are ignored until then
   if [ "$T_status" != in-progress ]; then
     # Start was missed (or this agent is a fresh run on the task): apply its effects first. A repeated Stop
-    # of the agent that already finished this task changes nothing.
-    if [ -n "$AGENT_ID" ] && [ "$T_agent" = "$AGENT_ID" ]; then return 1; fi
+    # of the agent that already finished this task changes nothing. The one exception: the agent that was
+    # interrupted (limit, connection) and then resumed, finishing with a well-formed report that is not a quota stop.
+    if [ -n "$AGENT_ID" ] && [ "$T_agent" = "$AGENT_ID" ]; then
+      if [ "$T_status" = interrupted ] && [ -n "$MSG" ]; then
+        shape_check "$CLASS" "$MSG"
+        { [ -z "$MISSING" ] && [ "$STOPW" != quota ]; } || return 1
+      else
+        return 1
+      fi
+    fi
     apply_start
   fi
   if [ -z "$msg" ]; then msg="$(get_section "$T_BODY" "## Report")"; fallback=1; fi
@@ -1294,9 +1494,12 @@ h_stop() {
   fi
   sw="$STOPW"
   [ "$fallback" = 0 ] && append_reply "## Report" "final reply ($AGENT_TYPE $AGENT_ID)" "$MSG"
+  [ "$sw" = quota ] && { interrupt_task quota; return 0; }
+  # a reply that hands a question to the user (Decision other than none, or Stop: waiting...) parks the task as needs-user
+  decision_question
+  if [ -n "$DECQ" ]; then ask_apply agent "$DECQ"; return 0; fi
   case "$sw" in
     done) st=review ;;
-    quota) interrupt_task quota; return 0 ;;
     *) st=blocked ;;
   esac
   T_status="$st"
@@ -1396,7 +1599,7 @@ hook_main() {
 # ---------- dispatch ----------
 run_cli() {
   case "$CMD" in
-    "") die 2 "usage: tasks.sh [--project <dir>] <new|set|append|link|verify|grant|pack|writable|done|list|ready|show|dir|hook> ..." ;;
+    "") die 2 "usage: tasks.sh [--project <dir>] <new|set|append|step|ask|answer|link|verify|grant|pack|writable|done|list|ready|show|dir|hook> ..." ;;
   esac
   resolve_dir
   case "$CMD" in
@@ -1409,6 +1612,9 @@ run_cli() {
     pack) cmd_pack ;;
     writable) cmd_writable ;;
     done) cmd_done ;;
+    step) cmd_step ;;
+    ask) cmd_ask ;;
+    answer) cmd_answer ;;
     list) cmd_list ;;
     ready) cmd_ready ;;
     show) cmd_show ;;

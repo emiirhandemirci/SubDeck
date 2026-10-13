@@ -15,8 +15,8 @@
 # Kinds: waiting (needs your input: permission_prompt, elicitation_dialog, agent_needs_input), done (manager turn
 #   finished), agent (a sub-agent finished; skipped when agent_type or the transcript path is empty), idle (Notification
 #   idle_prompt, an idle reminder, not a question; routed here by hooks.json, label "idle").
-#   tasks.sh also calls `hook waiting` with notification_type report_missing | task_interrupted | quota_recent (reason "agent <type>
-#   stopped without a report" / "agent <type> interrupted"); the kind stays waiting and the collapse rules apply.
+#   tasks.sh also calls `hook waiting` with notification_type report_missing | task_interrupted | quota_recent | needs_user (reason "agent <type>
+#   stopped without a report" / "agent <type> interrupted" / "task needs your decision"); the kind stays waiting and the collapse rules apply.
 # Noise control: per session (payload session_id) at most one toast per 10 s (env SUBDECK_NOTIFY_COLLAPSE=seconds,
 #   0 disables). Priority waiting > done > agent > idle: a toast of equal or lower priority inside the window is
 #   collapsed (not shown) and logged with the method "collapsed"; a higher priority one still shows. State: <state>/notify.last.
@@ -259,6 +259,7 @@ case "$CMD" in
             RS=""
             if [[ "$PAYLOAD" =~ \"reset\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then RS="${BASH_REMATCH[1]//[^A-Za-z0-9 ._:()-]/}"; RS="${RS:0:60}"; fi
             REASON="quota limit hit${RS:+; resets $RS}" ;;
+          needs_user) REASON="task needs your decision" ;;
           report_missing|task_interrupted)
             AT=""
             if [[ "$PAYLOAD" =~ \"agent_type\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then clean "${BASH_REMATCH[1]}"; AT="$CLEAN"; fi
