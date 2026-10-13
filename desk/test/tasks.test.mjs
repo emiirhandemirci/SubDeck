@@ -31,7 +31,7 @@ test('frontmatter: grammar, CRLF, duplicates, odd lines', () => {
 
 test('handoff: latest block header and files', () => {
   const h = '### 2026-10-07T09:00:00Z interrupted (quota)\nfiles: 1\n\n### 2026-10-07T10:02:11Z interrupted (rate_limit)\nagent: a\nfiles: 2\nuncommitted:\n    M x\n';
-  assert.deepEqual(parseHandoff(h), { at: '2026-10-07T10:02:11Z', errorType: 'rate_limit', files: 2 });
+  assert.deepEqual(parseHandoff(h), { at: '2026-10-07T10:02:11Z', errorType: 'rate_limit', files: 2, lastDone: null, next: null, fileList: ['M x'] });
   assert.equal(parseHandoff(''), null);
   assert.equal(parseHandoff('### 2026 note\nfiles: 3'), null);
 });
@@ -52,7 +52,7 @@ test('shared fixtures: every valid file matches expected.tsv, bad ids are ignore
     assert.equal(String(x.task.invalid), invalid, id);
   }
   const d = r.tasks.find(y => y.task.id === 't-0d04');
-  assert.deepEqual(d.handoff, { at: '2026-10-07T10:02:11Z', errorType: 'rate_limit', files: 2 });
+  assert.deepEqual(d.handoff, { at: '2026-10-07T10:02:11Z', errorType: 'rate_limit', files: 2, lastDone: null, next: null, fileList: [' M src/upload.js', '?? test/upload.test.js'] });
   assert.equal(r.tasks.find(y => y.task.id === 't-0a01').handoff, null);
 });
 
@@ -147,7 +147,7 @@ test('GET /api/tasks and /api/tasks/<project>/<id>', async () => {
   const t = d.projects[0].tasks[0];
   assert.equal(t.id, 't-0d04'); assert.equal(t.source, 'subdeck'); assert.equal(t.agentSessionId, 'claude.a1');
   assert.deepEqual(t.blockedBy, ['t-07be']);
-  assert.deepEqual(t.handoff, { at: '2026-10-07T10:02:11Z', errorType: 'rate_limit', files: 2 });
+  assert.deepEqual(t.handoff, { at: '2026-10-07T10:02:11Z', errorType: 'rate_limit', files: 2, lastDone: null, next: null, fileList: [] });
   assert.equal(t.file, path.join(dir, 't-0d04.md'));
   assert.equal(bodyOf(await call(api, '/api/tasks?project=p_1')).projects.length, 1);
   assert.equal((await call(api, '/api/tasks?project=p_9')).status, 404);
@@ -179,18 +179,18 @@ test('SSE tasks event', async () => {
   api.closeAll();
 });
 
-test('/api/waiting lists no-report and interrupted sessions, state unchanged', async () => {
+test('/api/waiting lists waiting sessions only: stopped-without-report and interrupted agents are not "waiting"', async () => {
   const sessions = [
     sess('s.mis', { parentId: 'top', depth: 1, reportMissing: { at: '2026-10-07T10:00:00.000Z', task: 't-0a01' } }),
     sess('s.int', { parentId: 'top', depth: 1, interrupted: { at: '2026-10-07T09:30:00.000Z', task: 't-0b02', errorType: 'rate_limit', files: 2 } }),
     sess('s.wait', { state: 'waiting', waitingKind: 'question', waitingSince: '2026-10-07T09:00:00.000Z' }),
+    sess('s.old', { state: 'finished' }),
+    sess('s.stale', { state: 'stale' }),
     sess('s.plain'),
   ];
   const { api } = mkApi(tmp('tk-w-'), { sessions });
   const items = bodyOf(await call(api, '/api/waiting')).items;
-  assert.deepEqual(items.map(i => [i.id, i.waitingKind]), [['s.wait', 'question'], ['s.int', 'interrupted'], ['s.mis', 'no-report']]);
-  assert.equal(items[2].since, '2026-10-07T10:00:00.000Z');
-  assert.equal(items[2].taskId, 't-0a01');
+  assert.deepEqual(items.map(i => [i.id, i.waitingKind]), [['s.wait', 'question']]);
   assert.equal(sessions[0].state, 'finished');
 });
 
@@ -259,10 +259,10 @@ test('beads: only with .beads dir, mapped read-only, failure is silent', async (
 
 // ---- UI helpers and rules ----
 test('UI: columns, handoff summary', () => {
-  assert.deepEqual(COLUMNS.map(c => c[1]), ['Open', 'In progress', 'Blocked', 'Interrupted', 'Review', 'Done']);
+  assert.deepEqual(COLUMNS.map(c => c[1]), ['Open', 'In progress', 'Blocked', 'Needs you', 'Interrupted', 'Review', 'Done']);
   const g = groupTasks([{ id: 'a', status: 'weird', updated: '1' }, { id: 'b', status: 'open', updated: '2' }, { id: 'c', status: 'done', updated: '1' }]);
   assert.deepEqual(g[0].tasks.map(t => t.id), ['b', 'a']);
-  assert.equal(g[5].tasks.length, 1);
+  assert.equal(g[6].tasks.length, 1);
   assert.equal(handoffSummary({ status: 'interrupted', handoff: { files: 2 } }), 'interrupted: 2 uncommitted files');
   assert.equal(handoffSummary({ status: 'interrupted', handoff: { files: 1 } }), 'interrupted: 1 uncommitted file');
   assert.equal(handoffSummary({ status: 'open', handoff: { files: 1 } }), null);
@@ -357,7 +357,7 @@ test('tab label shows the total and a separate attention marker', async () => {
   assert.equal(tabLabel([P('open', 'done')]).text, 'Tasks (2)');
   const l = tabLabel([P('open', 'blocked'), P('interrupted', 'done', 'review')]);
   assert.equal(l.text, 'Tasks (5) !2');
-  assert.equal(l.title, '5 tasks, 2 blocked or interrupted');
+  assert.equal(l.title, '5 tasks, 2 blocked, interrupted or waiting for you');
 });
 
 test('beads: real bd 1.3.0 list shapes (array and {issues, meta}) map the same', () => {

@@ -10,7 +10,7 @@ import { stateDirs } from './paths.mjs';
 
 export const TASK_ID_RE = /^t-[0-9a-f]{4,12}$/;
 const FILE_RE = /^(t-[0-9a-f]{4,12})\.md$/;
-export const STATUSES = ['open', 'in-progress', 'blocked', 'interrupted', 'review', 'done'];
+export const STATUSES = ['open', 'in-progress', 'blocked', 'interrupted', 'review', 'needs-user', 'done'];
 const MAX_FILE = 2 * 1024 * 1024;
 const MAX_LIVE = 500;
 const MAX_ARCHIVE = 200;
@@ -65,12 +65,39 @@ export function parseHandoff(handoffText) {
   for (let i = 0; i < lines.length; i++) {
     const m = /^###\s+(\S+)\s+interrupted(?:\s+\(([^)]*)\))?\s*$/.exec(lines[i]);
     if (!m) continue;
-    let files = null;
+    let files = null, lastDone = null, next = null, inList = false;
+    const fileList = [];
     for (let j = i + 1; j < lines.length && !lines[j].startsWith('### '); j++) {
-      const f = /^files:\s*(\d+)\s*$/.exec(lines[j]);
-      if (f) { files = Number(f[1]); break; }
+      const L = lines[j];
+      const f = /^files:\s*(\d+)\s*$/.exec(L);
+      if (f) { files = Number(f[1]); continue; }
+      let x;
+      if ((x = /^last done:\s*(.*)$/.exec(L))) { lastDone = x[1].trim().slice(0, 200) || null; continue; }
+      if ((x = /^next:\s*(.*)$/.exec(L))) { next = x[1].trim().slice(0, 200) || null; continue; }
+      if (/^uncommitted\b/.test(L)) { inList = true; continue; }
+      if (/^diff --stat:/.test(L)) { inList = false; continue; }
+      if (inList && L.startsWith('    ') && L.trim() && fileList.length < 50) fileList.push(L.slice(4).slice(0, 300));
     }
-    last = { at: m[1], errorType: (m[2] || '').replace(/[^a-z_]/g, '') || 'unknown', files };
+    last = { at: m[1], errorType: (m[2] || '').replace(/[^a-z_]/g, '') || 'unknown', files, lastDone, next, fileList };
+  }
+  return last;
+}
+
+/** Latest `### <time> step` block of the Progress section: { at, done, next } or null. */
+export function parseProgress(text) {
+  if (!text) return null;
+  const lines = String(text).split('\n');
+  let last = null;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^###\s+(\S+)\s+step\s*$/.exec(lines[i]);
+    if (!m) continue;
+    const b = { at: m[1], done: null, next: null };
+    for (let j = i + 1; j < lines.length && !lines[j].startsWith('### '); j++) {
+      let x;
+      if ((x = /^done:\s*(.*)$/.exec(lines[j]))) b.done = x[1].trim().slice(0, 200) || null;
+      else if ((x = /^next:\s*(.*)$/.exec(lines[j]))) b.next = x[1].trim().slice(0, 200) || null;
+    }
+    last = b;
   }
   return last;
 }
@@ -114,6 +141,7 @@ export function parseTask(text, id, { archived = false, file = null } = {}) {
     role: fm.role || '', tool: fm.tool || '', model: fm.model || '', branch: fm.branch || '', worktree: fm.worktree || '', run: fm.run || '', created: fm.created || '', updated: fm.updated || '',
     auto: fm.auto === 'true', pack: /^[a-z0-9][a-z0-9-]{0,39}$/.test(fm.pack || '') ? fm.pack : '', grants: parseList(fm.grants), covers: parseList(fm.covers),
     verdict: latestVerdict(sections.verification),
+    question: (fm.question || '').slice(0, 300), lastStep: parseProgress(sections.progress),
     archived, invalid, file,
   };
   const vb = parseVerification(sections.verification);

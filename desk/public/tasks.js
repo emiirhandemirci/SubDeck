@@ -4,10 +4,10 @@ import { formatTokens, quotaBanner, waveText } from './format.js';
 // Tasks tab: one card per task file (and Beads item), columns by status. Read-only; data only via textContent.
 
 export const COLUMNS = [
-  ['open', 'Open'], ['in-progress', 'In progress'], ['blocked', 'Blocked'], ['interrupted', 'Interrupted'], ['review', 'Review'], ['done', 'Done'],
+  ['open', 'Open'], ['in-progress', 'In progress'], ['blocked', 'Blocked'], ['needs-user', 'Needs you'], ['interrupted', 'Interrupted'], ['review', 'Review'], ['done', 'Done'],
 ];
 
-/** Groups tasks into the six columns (unknown status -> open), newest update first. */
+/** Groups tasks into the columns (unknown status -> open), newest update first. */
 export function groupTasks(tasks) {
   const cols = new Map(COLUMNS.map(([id]) => [id, []]));
   for (const t of tasks) cols.get(cols.has(t.status) ? t.status : 'open').push(t);
@@ -23,12 +23,23 @@ export function handoffSummary(t) {
   return `interrupted: ${n} uncommitted file${n === 1 ? '' : 's'}`;
 }
 
+/** "Last done: ..." / "Next: ..." lines of an interrupted task: the Handoff note first, else the latest step. */
+export function resumeLines(t) {
+  if (!t) return [];
+  const h = t.handoff || {}, p = t.lastStep || {};
+  const done = h.lastDone || p.done, next = h.next || p.next;
+  const out = [];
+  if (done) out.push(`Last done: ${done}`);
+  if (next) out.push(`Next: ${next}`);
+  return out;
+}
+
 /** Tab label: the total task count, plus "!N" when N tasks are blocked or interrupted. */
 export function tabLabel(projects) {
   let total = 0, attn = 0;
-  for (const p of projects || []) for (const t of p.tasks || []) { total++; if (t.status === 'interrupted' || t.status === 'blocked') attn++; }
+  for (const p of projects || []) for (const t of p.tasks || []) { total++; if (t.status === 'interrupted' || t.status === 'blocked' || t.status === 'needs-user') attn++; }
   if (!total) return { text: 'Tasks', title: '' };
-  const title = `${total} task${total === 1 ? '' : 's'}${attn ? `, ${attn} blocked or interrupted` : ''}`;
+  const title = `${total} task${total === 1 ? '' : 's'}${attn ? `, ${attn} blocked, interrupted or waiting for you` : ''}`;
   return { text: attn ? `Tasks (${total}) !${attn}` : `Tasks (${total})`, title };
 }
 
@@ -75,8 +86,14 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
       c.append(x);
     }
     if (t.grants.length) c.append(el('div', 'tcard-paths mono muted', `grants: ${t.grants.join(', ')}`));
+    if (t.status === 'needs-user' && t.question) { const q = el('div', 'tcard-question', t.question); q.title = 'Open the question with: tasks.sh answer ' + t.id + ' "<answer>"'; c.append(q); }
     const hs = handoffSummary(t);
     if (hs) c.append(el('div', 'tcard-handoff', hs));
+    if (t.status === 'interrupted' || t.status === 'needs-user') for (const l of resumeLines(t)) c.append(el('div', 'tcard-resume muted', l));
+    if (t.status === 'interrupted' && t.handoff && t.handoff.fileList && t.handoff.fileList.length) {
+      const fl = el('div', 'tcard-paths mono muted', t.handoff.fileList.slice(0, 8).join('\n') + (t.handoff.fileList.length > 8 ? `\n+${t.handoff.fileList.length - 8} more` : ''));
+      fl.style.whiteSpace = 'pre-wrap'; fl.title = 'Uncommitted files at the interruption (git status --porcelain)'; c.append(fl);
+    }
     if (t.writable.length) c.append(el('div', 'tcard-paths mono muted', t.writable.join(', ')));
     if (t.lastRun) {
       const lr = t.lastRun, rk = `${key}/${lr.ts}`;

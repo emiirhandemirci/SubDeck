@@ -97,17 +97,33 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     return { generatedAt: iso(), project, sessions };
   }
 
-  // Everything blocked on the user, across projects and tools. Titles and metadata only, never prompt content.
-  function waitingList(snap) {
-    // sessions blocked on the user, plus agents that stopped without a report or were interrupted (their state is unchanged)
-    const kindOf = s => (s.state === 'waiting' ? (s.waitingKind ?? null) : s.reportMissing ? 'no-report' : 'interrupted');
-    const sinceOf = s => (s.state === 'waiting' ? (s.waitingSince ?? s.updatedAt ?? null) : (s.reportMissing || s.interrupted).at);
-    const items = snap.sessions.filter(s => s.state === 'waiting' || s.reportMissing || s.interrupted).map(s => {
+  // Tasks parked as needs-user (tasks.sh ask / a worker's Decision): the question, the task and the agent.
+  async function needsUserTasks(snap, only = null) {
+    const out = [];
+    for (const p of snap.projects) {
+      if (!p.path || (only && p.id !== only)) continue;
+      let r;
+      try { r = await reader.read(p.path); } catch { continue; }
+      for (const t of r.tasks) {
+        if (t.task.status !== 'needs-user' || t.task.archived) continue;
+        out.push({ id: 'task:' + p.id + '/' + t.task.id, kind: 'task', taskId: t.task.id, projectId: p.id, projectName: p.name, projectPath: p.path,
+          tool: null, title: t.task.title, question: t.task.question || '', agent: t.task.agent || null, agentType: t.task.owner || null, isAgent: !!t.task.agent,
+          stateSource: 'task', waitingKind: 'needs-user', since: t.task.updated || null });
+      }
+    }
+    return out;
+  }
+
+  // Everything blocked on the user, across projects and tools: needs-user tasks (with the question) and live sessions
+  // waiting on a prompt now. Finished or stale sessions, stopped-without-report and interrupted agents are not listed
+  // (the Tasks tab shows those); the header count is exactly the length of this list. Titles and metadata only, never prompt content.
+  async function waitingList(snap) {
+    const sess = snap.sessions.filter(s => s.state === 'waiting').map(s => {
       const p = snap.projects.find(x => x.id === s.projectId);
-      return { id: s.id, projectId: s.projectId, projectName: p ? p.name : null, projectPath: p ? p.path : null, tool: s.tool, title: s.title,
-        agentType: s.agentType ?? null, isAgent: !!s.parentId, stateSource: s.stateSource, waitingKind: kindOf(s), since: sinceOf(s),
-        ...(s.state !== 'waiting' ? { taskId: (s.reportMissing && s.reportMissing.task) || (s.interrupted && s.interrupted.task) || null } : {}) };
-    }).sort((a, b) => String(a.since).localeCompare(String(b.since)));
+      return { id: s.id, kind: 'session', projectId: s.projectId, projectName: p ? p.name : null, projectPath: p ? p.path : null, tool: s.tool, title: s.title,
+        agentType: s.agentType ?? null, isAgent: !!s.parentId, stateSource: s.stateSource, waitingKind: s.waitingKind ?? null, since: s.waitingSince ?? s.updatedAt ?? null };
+    });
+    const items = [...sess, ...await needsUserTasks(snap)].sort((a, b) => String(a.since).localeCompare(String(b.since)));
     return { generatedAt: iso(), items };
   }
 
@@ -182,7 +198,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
   let runsNow = new Map();
   function taskOut(t, bySession, pid) {
     const r = runsNow.get(`${pid}/${t.task.id}`);
-    return { auto: false, pack: '', grants: [], covers: [], verdict: '', verifiedBy: null, wave: null, tokens: null, ...t.task, agentSessionId: (t.task.agent && bySession.get(t.task.agent)) || null, handoff: t.handoff || null,
+    return { auto: false, pack: '', grants: [], covers: [], verdict: '', question: '', lastStep: null, verifiedBy: null, wave: null, tokens: null, ...t.task, agentSessionId: (t.task.agent && bySession.get(t.task.agent)) || null, handoff: t.handoff || null,
       lastRun: r ? { ts: r.ts, status: r.status, role: r.role, tool: r.tool, model: r.model } : null };
   }
   // ---- runs (read-only): metas come from the subdeck-run source; logs are read on demand ----
@@ -497,8 +513,11 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       if (m) return await runLog(res, snap, m[1], m[2], m[3], url.searchParams.get('lines'));
       m = /^\/api\/tasks\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/.exec(p);
       if (m) return await taskDetail(res, snap, m[1], m[2]);
-      if (p === '/api/waiting') return json(res, 200, waitingList(snap));
-      if (p === '/api/projects') return json(res, 200, { generatedAt: iso(), projects: snap.projects });
+      if (p === '/api/waiting') return json(res, 200, await waitingList(snap));
+      if (p === '/api/projects') {
+        const nu = await needsUserTasks(snap);
+        return json(res, 200, { generatedAt: iso(), projects: snap.projects.map(x => ({ ...x, needsUserCount: nu.filter(i => i.projectId === x.id).length })) });
+      }
       if (p === '/api/stream') return openStream(res);
       m = /^\/api\/projects\/([A-Za-z0-9._-]+)$/.exec(p);
       if (m) { const t = await projectTree(snap, m[1]); return t ? json(res, 200, t) : json(res, 404, { error: 'not found' }); }

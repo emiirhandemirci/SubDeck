@@ -47,7 +47,7 @@ function rowStatus(s) {   // one primary status badge, at most one actionable se
 // Waiting count: server-side per-project counts when available, else what the selected project's tree shows.
 function updateWaiting() {
   const own = S.sessions.reduce((n, s) => n + (s.state === 'waiting') + s.children.filter(c => c.state === 'waiting').length, 0);
-  const total = S.projects.some(p => typeof p.waitingCount === 'number') ? S.projects.reduce((n, p) => n + (p.waitingCount || 0) + (p.noticeCount || 0), 0) : own;
+  const total = S.projects.some(p => typeof p.waitingCount === 'number') ? S.projects.reduce((n, p) => n + (p.waitingCount || 0) + (p.needsUserCount || 0), 0) : own;
   const b = $('waitingCount');
   b.hidden = total <= 0;
   b.textContent = total > 0 ? `${total} waiting` : '';
@@ -56,7 +56,7 @@ function updateWaiting() {
   b.setAttribute('aria-label', total > 0 ? `${total} waiting for you, open list` : 'Waiting');
 }
 // ---------- waiting list (the header chip opens a compact list of everything blocked on the user) ----------
-const WAIT_KIND = { permission: 'Permission prompt', question: 'Question', plan: 'Plan approval', 'no-report': 'Stopped without report', interrupted: 'Interrupted' };
+const WAIT_KIND = { permission: 'Permission prompt', question: 'Question', plan: 'Plan approval', 'needs-user': 'Needs your answer' };
 function waitKindLabel(it) {
   if (WAIT_KIND[it.waitingKind]) return WAIT_KIND[it.waitingKind];
   if (it.stateSource === 'hook') return 'Permission prompt';
@@ -76,8 +76,10 @@ function renderWaitingPanel() {
     const t0 = it.since ? Date.parse(it.since) : NaN;
     const wait = Number.isFinite(t0) ? formatDuration(Math.max(0, now - t0)) : '';
     const proj = it.projectName || 'unknown project';
-    b.append(toolBadge(it.tool), el('span', 'wp-title', T(it.title)), el('span', 'wp-for', waitKindLabel(it)));
-    const sub = el('span', 'wp-sub', `${proj}${it.isAgent ? ' · agent' + (it.agentType ? ' ' + it.agentType : '') : ''}${wait ? ' · waiting ' + wait : ''}`);
+    const isTask = it.kind === 'task';
+    b.append(isTask ? el('span', 'badge tool', 'task') : toolBadge(it.tool), el('span', 'wp-title', T(isTask && it.question ? it.question : it.title)), el('span', 'wp-for', waitKindLabel(it)));
+    const sub = el('span', 'wp-sub', isTask ? `${proj} · task ${it.taskId} · ${T(it.title)}${it.agent ? ' · agent ' + it.agent.slice(0, 8) : ''}${wait ? ' · asked ' + wait + ' ago' : ''}`
+      : `${proj}${it.isAgent ? ' · agent' + (it.agentType ? ' ' + it.agentType : '') : ''}${wait ? ' · waiting ' + wait : ''}`);
     if (it.projectPath) sub.title = tildify(it.projectPath, S.home);
     b.append(sub);
     b.setAttribute('aria-label', `${T(it.title)}, ${proj}, ${waitKindLabel(it)}${wait ? ', waiting ' + wait : ''}`);
@@ -91,6 +93,7 @@ async function loadWaitingList() {
   if (wp.open) renderWaitingPanel();
 }
 async function openWaitingItem(it) {
+  if (it.kind === 'task') { $('tabTasks').click(); return; }
   await selectProject(it.projectId, false);
   await selectSession(it.id, true);
 }
@@ -809,7 +812,7 @@ async function loadAll() {
 function connect() {
   const es = new EventSource('/api/stream');
   es.addEventListener('hello', () => { S.lastHeartbeat = Date.now(); loadAll().catch(() => {}); if (tasksUi) tasksUi.reload(); });
-  es.addEventListener('tasks', () => { S.lastHeartbeat = Date.now(); if (tasksUi) tasksUi.reload(); });
+  es.addEventListener('tasks', () => { S.lastHeartbeat = Date.now(); loadProjects().catch(() => {}); if (tasksUi) tasksUi.reload(); });
   es.addEventListener('heartbeat', () => { S.lastHeartbeat = Date.now(); });
   es.addEventListener('changed', async e => {
     S.lastHeartbeat = Date.now();
