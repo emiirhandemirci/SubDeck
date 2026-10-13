@@ -948,6 +948,24 @@ function reason(id) {
 }
 function jesc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/\n/, "\\n", s); gsub(/\t/, " ", s); return s }
 
+# One guard_block event line (rule id, decision, tool name; never the command text) appended to the project
+# state dir events.jsonl, so Desk can show when a rule fired. Best effort: any failure is ignored.
+function log_block(id, dec, tool, t,  pf0, dir, f, ts, aid, sid, line, dc) {
+  pf0 = ENVIRON["SD_GUARD_PF"]; if (pf0 == "") return
+  dir = pf0; if (!sub(/[\/\\][^\/\\]*$/, "", dir) || dir ~ /["`$]/) return
+  aid = ""; sid = ""
+  if (match(t, /"agent_id"[ \t\n\r]*:[ \t\n\r]*"[A-Za-z0-9._:\/-]*"/)) { aid = substr(t, RSTART, RLENGTH); sub(/^[^:]*:[ \t\n\r]*"/, "", aid); sub(/"$/, "", aid) }
+  if (match(t, /"session_id"[ \t\n\r]*:[ \t\n\r]*"[A-Za-z0-9._:\/-]*"/)) { sid = substr(t, RSTART, RLENGTH); sub(/^[^:]*:[ \t\n\r]*"/, "", sid); sub(/"$/, "", sid) }
+  dc = "date -u +%Y-%m-%dT%H:%M:%SZ"; ts = ""; dc | getline ts; close(dc)
+  if (ts == "") return
+  gsub(/[^A-Za-z0-9_.-]/, "", tool)
+  line = sprintf("{\"ts\":\"%s\",\"event\":\"guard_block\",\"agent_id\":\"%s\",\"agent_type\":\"\",\"transcript_path\":\"\",\"session_id\":\"%s\",\"payload\":{\"rule\":\"%s\",\"decision\":\"%s\",\"tool\":\"%s\",\"agent_id\":\"%s\",\"session_id\":\"%s\"}}", ts, aid, sid, id, dec, tool, aid, sid)
+  f = dir "/events.jsonl"
+  system("mkdir -p \"" dir "\" 2>/dev/null")
+  print line >> f
+  close(f)
+}
+
 # ---------- modes ----------
 function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
   t = ""
@@ -997,6 +1015,7 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
     return
   }
   if (DENYID != "") { dec = "deny"; id = DENYID } else { dec = "ask"; id = ASKID }
+  log_block(id, dec, tool, t)
   # the other modes /subdeck:settings accepts for this rule (push: ask|branches|off, the rest: deny|ask|off)
   np = split(id == "push" ? "ask branches off" : "deny ask off", pl, " "); pp = ""
   for (pi = 1; pi <= np; pi++) if (pl[pi] != MODE[id]) pp = pp (pp == "" ? "" : "|") pl[pi]

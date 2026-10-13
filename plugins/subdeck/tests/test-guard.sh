@@ -871,6 +871,19 @@ o="$(HOME="$GH" bash "$G" cli show "$GW")"; has "$o" 'commit-pathspec +warn +def
 unset SUBDECK_STATE_DIR SUBDECK_METER
 rm -rf "$GW" "$GS" "$GH"
 
+
+# ---- rule events: a deny/ask appends one guard_block line (rule, decision, tool; no command text) ----
+EV="$(mktemp -d)"; EP="$(mktemp -d)"; ES="$(mktemp -d)"
+ejson() { printf '{"session_id":"sess1","cwd":"%s","agent_id":"agt1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"}}' "$EP" "$(esc "$1")"; }
+ejson 'git push --force origin SECRETTOKEN123' | SUBDECK_STATE_DIR="$ES" HOME="$EV" CLAUDE_PROJECT_DIR="$EP" bash "$G" >/dev/null
+EF="$(ls "$ES"/*/events.jsonl 2>/dev/null | head -n 1)"
+if [ -n "$EF" ]; then
+  has "$(cat "$EF")" '"event":"guard_block","agent_id":"agt1".*"session_id":"sess1","payload":\{"rule":"force-push","decision":"deny","tool":"Bash","agent_id":"agt1","session_id":"sess1"\}' "guard_block event: rule, decision, agent"
+  case "$(cat "$EF")" in *SECRETTOKEN123*) bad "guard_block event leaked the command text" ;; *) ok "guard_block event carries no command text" ;; esac
+else bad "no events.jsonl written for a denied command"; fi
+ejson 'git status' | SUBDECK_STATE_DIR="$ES" HOME="$EV" CLAUDE_PROJECT_DIR="$EP" bash "$G" >/dev/null
+[ "$(wc -l < "$EF" | tr -d ' ')" = 1 ] && ok "allowed command logs nothing" || bad "allowed command wrote an event"
+rm -rf "$EV" "$EP" "$ES"
 rm -rf "$H" "$P"
 echo "$PASS passed, $FAIL failed"
 [ $FAIL -eq 0 ]
