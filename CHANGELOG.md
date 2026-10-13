@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Resume point:** `tasks.sh step <id> --done "<what finished>" --next "<next step>"` records progress in an append-only `## Progress` section. An interruption copies the latest step ("last done" / "next") into `## Handoff` next to the uncommitted files, and Desk task cards show Last done, Next and the file list. An interrupted agent that is resumed and finishes with a report now leaves `interrupted` (it used to stay there). Worker agents call `step` after each commit; the rulebook tells the manager to resume the same agent from Next without redoing finished work.
+- **Questions for you (`needs-user`):** a worker reply with a `Decision:` other than `none` (or `Stop: waiting ...`) parks its task as `needs-user` with the question; `tasks.sh ask <id> "<question>"` does the same by hand and `tasks.sh answer <id> "<answer>"` records the reply and returns the task to its earlier status. A needs-user task is not ready, and `set status` / `done` are refused until it is answered. You get a "task needs your decision" notification and Desk shows a "Needs you" column.
+- **Desk waiting count:** the header "N waiting" now counts only needs-user tasks and sessions that are really waiting on a prompt now. Finished sessions that once stopped without a report or were interrupted no longer inflate it (it could show over a hundred). The list shows the question, task, agent and age.
+
 ## 0.8.2 - 2026-10-12
 
 - **Agent reports:** agents that finish with the built-in handback call are no longer shown as "stopped without report". The report check also tolerates markdown formatting (bold, backticks, list marks) and CRLF line endings around `Stop:`, `Tested:` and `Verdict:`.
