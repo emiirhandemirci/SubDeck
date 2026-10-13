@@ -3,7 +3,7 @@
 import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText, cumulativeTokensText, cumulativeTokensTitle, agentTokensText, quotaBanner, laterSuccess, cliText, rowBadges, statusLegend } from './format.js';
 import { initSettings } from './settings.js';
 import { writeJSON } from './token.js';
-import { initTasks } from './tasks.js';
+import { initTasks, resumeLines, handoffSummary } from './tasks.js';
 import { runBadgeText, RUN_STATUS_LABEL, mountRunLog } from './runs.js';
 
 const $ = id => document.getElementById(id);
@@ -714,6 +714,15 @@ function renderDetailInner(box) {
     if (s.run.branch) row('Branch', s.run.branch);
     if (s.run.worktree) row('Worktree', tildify(s.run.worktree, S.home));
     if (s.run.violations.length) row('Violations', T(s.run.violations.join(', ')));
+  }
+  if (s.resume) {
+    // same data as the task card: Last done / Next, and the uncommitted files of an interruption
+    const rt = { status: s.resume.status, handoff: s.resume.handoff, lastStep: s.resume.lastStep };
+    const lines = resumeLines(rt);
+    for (const l of lines) { const i = l.indexOf(': '); row(l.slice(0, i), T(l.slice(i + 2))); }
+    const hs = handoffSummary(rt); if (hs) row('Handoff', hs);
+    const fl = s.resume.handoff && s.resume.handoff.fileList;
+    if (fl && fl.length) row('Handoff files', T(fl.slice(0, 8).join(', ') + (fl.length > 8 ? ` +${fl.length - 8} more` : '')));
   }
   row('Started', when(s.createdAt));
   if (s.runStartedAt) row('Latest run started', when(s.runStartedAt));

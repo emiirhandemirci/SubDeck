@@ -34,6 +34,13 @@ export function resumeLines(t) {
   return out;
 }
 
+/** Rule events of the last 24 h, newest first, as rows { time, agent, rule, text, agentSessionId }; empty list = nothing to show. */
+export function ruleEventRows(p, nowMs = Date.now()) {
+  return (p && p.ruleEvents || []).filter(e => e && Number.isFinite(Date.parse(e.at)) && nowMs - Date.parse(e.at) <= 86400000)
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+    .map(e => ({ at: e.at, agent: e.agent || '', rule: e.rule, text: e.text, agentSessionId: e.agentSessionId || null }));
+}
+
 /** Tab label: the total task count, plus "!N" when N tasks are blocked or interrupted. */
 export function tabLabel(projects) {
   let total = 0, attn = 0;
@@ -44,9 +51,29 @@ export function tabLabel(projects) {
 }
 
 export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessions, closeOthers }) {
-  const st = { open: false, data: null, error: null, project: '', expanded: new Set(), bodies: new Map(), gen: 0, runLogs: new Set(), mounts: [], pending: [] };
+  const st = { open: false, data: null, error: null, project: '', expanded: new Set(), bodies: new Map(), gen: 0, runLogs: new Set(), eventsOpen: new Set(), mounts: [], pending: [] };
 
-  function projectsWithTasks() { return (st.data ? st.data.projects : []).filter(p => p.tasks.length); }
+  function projectsWithTasks() { return (st.data ? st.data.projects : []).filter(p => p.tasks.length || (p.ruleEvents || []).length); }
+
+  // Compact "Rule events" list: when a rule fired and what to do. Collapsed by default; clicking a row selects the agent.
+  function ruleEvents(p) {
+    const rows = ruleEventRows(p);
+    if (!rows.length) return null;
+    const d = el('details', 'sect revents');
+    if (st.eventsOpen.has(p.projectId)) d.open = true;
+    d.addEventListener('toggle', () => { if (d.open) st.eventsOpen.add(p.projectId); else st.eventsOpen.delete(p.projectId); });
+    d.append(el('summary', null, `Rule events (${rows.length})`));
+    const box = el('div');
+    for (const r of rows.slice(0, 50)) {
+      const row = r.agentSessionId ? el('button', 'revent linklike') : el('div', 'revent');
+      if (r.agentSessionId) { row.type = 'button'; row.title = 'Select this agent in Sessions'; row.addEventListener('click', () => { showSessions(); openSession(p.projectId, r.agentSessionId); }); }
+      const tm = el('span', 'muted', relativeTime(r.at, Date.now())); tm.title = r.at;
+      row.append(tm, el('span', 'mono', r.agent || '-'), el('span', 'mono', r.rule), el('span', null, r.text));
+      box.append(row);
+    }
+    d.append(box);
+    return d;
+  }
 
   function card(p, t) {
     const key = `${p.projectId}/${t.id}`;
@@ -160,6 +187,10 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
     const flat = [];
     for (const p of shown) for (const t of p.tasks) flat.push({ p, t });
     for (const p of shown) {
+      const re = ruleEvents(p);
+      if (re) box.append(re);
+    }
+    for (const p of shown) {
       const ws = p.waves || [];
       const qb = quotaBanner(p.quota, {});
       if (!qb && !ws.length) continue;
@@ -168,6 +199,7 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
       for (const w of ws) { const r = el('div', 'tsummary-wave', waveText(w)); r.title = `${w.agents} agent${w.agents === 1 ? '' : 's'}: ${w.tasks.join(', ')}`; sum.append(r); }
       box.append(sum);
     }
+    if (!flat.length) { box.append(el('p', 'empty', 'No tasks yet')); box.scrollTop = top; return; }
     const cols = el('div', 'tcols');
     for (const g of groupTasks(flat.map(x => x.t))) {
       const col = el('section', `tcol col-${g.id}`);

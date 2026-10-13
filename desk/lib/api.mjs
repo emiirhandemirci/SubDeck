@@ -141,7 +141,13 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       try { sm = await reader.summary(p.path, now()); } catch { /* events are optional */ }
       const tasks = r.tasks.map(t => taskOut(t, bySession, p.id));
       const waves = annotate(tasks, snap.sessions.filter(x => x.projectId === p.id && x.parentId), sm ? sm.verifies : []);
-      out.push({ projectId: p.id, projectName: p.name, dir: r.dir, tasks, waves, quota: sm ? sm.quota : null, cli: sm ? sm.cli : { calls: 0, bytes: 0, since: null } });
+      const byNative = new Map(snap.sessions.filter(x => x.projectId === p.id).map(x => [x.nativeId, x]));
+      // rule events (last 24 h, newest first): the agent is resolved to its session so the UI can select it; titles only, never command text
+      const ruleEvents = (sm ? sm.rules : []).map(e => {
+        const a = byNative.get(e.agentId) || (e.sessionId ? byNative.get(e.sessionId) : null) || null;
+        return { at: e.at, kind: e.kind, rule: e.rule, task: e.task, text: e.text, agent: a ? (a.agentType || a.title || null) : (e.agentId ? e.agentId.slice(0, 8) : null), agentSessionId: a ? a.id : null };
+      });
+      out.push({ projectId: p.id, projectName: p.name, dir: r.dir, tasks, waves, quota: sm ? sm.quota : null, cli: sm ? sm.cli : { calls: 0, bytes: 0, since: null }, ruleEvents });
     }
     return json(res, 200, { generatedAt: iso(), projects: out });
   }
@@ -264,7 +270,15 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     if (s.taskId && (await acceptedIds(snap, s.projectId)).has(s.taskId)) s = { ...s, accepted: true };
     const p = snap.projects.find(x => x.id === s.projectId);
     const parent = s.parentId ? snap.sessions.find(x => x.id === s.parentId) : null;
-    return { generatedAt: iso(), session: { ...s,
+    // Last done / Next and the Handoff files of the task this agent is linked to (the same data the task cards show)
+    let resume = null;
+    if (s.taskId && p && p.path) {
+      try {
+        const t = await reader.get(p.path, s.taskId);
+        if (t && t.task) resume = { taskId: t.task.id, status: t.task.status, handoff: t.handoff || null, lastStep: t.task.lastStep || null };
+      } catch { /* task is optional */ }
+    }
+    return { generatedAt: iso(), session: { ...s, resume,
       project: p ? { id: p.id, name: p.name, path: p.path } : null,
       parent: parent ? { id: parent.id, title: parent.title } : null,
       children: snap.sessions.filter(x => x.parentId === s.id).map(x => ({ id: x.id, title: x.title, state: x.state })) } };

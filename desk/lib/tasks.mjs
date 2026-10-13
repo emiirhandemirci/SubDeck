@@ -232,6 +232,38 @@ export function runBd(projectPath, { timeoutMs = 5000, cmd = process.env.SUBDECK
 async function statOrNull(f) { try { return await fs.stat(f); } catch { return null; } }
 async function lstatOrNull(f) { try { return await fs.lstat(f); } catch { return null; } }
 
+const RULE_WINDOW_MS = 24 * 3600000, RULE_MAX = 100;
+const GUARD_TEXT = {
+  'git-add-all': 'git add -A blocked: stage explicit file paths',
+  'force-push': 'force push blocked: use a normal push',
+  'push': 'push needs your approval',
+  'history-rewrite': 'history rewrite needs your approval',
+  'rm-rf-danger': 'dangerous recursive delete blocked: delete a specific subfolder',
+  'secret-files': 'secret file write needs your approval',
+  'attribution': 'attribution line blocked: remove it from the commit message',
+  'protected-paths': 'protected path edit needs your approval',
+  'protected-resources': 'protected port, host or process needs your approval',
+};
+const tok = (v, n = 64) => (typeof v === 'string' ? v.replace(/[^A-Za-z0-9._:/-]/g, '').slice(0, n) : '');
+/** One compact "rule event" row from a logged event, or null when the kind is not a rule event. No command text, ever. */
+export function ruleRow(e) {
+  const pl = e.pl || {};
+  const task = TASK_ID_RE.test(String(pl.task || '')) ? String(pl.task) : '';
+  let rule, text;
+  if (e.event === 'guard_block') {
+    rule = tok(pl.rule, 40) || 'guard';
+    const base = GUARD_TEXT[rule] || `${rule} rule fired`;
+    text = pl.decision === 'ask' && !/needs your approval/.test(base) ? `${base} (needs your approval)` : base;
+  } else if (e.event === 'report_missing') { rule = 'report'; text = `report missing${task ? ` for ${task}` : ''}: ask the agent to write it or run it again`; }
+  else if (e.event === 'needs_user') { rule = 'needs-user'; text = `${task || 'a task'} waits for your answer`; }
+  else if (e.event === 'task_interrupted') { rule = 'interrupted'; text = `${task || 'a task'} interrupted: resume from its Handoff note`; }
+  else if (e.event === 'task_verify') {
+    const v = tok(pl.verdict, 20); if (!v) return null;
+    rule = 'verdict'; text = `verifier verdict ${v}${task ? ` for ${task}` : ''}`;
+  } else return null;
+  return { at: e.ts, t: e.t, kind: e.event, rule, task: task || null, agentId: tok(pl.agent_id || pl.by), sessionId: tok(pl.session_id), text };
+}
+
 /**
  * Reader with a per-file cache (size + mtime). beads: async (projectPath) -> raw bd JSON or null (default: runs `bd list --json`
  * when <project>/.beads exists); beadsTtlMs caches that answer per project.
@@ -281,7 +313,8 @@ export function createTasksReader({ env = null, now = Date.now, beads = runBd, b
     return items;
   }
 
-  const EV_KINDS = new Set(['task_verify', 'quota_recent', 'tasks_cli']);
+  const EV_KINDS = new Set(['task_verify', 'quota_recent', 'tasks_cli', 'guard_block', 'report_missing', 'needs_user', 'task_interrupted']);
+  const EV_QUICK = /"(task_verify|quota_recent|tasks_cli|guard_block|report_missing|needs_user|task_interrupted)"/;
   /** task_verify / quota_recent / tasks_cli events of the project's state dirs (events.jsonl + events.d), cached by size and mtime. */
   async function projectEvents(projectPath) {
     const out = [];
@@ -297,7 +330,7 @@ export function createTasksReader({ env = null, now = Date.now, beads = runBd, b
           let text = ''; try { text = await fs.readFile(f, 'utf8'); } catch { continue; }
           const items = [];
           for (const line of text.split('\n')) {
-            if (!line.includes('"task_verify"') && !line.includes('"quota_recent"') && !line.includes('"tasks_cli"')) continue;
+            if (!EV_QUICK.test(line)) continue;
             let o; try { o = JSON.parse(line); } catch { continue; }
             if (!o || typeof o !== 'object' || !EV_KINDS.has(o.event) || !o.payload || typeof o.payload !== 'object') continue;
             const t = Date.parse(o.ts);
@@ -310,7 +343,7 @@ export function createTasksReader({ env = null, now = Date.now, beads = runBd, b
     }
     return out;
   }
-  /** { verifies: [{ at, by, task, covers, verdict, fingerprint }], quota: {at,reset,resetAt}|null, cli: {calls,bytes,since} } */
+  /** { verifies: [{ at, by, task, covers, verdict, fingerprint }], quota: {at,reset,resetAt}|null, cli: {calls,bytes,since}, rules: [{ at, kind, rule, task, agentId, sessionId, text }] last 24 h, newest first } */
   async function summary(projectPath, nowMs = now()) {
     const ev = await projectEvents(projectPath);
     const verifies = ev.filter(e => e.event === 'task_verify').map(e => ({ at: e.ts, t: e.t, by: String(e.pl.agent_id || '').slice(0, 64), task: String(e.pl.task || ''),
@@ -329,7 +362,14 @@ export function createTasksReader({ env = null, now = Date.now, beads = runBd, b
       calls++; bytes += Number.isFinite(e.pl.bytes) && e.pl.bytes > 0 ? e.pl.bytes : 0;
       if (!since || e.ts < since) since = e.ts;
     }
-    return { verifies, quota, cli: { calls, bytes, since } };
+    const rules = [];
+    for (const e of ev) {
+      if (nowMs - e.t > RULE_WINDOW_MS || e.t > nowMs + 60000) continue;
+      const r = ruleRow(e);
+      if (r) rules.push(r);
+    }
+    rules.sort((a, b) => b.t - a.t);
+    return { verifies, quota, cli: { calls, bytes, since }, rules: rules.slice(0, RULE_MAX) };
   }
 
   return {

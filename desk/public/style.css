@@ -454,3 +454,7 @@ button.danger:hover { background: var(--danger-bg); filter: brightness(1.1); }
 .banner-x { flex: none; border: 0; background: transparent; color: inherit; font-size: 18px; line-height: 1; padding: 0 6px; border-radius: 6px; cursor: pointer; }
 .banner-x:hover { background: var(--hover); }
 .tag.fail { cursor: help; }
+.revents { margin: 0 0 10px; }
+.revent { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; width: 100%; padding: 4px 0; font-size: 13px; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--border); color: inherit; overflow-wrap: anywhere; }
+.revent:last-child { border-bottom: 0; }
+button.revent { cursor: pointer; }
