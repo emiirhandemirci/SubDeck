@@ -44,23 +44,20 @@ has "$B" "dirty: wip.txt" "dirty file names recorded"
 has "$B" "agent: agent01" "agent id recorded"
 hasnt "$B" "echo" "no file content stored"
 
-# 2. negative controls
+# 2. negative controls (each uses a fresh, still unrecorded commit, so a wrong attribution would show up)
 fire agent01 'git commit -m again' >/dev/null
 check "$(t history "$ID" | grep -c commit)" 1 "same HEAD is not recorded twice"
+H2="$(commit b "add b")"   # made by the manager, not recorded yet
 fire other99 'git commit -m x' >/dev/null
-check "$(t history "$ID" | grep -c commit)" 1 "unlinked agent does not checkpoint"
+check "$(t history "$ID" | grep -c commit)" 1 "unlinked agent does not checkpoint a fresh commit"
 fire "" 'git commit -m x' >/dev/null
-check "$(t history "$ID" | grep -c commit)" 1 "no agent id (main session) does not checkpoint"
-H2="$(commit b "add b")"
+check "$(t history "$ID" | grep -c commit)" 1 "no agent id (main session) does not checkpoint a fresh commit"
+fire agent01 'git status' >/dev/null
+check "$(t history "$ID" | grep -c commit)" 1 "linked agent running git status does not take over the manager's commit"
 fire agent01 'ls -la' >/dev/null
 check "$(t history "$ID" | grep -c commit)" 1 "a non-commit command does not checkpoint"
-# an old HEAD (failed commit leaves it) is not taken as a fresh commit
-echo old > "$P/old.txt"; git -C "$P" add old.txt
-GIT_AUTHOR_DATE="2020-01-01T00:00:00" GIT_COMMITTER_DATE="2020-01-01T00:00:00" git -C "$P" commit -q -m "old one"
-fire agent01 'git commit -m failed' >/dev/null
-check "$(t history "$ID" | grep -c commit)" 1 "stale HEAD is not recorded"
-git -C "$P" reset -q --hard HEAD~1   # (test fixture only) drop the old commit
-H2="$(git -C "$P" rev-parse --short=10 HEAD)"
+printf '{"hook_event_name":"PostToolUse","cwd":"%s","agent_id":"agent01","tool_input":{"command":"git log"},"tool_response":{"stdout":"git commit"}}' "$P" | bash "$CP"
+check "$(t history "$ID" | grep -c commit)" 1 "the word commit in the tool output alone does not checkpoint"
 
 # 3. second commit + manual step share one history
 fire agent01 'git commit -m b' >/dev/null

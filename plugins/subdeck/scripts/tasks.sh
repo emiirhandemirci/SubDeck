@@ -1735,7 +1735,9 @@ h_checkpoint() { # CP_HASH CP_SUBJ CP_FILES CP_DIRTY CP_NFILES set by cp_main
 cp_main() {
   local f tid="" g head ct subj now hash nf
   [ -d "$DIR" ] || return 0
-  [[ $COMPACT =~ git.*commit ]] || return 0
+  # only the agent's own command counts (tool_input.command), never the tool output
+  local rest="${COMPACT#*\"tool_input\"}" cre='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
+  [ "$rest" != "$COMPACT" ] && [[ $rest =~ $cre ]] && [[ ${BASH_REMATCH[1]} == *git*commit* ]] || return 0
   sfield agent_id; AGENT_ID="${V//[^A-Za-z0-9._-]/}"
   [ -n "$AGENT_ID" ] || return 0
   sfield session_id; SESSION_ID="${V//[^A-Za-z0-9._-]/}"
@@ -1750,9 +1752,8 @@ cp_main() {
   head="$(git -C "$g" log -1 --format="%H${US}%ct${US}%s" 2>/dev/null)" || return 0
   [ -n "$head" ] || return 0
   hash="${head%%$US*}"; head="${head#*$US}"; ct="${head%%$US*}"; subj="${head#*$US}"
-  now_s now
-  # the commit must be fresh: a failed `git commit` leaves an old HEAD
-  if ! [[ $ct =~ ^[0-9]+$ ]] || [ $((now - ct)) -gt 180 ]; then return 0; fi
+  # PostToolUse fires only for a successful call; HEAD already recorded for any task (live or archived) belongs to someone else
+  if grep -l -F "commit: ${hash:0:10} " "$DIR"/t-*.md "$DIR"/archive/t-*.md >/dev/null 2>&1; then return 0; fi
   subj="${subj//[[:cntrl:]]/ }"; subj="${subj:0:120}"
   CP_HASH="$hash"; CP_SUBJ="$subj"
   f="$(git -C "$g" -c core.quotepath=false show --name-only --format= HEAD 2>/dev/null)"
