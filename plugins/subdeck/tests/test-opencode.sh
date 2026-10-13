@@ -48,7 +48,7 @@ EV="$(. "$HERE/../scripts/lib-paths.sh"; sd_state_dir "$P"; printf '%s' "$SD_STA
 [ ! -e "$P/.subdeck" ] && ok "nothing written into the project" || bad "project .subdeck written"
 [ -f "$EV" ] && grep -q '"event":"SubagentStart".*"agent_id":"child1"' "$EV" && ok "SubagentStart logged" || bad "SubagentStart logged"
 [ -f "$EV" ] && grep -q '"event":"SubagentStop".*"agent_id":"child1"' "$EV" && ok "SubagentStop logged" || bad "SubagentStop logged"
-[ "$(grep -c . "$EV" 2>/dev/null)" = 2 ] && ok "root session idle not logged as sub-agent" || bad "event count"
+[ "$(grep -cE '"event":"Subagent(Start|Stop)"' "$EV" 2>/dev/null)" = 2 ] && ok "root session idle not logged as sub-agent" || bad "event count"
 SUBDECK_PLUGIN_ROOT=/nonexistent HOME="$H" node "$P/t.mjs" "$P" >/dev/null 2>&1 && ok "runs without crashing" || bad "runs without crashing"
 rm -rf "$H" "$P" "$SD"
 echo "passed=$PASS failed=$FAIL"; [ $FAIL -eq 0 ]
