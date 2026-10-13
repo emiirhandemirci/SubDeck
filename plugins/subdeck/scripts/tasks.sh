@@ -10,6 +10,11 @@
 #                              text on stdin, added as a "### <time> note" block (or "### <time> <label>")
 #   step <id> [--done "<what finished>"] [--next "<next step>"]   resume point: appends a timestamped block to "## Progress"
 #                              (append-only, one line each, max 200 chars); an interruption copies the latest one into "## Handoff"
+#   history <id> [--tsv]       checkpoints of the task, oldest first: manual steps plus automatic commit checkpoints (a task-linked
+#                              agent's git commit is recorded by the PostToolUse hook: time, commit, subject, file names, dirty names)
+#   resume-prompt <id>         the text to resume an interrupted agent with: Last done / Next, commits already done, uncommitted files, transcript
+#   rewind <id> <#N|hash> [--apply]   dry by default: lists the commits after that checkpoint and the git revert commands; --apply (clean tree
+#                              required) creates the revert commits; never resets, rewrites history or pushes
 #   ask <id> [--by manager|autopilot|user|agent] <text|->   park the task as needs-user with a question (key question, "## Question")
 #   answer <id> <text|-> [--status s]   record the answer; status back to what it was before the ask (in-progress becomes open: the Start hook moves it on when the agent is resumed)
 #   link <id> <agentId> [--session <sid>] [--transcript <abs>]   bind an agent to a task; archives that agent's auto task
@@ -763,6 +768,184 @@ cmd_step() {
   append_block "## Progress" "$blk"
   write_task "$FOUND" || { lock_release; die 2 "could not write $FOUND"; }
   lock_release
+  return 0
+}
+# ---------- checkpoint history, resume prompt, rewind ----------
+# cp_entries BODY -> CPE: lines "idx US ts US kind US hash US text US agent US files US dirty US reverted" (kind step|commit|rewind)
+cp_entries() {
+  CPE="$(get_section "$1" "## Progress" | awk -v US="$US" '
+    function flush() { if (kind != "") { n++; if (kind == "step") text = (dn != "" ? "done: " dn : "") (dn != "" && nx != "" ? "; " : "") (nx != "" ? "next: " nx : ""); else if (kind == "rewind") text = "to #" to; printf "%d%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n", n, US, ts, US, kind, US, hash, US, text, US, agent, US, files, US dirty, US rev }
+      kind = ""; hash = ""; text = ""; agent = ""; files = ""; dirty = ""; rev = ""; dn = ""; nx = ""; to = "" }
+    /^###[ \t]/ { flush(); k = NF == 3 ? $3 : ""; if (k == "step" || k == "commit" || k == "rewind") { kind = k; ts = $2 } next }
+    kind == "" { next }
+    { sub(/\r$/, "") }
+    /^done: / { dn = substr($0, 7) }
+    /^next: / { nx = substr($0, 7) }
+    /^commit: / { v = substr($0, 9); i = index(v, " "); if (i) { hash = substr(v, 1, i - 1); text = substr(v, i + 1) } else hash = v }
+    /^agent: / { agent = substr($0, 8) }
+    /^files: / { files = substr($0, 8) }
+    /^dirty: / { dirty = substr($0, 8) }
+    /^to: / { to = substr($0, 5) }
+    /^reverted: / { rev = substr($0, 11) }
+    END { flush() }')"
+}
+cp_open_task() { # ID -> loaded task (live or archive)
+  find_file "$1" || die 1 "task not found: $1"
+  load_task "$FOUND" || die 2 "task file unreadable: $FOUND"
+  T_id="$1"
+}
+cmd_history() {
+  local id="" mode=0 a
+  while [ ${#ARGV[@]} -gt 0 ]; do
+    a="${ARGV[0]}"
+    case "$a" in
+      --tsv) mode=1 ;;
+      -*) die 2 "unknown option $a" ;;
+      *) [ -z "$id" ] || die 2 "unexpected argument '$a'"; id="$a" ;;
+    esac
+    ARGV=("${ARGV[@]:1}")
+  done
+  [ -n "$id" ] || die 2 "usage: history <id> [--tsv]"
+  cp_open_task "$id"
+  cp_entries "$T_BODY"
+  local ix ts kind hash text agent files dirty rev line
+  while IFS="$US" read -r ix ts kind hash text agent files dirty rev; do
+    [ -n "$ix" ] || continue
+    if [ "$mode" = 1 ]; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$ix" "$ts" "$kind" "$hash" "$text" "$agent" "$files" "$dirty"
+      continue
+    fi
+    case "$kind" in
+      commit) line="$hash $text"; [ -n "$dirty" ] && line="$line  [dirty: $dirty]" ;;
+      rewind) line="$text, reverted ${rev:-nothing}" ;;
+      *) line="$text" ;;
+    esac
+    printf '#%s %s %-6s %s\n' "$ix" "$ts" "$kind" "$line"
+  done <<< "$CPE"
+  return 0
+}
+# cp_handoff_files BODY -> lines (uncommitted files of the latest Handoff block)
+cp_handoff_files() {
+  get_section "$1" "## Handoff" | awk '
+    /^###[ \t]/ { delete f; n = 0; inl = 0; next }
+    /^uncommitted/ { inl = 1; next }
+    /^diff --stat:/ { inl = 0; next }
+    inl && /^    / && n < 50 { n++; f[n] = substr($0, 5) }
+    END { for (i = 1; i <= n; i++) print f[i] }'
+}
+cmd_resume_prompt() {
+  local id="" a
+  while [ ${#ARGV[@]} -gt 0 ]; do
+    a="${ARGV[0]}"
+    case "$a" in
+      -*) die 2 "unknown option $a" ;;
+      *) [ -z "$id" ] || die 2 "unexpected argument '$a'"; id="$a" ;;
+    esac
+    ARGV=("${ARGV[@]:1}")
+  done
+  [ -n "$id" ] || die 2 "usage: resume-prompt <id>"
+  cp_open_task "$id"
+  cp_entries "$T_BODY"
+  last_step "$T_BODY"
+  local ix ts kind hash text agent files dirty rev reverted="" done_c="" rev_c="" lastdirty="" hf
+  while IFS="$US" read -r ix ts kind hash text agent files dirty rev; do
+    [ -n "$ix" ] || continue
+    [ "$kind" = rewind ] && reverted="$reverted $rev"
+  done <<< "$CPE"
+  while IFS="$US" read -r ix ts kind hash text agent files dirty rev; do
+    [ "$kind" = commit ] || continue
+    lastdirty="$dirty"
+    case " $reverted " in
+      *" $hash "*) rev_c="$rev_c  $hash $text$NL" ;;
+      *) done_c="$done_c  $hash $text$NL" ;;
+    esac
+  done <<< "$CPE"
+  hf="$(cp_handoff_files "$T_BODY")"
+  printf 'Resume task %s: %s\n' "$id" "$T_title"
+  printf 'Task file: %s\n' "$FOUND"
+  printf 'Read ## Handoff and ## Progress in it first.\n\n'
+  printf 'Last done: %s\n' "${LS_DONE:-(none recorded)}"
+  printf 'Next: %s\n\n' "${LS_NEXT:-(none recorded)}"
+  printf 'Commits already done (do not redo):\n'
+  if [ -n "$done_c" ]; then printf '%s' "$done_c"; else printf '  (none recorded)\n'; fi
+  if [ -n "$rev_c" ]; then printf 'Reverted by a rewind (redo only if still wanted):\n%s' "$rev_c"; fi
+  printf '\nUncommitted files'
+  if [ -n "$hf" ]; then printf ' (from Handoff):\n'; printf '%s\n' "$hf" | sed 's/^/  /'
+  elif [ -n "$lastdirty" ]; then printf ' (at the last commit): %s\n' "$lastdirty"
+  else printf ': none recorded\n'; fi
+  printf '\nTranscript: %s\n' "${T_transcript:-(none recorded)}"
+  printf '\nContinue from Next. Do not redo finished work. Commit your own paths only.\n'
+  return 0
+}
+cmd_rewind() {
+  local id="" cpt="" apply=0 a n=0
+  while [ ${#ARGV[@]} -gt 0 ]; do
+    a="${ARGV[0]}"
+    case "$a" in
+      --apply) apply=1 ;;
+      -*) die 2 "unknown option $a" ;;
+      *) n=$((n + 1)); if [ "$n" = 1 ]; then id="$a"; elif [ "$n" = 2 ]; then cpt="$a"; else die 2 "unexpected argument '$a'"; fi ;;
+    esac
+    ARGV=("${ARGV[@]:1}")
+  done
+  [ -n "$id" ] && [ -n "$cpt" ] || die 2 "usage: rewind <id> <checkpoint #N|hash> [--apply]"
+  cp_open_task "$id"
+  cp_entries "$T_BODY"
+  cpt="${cpt#\#}"
+  local ix ts kind hash text agent files dirty rev target="" reverted="" ttext="" hmatch="" hmtext=""
+  while IFS="$US" read -r ix ts kind hash text agent files dirty rev; do
+    [ -n "$ix" ] || continue
+    [ "$kind" = rewind ] && reverted="$reverted $rev"
+    if [ "$cpt" = "$ix" ]; then target="$ix"; ttext="$hash $text"; fi
+    if [ "$kind" = commit ] && [[ $cpt =~ ^[0-9a-f]{4,40}$ ]] && [ -z "$hmatch" ]; then
+      if [ "${hash#"$cpt"}" != "$hash" ] || [ "${cpt#"$hash"}" != "$cpt" ]; then hmatch="$ix"; hmtext="$hash $text"; fi
+    fi
+  done <<< "$CPE"
+  if [ -z "$target" ] && [ -n "$hmatch" ]; then target="$hmatch"; ttext="$hmtext"; fi
+  [ -n "$target" ] || die 2 "checkpoint '$cpt' not found in $id (see: tasks.sh history $id)"
+  local hs=() ht=() k=0
+  while IFS="$US" read -r ix ts kind hash text agent files dirty rev; do
+    [ -n "$ix" ] || continue
+    [ "$kind" = commit ] && [ "$ix" -gt "$target" ] || continue
+    case " $reverted " in *" $hash "*) continue ;; esac
+    hs[$k]="$hash"; ht[$k]="$text"; k=$((k + 1))
+  done <<< "$CPE"
+  local dir="$PROJECT"
+  [ -n "$T_worktree" ] && [ -d "$T_worktree" ] && dir="$T_worktree"
+  printf 'Rewind %s to checkpoint #%s (%s)\n' "$id" "$target" "$ttext"
+  if [ "$k" = 0 ]; then printf 'Nothing to revert: no commit checkpoints after it.\n'; return 0; fi
+  printf 'Commits after it (newest first), repo %s:\n' "$dir"
+  local i
+  for ((i = k - 1; i >= 0; i--)); do printf '  %s %s\n' "${hs[$i]}" "${ht[$i]}"; done
+  printf 'Revert commands (nothing is reset or rewritten):\n'
+  for ((i = k - 1; i >= 0; i--)); do printf '  git -C %s revert --no-edit %s\n' "$dir" "${hs[$i]}"; done
+  if [ "$apply" = 0 ]; then
+    printf 'Dry run: nothing changed. Add --apply (clean working tree required) to create these revert commits.\n'
+    return 0
+  fi
+  [ "$FOUND_ARCH" = 0 ] || die 2 "task $id is archived"
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die 3 "$dir is not a git work tree"
+  [ -z "$(git -C "$dir" status --porcelain 2>/dev/null)" ] || die 3 "working tree is not clean in $dir: commit or stash first; nothing changed"
+  for ((i = 0; i < k; i++)); do
+    git -C "$dir" cat-file -e "${hs[$i]}^{commit}" 2>/dev/null || die 3 "commit ${hs[$i]} not found in $dir; nothing changed"
+    git -C "$dir" merge-base --is-ancestor "${hs[$i]}" HEAD 2>/dev/null || die 3 "commit ${hs[$i]} is not part of the current branch of $dir; nothing changed"
+    [ "$(git -C "$dir" rev-list --parents -n 1 "${hs[$i]}" 2>/dev/null | wc -w | tr -d ' ')" -le 2 ] || die 3 "commit ${hs[$i]} is a merge commit; revert it by hand; nothing changed"
+  done
+  local done_l=""
+  for ((i = k - 1; i >= 0; i--)); do
+    if ! git -C "$dir" revert --no-edit "${hs[$i]}" >/dev/null 2>&1; then
+      git -C "$dir" revert --abort >/dev/null 2>&1
+      [ -n "$done_l" ] && printf 'reverted before the failure:%s\n' "$done_l" >&2
+      die 3 "git revert ${hs[$i]} failed (conflict or missing git identity); that revert was aborted"
+    fi
+    done_l="$done_l ${hs[$i]}"
+  done
+  need_lock
+  find_file "$id" && load_task "$FOUND" && T_id="$id" || { lock_release; die 1 "task not found: $id"; }
+  append_block "## Progress" "### $(now_iso) rewind${NL}to: $target${NL}reverted:$done_l${NL}by: $(git -C "$dir" rev-parse --short=10 HEAD 2>/dev/null)"
+  write_task "$FOUND" || { lock_release; die 2 "could not write $FOUND"; }
+  lock_release
+  printf 'Applied: %s revert commit(s) created; nothing was pushed.\n' "$k"
   return 0
 }
 # ask_apply BY QUESTION-FULL-TEXT : T_* loaded and locked; sets needs-user, appends the asked block, queues events.
@@ -1534,11 +1717,56 @@ handback_fallback() {
   [ -n "$V" ] && MSG="$V"
   return 0
 }
+# ---- checkpoints (PostToolUse on a git commit by a task-linked agent) ----
+# names_line: stdin file names -> "a, b, c (+N more)" (max 30, control characters removed, names only)
+names_line() {
+  awk 'BEGIN { max = 30 } { gsub(/[[:cntrl:]]/, ""); if ($0 == "") next; n++; if (n <= max) l = l (n > 1 ? ", " : "") substr($0, 1, 200) } END { if (n > max) l = l " (+" (n - max) " more)"; printf "%s", l }'
+}
+h_checkpoint() { # CP_HASH CP_SUBJ CP_FILES CP_DIRTY CP_NFILES set by cp_main
+  local short="${CP_HASH:0:10}" blk
+  case "$T_status" in done) return 1 ;; esac
+  case "$T_BODY" in *"commit: $short "*) return 1 ;; esac
+  blk="### $(now_iso) commit${NL}commit: $short $CP_SUBJ${NL}agent: ${AGENT_ID}"
+  [ -n "$CP_FILES" ] && blk="$blk${NL}files: $CP_FILES"
+  [ -n "$CP_DIRTY" ] && blk="$blk${NL}dirty: $CP_DIRTY"
+  append_block "## Progress" "$blk"
+  return 0
+}
+cp_main() {
+  local f tid="" g head ct subj now hash nf
+  [ -d "$DIR" ] || return 0
+  [[ $COMPACT =~ git.*commit ]] || return 0
+  sfield agent_id; AGENT_ID="${V//[^A-Za-z0-9._-]/}"
+  [ -n "$AGENT_ID" ] || return 0
+  sfield session_id; SESSION_ID="${V//[^A-Za-z0-9._-]/}"
+  while IFS= read -r f; do
+    f="${f##*/}"; f="${f%.md}"
+    if is_id "$f"; then tid="$f"; break; fi
+  done < <(grep -l -E "^agent:[[:space:]]*$AGENT_ID[[:space:]]*\$" "$DIR"/t-*.md 2>/dev/null)
+  [ -n "$tid" ] || return 0
+  g="$(jstring cwd)"
+  [ -d "$g" ] || g="${SUBDECK_TASK_GIT:-}"
+  [ -d "$g" ] || g="$PROJECT"
+  head="$(git -C "$g" log -1 --format="%H${US}%ct${US}%s" 2>/dev/null)" || return 0
+  [ -n "$head" ] || return 0
+  hash="${head%%$US*}"; head="${head#*$US}"; ct="${head%%$US*}"; subj="${head#*$US}"
+  now_s now
+  # the commit must be fresh: a failed `git commit` leaves an old HEAD
+  if ! [[ $ct =~ ^[0-9]+$ ]] || [ $((now - ct)) -gt 180 ]; then return 0; fi
+  subj="${subj//[[:cntrl:]]/ }"; subj="${subj:0:120}"
+  CP_HASH="$hash"; CP_SUBJ="$subj"
+  f="$(git -C "$g" -c core.quotepath=false show --name-only --format= HEAD 2>/dev/null)"
+  CP_FILES="$(printf '%s\n' "$f" | names_line)"
+  nf="$(printf '%s\n' "$f" | grep -c .)"; CP_NFILES="${nf:-0}"
+  CP_DIRTY="$(git -C "$g" -c core.quotepath=false status --porcelain 2>/dev/null | cut -c4- | names_line)"
+  with_task "$tid" h_checkpoint
+}
 hook_main() {
   HOOK_EVENT="${ARGV[0]:-}"
-  case "$HOOK_EVENT" in SubagentStart|SubagentStop|StopFailure) ;; *) return 0 ;; esac
+  case "$HOOK_EVENT" in SubagentStart|SubagentStop|StopFailure|Checkpoint) ;; *) return 0 ;; esac
   [ -n "$SD_KEY" ] || return 0
   resolve_dir
+  if [ "$HOOK_EVENT" = Checkpoint ]; then cp_main; flush_queue; return 0; fi
   sfield agent_id; AGENT_ID="${V//[^A-Za-z0-9._-]/}"
   sfield agent_type; AGENT_TYPE="$V"
   [ -n "$AGENT_TYPE" ] || { sfield agent_name; AGENT_TYPE="$V"; }
@@ -1600,7 +1828,7 @@ hook_main() {
 # ---------- dispatch ----------
 run_cli() {
   case "$CMD" in
-    "") die 2 "usage: tasks.sh [--project <dir>] <new|set|append|step|ask|answer|link|verify|grant|pack|writable|done|list|ready|show|dir|hook> ..." ;;
+    "") die 2 "usage: tasks.sh [--project <dir>] <new|set|append|step|history|resume-prompt|rewind|ask|answer|link|verify|grant|pack|writable|done|list|ready|show|dir|hook> ..." ;;
   esac
   resolve_dir
   case "$CMD" in
@@ -1614,6 +1842,9 @@ run_cli() {
     writable) cmd_writable ;;
     done) cmd_done ;;
     step) cmd_step ;;
+    history) cmd_history ;;
+    resume-prompt) cmd_resume_prompt ;;
+    rewind) cmd_rewind ;;
     ask) cmd_ask ;;
     answer) cmd_answer ;;
     list) cmd_list ;;
