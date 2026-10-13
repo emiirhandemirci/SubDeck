@@ -695,7 +695,7 @@ function renderDetailInner(box) {
   box.append(sub);
   const conf = el('div', 'conflicts'); conf.id = 'conflicts'; conf.hidden = true;
   box.append(conf);
-  const dl = el('dl', 'kv');
+  const dl = el('dl', 'kv props');
   const row = (k, v) => { dl.append(el('dt', null, k)); const dd = el('dd'); if (v instanceof Node) dd.append(v); else dd.textContent = v ?? '-'; dl.append(dd); };
   const now = Date.now();
   const when = iso => (iso ? `${new Date(iso).toLocaleString()} (${relativeTime(iso, now)})` : '-');
