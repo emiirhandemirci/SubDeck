@@ -685,7 +685,7 @@ function renderDetailInner(box) {
   if (!s) { box.append(emptyState('Select a session or agent', 'Details, tools and changed files show up here.')); return; }
   box.append(el('h3', null, T(s.title)));
   const sub = el('p', 'muted subline');
-  sub.append(el('span', `chip ${s.state}`, STATE_LABEL[s.state]));
+  const sb = el('span', 'statebit'); sb.append(dot(s.state), el('span', `chip ${s.state}`, STATE_LABEL[s.state])); sub.append(sb);
   if (s.agentType) sub.append(el('span', 'mono', s.agentType));
   if (s.model) sub.append(el('span', 'mono', s.model));
   if (s.parent) sub.append(el('span', null, `Spawned by ${T(s.parent.title)}`));
