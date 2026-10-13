@@ -104,7 +104,7 @@ has "$BODY" "diff --stat:" "diff --stat part"
 has "$BODY" "Resume: read this note, then resume the agent or revert the files above." "resume line"
 check "$(lastevent task_interrupted | sed 's/.*"payload"://')" "{\"agent_id\":\"q1\",\"agent_type\":\"worker-sonnet\",\"session_id\":\"$SID\",\"task\":\"$T5\",\"error_type\":\"quota\",\"files\":2}}" "task_interrupted event"
 has "$(notified)" "agent worker-sonnet interrupted" "notify: agent worker-sonnet interrupted"
-check "$(printf '%s\n' "$BODY" | grep -c '^## ')" "5" "no stray ## heading from hook text"
+check "$(printf '%s\n' "$BODY" | grep -c '^## ')" "6" "no stray ## heading from hook text"
 
 # ---- 6. report missing ----
 T6="$(newtask)"
@@ -441,7 +441,7 @@ fire SubagentStop zr2 worker-sonnet 'Out of quota again.\nTested: not run (quota
 check "$(field $R2 status)" "interrupted" "interrupted agent, Stop: quota: stays interrupted"
 check "$(t show $R2 --section handoff | grep -c 'interrupted (')" "1" "interrupted agent, Stop: quota: no second handoff block"
 # a different agent finishing on an interrupted task is a fresh run (existing behaviour)
-fire SubagentStop zrnew worker-sonnet 'Took over.\nTested: ran `x` -> ok\nStop: done' 
+fire SubagentStop zrnew worker-sonnet 'Took over.\nTested: ran `x` -> ok\nStop: done'
 check "$(field $R2 status)" "interrupted" "an unrelated agent without the task id does not touch it"
 # a repeated Stop of a finished agent still changes nothing
 fire SubagentStop zr1 worker-sonnet 'Finished the rest.\nTested: ran `npm test` -> 12 passed\nStop: done'
@@ -470,7 +470,9 @@ check "$(field $N1 status)" "needs-user" "needs-user ignores a Start"
 fire StopFailure zn1 worker-sonnet "" '"error_type":"rate_limit"'
 check "$(field $N1 status)" "needs-user" "needs-user ignores a StopFailure"
 t answer "$N1" "SQLite"
-check "$(field $N1 status)" "in-progress" "answer -> in-progress"
+check "$(field $N1 status)" "open" "answer -> open"
+fire SubagentStart zn1 worker-sonnet "" "\"prompt\":\"Task: $N1\""
+check "$(field $N1 status)" "in-progress" "the Start hook of the resumed agent moves it to in-progress"
 fire SubagentStop zn1 worker-sonnet 'Went with SQLite.\nTested: ran `t` -> ok\nDecision: none\nStop: done'
 check "$(field $N1 status)" "review" "the resumed agent finishes after the answer (Decision: none)"
 # Decision: none (any case, with punctuation) does not ask

@@ -11,7 +11,7 @@
 #   step <id> [--done "<what finished>"] [--next "<next step>"]   resume point: appends a timestamped block to "## Progress"
 #                              (append-only, one line each, max 200 chars); an interruption copies the latest one into "## Handoff"
 #   ask <id> [--by manager|autopilot|user|agent] <text|->   park the task as needs-user with a question (key question, "## Question")
-#   answer <id> <text|-> [--status s]   record the answer, status back to what it was before the ask (in-progress by default)
+#   answer <id> <text|-> [--status s]   record the answer; status back to what it was before the ask (in-progress becomes open: the Start hook moves it on when the agent is resumed)
 #   link <id> <agentId> [--session <sid>] [--transcript <abs>]   bind an agent to a task; archives that agent's auto task
 #   verify <id>[,<id>...] --verdict Approved|Needs-fixes|Escalate --by <agentId> [--fingerprint <fp>]   (or --covers <ids>)
 #                              one Verification block per task, covers = all ids of the call
@@ -512,7 +512,7 @@ cmd_new() {
   if [ "$have_task" = 1 ]; then T_BODY="$T_BODY$(printf '%s' "$task" | clean_text)$NL"; fi
   T_BODY="$T_BODY${NL}## Done when$NL"
   if [ -n "$done_when" ]; then T_BODY="$T_BODY$(printf '%s' "$done_when" | clean_text)$NL"; fi
-  T_BODY="$T_BODY${NL}## Report$NL${NL}## Verification$NL${NL}## Handoff$NL"
+  T_BODY="$T_BODY${NL}## Report$NL${NL}## Verification$NL${NL}## Handoff$NL${NL}## Question$NL"
   T_KEEP_UPDATED=1
   write_task "$DIR/$T_id.md" || { lock_release; die 2 "could not write $DIR/$T_id.md"; }
   lock_release
@@ -845,8 +845,9 @@ cmd_answer() {
   [ "$T_status" = needs-user ] || { lock_release; die 3 "task $id is not waiting for an answer (status $T_status)"; }
   T_id="$id"
   last_asked_from "$T_BODY"
-  local to="${st:-${ASKED_FROM:-in-progress}}"
-  case "$to" in needs-user|done) to=in-progress ;; esac
+  local to="${st:-${ASKED_FROM:-open}}"
+  [ "$to" = in-progress ] && [ -z "$st" ] && to=open   # the SubagentStart hook moves it to in-progress when the agent is resumed
+  case "$to" in needs-user|done) to=open ;; esac
   append_block "## Question" "### $(now_iso) answer${NL}${text:0:4000}"
   T_question=""; T_status="$to"
   local ag="$T_agent" se="$T_session"

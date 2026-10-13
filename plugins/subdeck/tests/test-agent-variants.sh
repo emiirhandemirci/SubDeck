@@ -28,6 +28,14 @@ for n in verifier verifier-current; do
   if grep -q 'node --check' "$A/$n.md"; then ok "$n has static syntax checks"; else bad "$n lacks static checks"; fi
   if grep -q '^`Fingerprint: HEAD=' "$A/$n.md"; then ok "$n reports a fingerprint"; else bad "$n lacks fingerprint"; fi
 done
+# worker rule integrity: rule 11 keeps its closing sentence, rule 13 exists, no line ends inside an unclosed backtick span
+for f in agents/worker-sonnet.md agents/worker-opus.md agents/worker-current.md scripts/roles/worker.md; do
+  F="$HERE/../$f"
+  if grep -qF 'Never run `tasks.sh done`; only the manager does.' "$F"; then ok "$f keeps 'Never run tasks.sh done'"; else bad "$f lost 'Never run tasks.sh done; only the manager does.'"; fi
+  if grep -qF 'stop every background process or job you started' "$F"; then ok "$f has the background-work rule"; else bad "$f lacks the background-work rule"; fi
+  odd="$(awk '/^```/ { next } { n = gsub(/`/, "`"); if (n % 2 == 1) c++ } END { print c + 0 }' "$F")"
+  if [ "$odd" = 0 ]; then ok "$f: no line with an unclosed backtick"; else bad "$f: $odd line(s) with an odd number of backticks"; fi
+done
 O="$HERE/../skills/orchestrator/SKILL.md"
 for pat in 'Contract first' 'Produces: ' 'Consumes: ' 'Integration verification' 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' 'approval of X is not approval of Y' 'Report freshness' 'Stop reason' 'negative control'; do
   if grep -q "$pat" "$O"; then ok "orchestrator mentions: $pat"; else bad "orchestrator lacks: $pat"; fi
