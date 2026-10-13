@@ -29,6 +29,9 @@ P="$W/proj"; mkdir -p "$P/src"; git -C "$P" init -q
 echo base > "$P/a.txt"; echo src > "$P/src/s.js"; git -C "$P" add a.txt src/s.js; git -C "$P" commit -qm base
 INITBR="$(git -C "$P" rev-parse --abbrev-ref HEAD)"
 ST="$( . "$PL/scripts/lib-paths.sh"; sd_state_dir "$P"; printf '%s' "$SD_STATE" )"
+# Windows: run.sh prints child paths as C:\... (argv) or C:/... (hooks path); STM/PM are the mixed forms of ST/P
+STM="$ST"; PM="$P"
+if command -v cygpath >/dev/null 2>&1; then STM="$(cygpath -m "$ST")"; PM="$(cygpath -m "$P")"; fi
 t() { bash "$TS" --project "$P" "$@"; }
 r() { bash "$RUN" --project "$P" "$@"; }
 field() { t show "$1" | sed -n "s/^$2: //p" | head -n 1; }
@@ -63,7 +66,9 @@ check "$(r roles | awk -F'\t' 'NR>5{print $1":"$2}' | tr '\n' ' ')" "research-x:
 TD="$(newtask "dry")"
 dry_argv() { r "$@" --dry-run 2>/dev/null | awk '/^argv:$/{f=1;next} /^env:$/{f=0} f'; }
 norm() { # replace run-specific paths with the placeholders of expected/<tool>.argv
-  sed -e "s#$ST/worktrees/$TD#<cwd>#g" -e "s#$P#<cwd>#g" -e "s#$ST/runs/$TD/[0-9TZ]*\.last\.txt#<last_file>#g" -e "s#$ST/runs/$TD/[0-9TZ]*\.prompt\.md#<prompt_file>#g"
+  tr '\\' '/' | sed -e "s#$ST/worktrees/$TD#<cwd>#g" -e "s#$STM/worktrees/$TD#<cwd>#g" -e "s#$P#<cwd>#g" -e "s#$PM#<cwd>#g" \
+    -e "s#$ST/runs/$TD/[0-9TZ]*\.last\.txt#<last_file>#g" -e "s#$STM/runs/$TD/[0-9TZ]*\.last\.txt#<last_file>#g" \
+    -e "s#$ST/runs/$TD/[0-9TZ]*\.prompt\.md#<prompt_file>#g" -e "s#$STM/runs/$TD/[0-9TZ]*\.prompt\.md#<prompt_file>#g"
 }
 for spec in claude:opus codex:gpt-5-codex gemini:gemini-2.5-pro opencode:anthropic/claude-sonnet-4 copilot:gpt-5 agy:gemini-3-pro; do
   tool="${spec%%:*}"; model="${spec#*:}"
@@ -90,7 +95,7 @@ GIT_CONFIG_COUNT=2
 GIT_CONFIG_KEY_0=url.subdeck-no-push://.pushInsteadOf
 GIT_CONFIG_VALUE_0=
 GIT_CONFIG_KEY_1=core.hooksPath
-GIT_CONFIG_VALUE_1=$ST/runs/$TD/hooks
+GIT_CONFIG_VALUE_1=$STM/runs/$TD/hooks
 OPENCODE_PERMISSION={\"bash\":{\"*\":\"allow\",\"git push*\":\"deny\"},\"edit\":\"allow\",\"external_directory\":\"deny\"}" "dry-run env: run vars, push blocker, profile env"
 has "$DRY" "worktree: $ST/worktrees/$TD (create)" "dry-run names the worktree it would create"
 has "$DRY" "branch: subdeck/$TD" "dry-run branch"
@@ -98,7 +103,7 @@ has "$DRY" "timeout: 1800" "dry-run default timeout"
 [ ! -e "$ST/runs" ] && [ ! -e "$ST/worktrees" ] && ok "dry-run creates nothing" || bad "dry-run created files"
 check "$(field "$TD" status)" "open" "dry-run changes no status"
 check "$(events run_start)$(events run_refused)" "00" "dry-run logs no events"
-check "$(GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=a.b GIT_CONFIG_VALUE_0=1 GIT_CONFIG_KEY_1=c.d GIT_CONFIG_VALUE_1=2 r worker "$TD" --dry-run | grep '^GIT_CONFIG' | tr '\n' ' ')" "GIT_CONFIG_COUNT=4 GIT_CONFIG_KEY_2=url.subdeck-no-push://.pushInsteadOf GIT_CONFIG_VALUE_2= GIT_CONFIG_KEY_3=core.hooksPath GIT_CONFIG_VALUE_3=$ST/runs/$TD/hooks " "push blocker appended after git config already in the env"
+check "$(GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=a.b GIT_CONFIG_VALUE_0=1 GIT_CONFIG_KEY_1=c.d GIT_CONFIG_VALUE_1=2 r worker "$TD" --dry-run | grep '^GIT_CONFIG' | tr '\n' ' ')" "GIT_CONFIG_COUNT=4 GIT_CONFIG_KEY_2=url.subdeck-no-push://.pushInsteadOf GIT_CONFIG_VALUE_2= GIT_CONFIG_KEY_3=core.hooksPath GIT_CONFIG_VALUE_3=$STM/runs/$TD/hooks " "push blocker appended after git config already in the env"
 
 # ---------- 3. prompt sections ----------
 mkdir -p "$ST"; ucfg "$ROLES_ALL"
@@ -106,7 +111,7 @@ pcfg '{"guard":{"protectPorts":["8080"],"protectProcs":["redis"]}}'
 PR="$(r worker "$TD" --dry-run | sed -n '/^prompt:$/,$p' | sed 1d)"
 check "$(printf '%s\n' "$PR" | head -n 1)" "Task: $TD (tasks.sh: $(cd "$PL/scripts" && pwd)/tasks.sh)" "prompt line 1: Task id + tasks.sh path"
 check "$(printf '%s\n' "$PR" | sed -n 2p)" "# SubDeck run: worker (worker) via codex gpt-5-codex" "prompt line 2: run heading"
-check "$(printf '%s\n' "$PR" | grep '^## ' | tr '\n' '|')" "## Rules|## Headless run|## Writable paths|## Protected resources|## Task file|## Task|## Done when|## Report|## Verification|## Handoff|## Final reply|" "prompt sections in order (task file verbatim inside)"
+check "$(printf '%s\n' "$PR" | grep '^## ' | tr '\n' '|')" "## Rules|## Headless run|## Writable paths|## Protected resources|## Task file|## Task|## Done when|## Report|## Verification|## Handoff|## Question|## Final reply|" "prompt sections in order (task file verbatim inside)"
 has "$PR" "stub worker rulebook line" "rulebook included"
 has "$PR" "## Writable paths
 a.txt
@@ -233,7 +238,9 @@ T7="$(newtask "timeout")"
 S0=$SECONDS
 FAKE_CLI_SLEEP=31.7 r worker "$T7" --timeout 2 >/dev/null 2>&1; RC=$?
 check "$RC" "124" "timeout: exit 124"
-[ $((SECONDS - S0)) -le 8 ] && ok "timeout stops the CLI quickly ($((SECONDS - S0)) s)" || bad "timeout took $((SECONDS - S0)) s"
+# Windows process spawning makes setup and result handling take ~15 s of the wall time; the fake CLI sleeps 31.7 s, so < 28 s still proves it was killed
+TLIM=8; case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) TLIM=28 ;; esac
+[ $((SECONDS - S0)) -le $TLIM ] && ok "timeout stops the CLI quickly ($((SECONDS - S0)) s)" || bad "timeout took $((SECONDS - S0)) s"
 i=0; while [ $i -lt 20 ] && { pgrep -f '^sleep 31\.7$' || pgrep -f '^bash .*fake-cli\.sh codex'; } >/dev/null 2>&1; do sleep 0.1; i=$((i+1)); done
 { pgrep -f '^sleep 31\.7$' || pgrep -f '^bash .*fake-cli\.sh codex'; } >/dev/null 2>&1 && bad "fake CLI or its child still running after timeout" || ok "process group killed (CLI and its child)"
 check "$(field "$T7" status)" "interrupted" "timeout -> interrupted"
@@ -341,7 +348,8 @@ ucfg "{\"roles\":{\"worker\":{\"tool\":\"custom\",\"cmd\":\"bash '$FAKE/fake-cli
 rm -rf "$W/log16"
 QS="$W/st'q \$(touch $W/pwned4)"
 FAKE_CLI_LOG="$W/log16" SUBDECK_STATE_DIR="$QS" SUBDECK_TASKS_DIR="$ST/tasks" r worker "$T15" --no-worktree >/dev/null 2>&1; check "$?" "0" "custom cmd run ok (state path with a quote and \$(...))"
-check "$(sed -n 2p "$W/log16/1.custom.argv")" "$(ls -t "$QS"/*/runs/"$T15"/*.prompt.md | head -n 1)" "custom: {prompt_file} replaced by the single-quoted path"
+PFE="$(ls -t "$QS"/*/runs/"$T15"/*.prompt.md | head -n 1)"; command -v cygpath >/dev/null 2>&1 && PFE="$(cygpath -w "$PFE")"
+check "$(sed -n 2p "$W/log16/1.custom.argv")" "$PFE" "custom: {prompt_file} replaced by the single-quoted path"
 check "$(sed -n 4p "$W/log16/1.custom.argv")" "my-model" "custom: {model} replaced"
 check "$(cat "$W/log16/1.custom.stdin" | wc -c | tr -d ' ')" "0" "custom: stdin is /dev/null"
 ls "$W"/pwned* >/dev/null 2>&1 && bad "hostile content executed by custom" || ok "custom: hostile content never executed"
@@ -402,6 +410,7 @@ has "$(lastmeta "$TR")" '"violations":["a.txt"]' "renamed-away path a.txt is the
 
 # ---------- 13c. push blocker: pushInsteadOf, explicit pushurl, pre-push hook ----------
 R1="$W/r1.git"; R2="$W/r2.git"; R3="$W/r3.git"; git init -q --bare "$R1"; git init -q --bare "$R2"; git init -q --bare "$R3"
+R2M="$R2"; R3M="$R3"; if command -v cygpath >/dev/null 2>&1; then R2M="$(cygpath -m "$R2")"; R3M="$(cygpath -m "$R3")"; fi
 git -C "$P" remote add origin "$R1"; git -C "$P" config remote.origin.pushurl "$R2"
 # pushurl equal to its fetch url: a url rewrite would break fetch, so only the pre-push hook guards it (known gap: --no-verify)
 git -C "$P" remote add same "$R3"; git -C "$P" config remote.same.pushurl "$R3"
@@ -422,8 +431,8 @@ FAKE_CLI_LOG="$W/logp" FAKE_CLI_SH='git fetch -q origin' r worker "$TP" >/dev/nu
 check "$(cat "$W/logp/5.codex.sh-exit")" "0" "fetch still works inside a run"
 check "$(git -C "$R1" for-each-ref | wc -l | tr -d ' ')$(git -C "$R2" for-each-ref refs/heads/leak* | wc -l | tr -d ' ')$(git -C "$R3" for-each-ref | wc -l | tr -d ' ')" "000" "no ref reached any remote"
 PLOG="$(cat "$(ls -t "$ST/runs/$TP"/*.log | head -n 1)")"
-has "$PLOG" "warning: remote origin has an explicit pushurl $R2: push blocked by url rewrite and the SubDeck pre-push hook" "pushurl warning (rewritten) in the run log"
-has "$PLOG" "warning: remote same has an explicit pushurl $R3 that is also a fetch url prefix: guarded by the SubDeck pre-push hook only" "pushurl warning (hook only) in the run log"
+has "$PLOG" "warning: remote origin has an explicit pushurl $R2M: push blocked by url rewrite and the SubDeck pre-push hook" "pushurl warning (rewritten) in the run log"
+has "$PLOG" "warning: remote same has an explicit pushurl $R3M that is also a fetch url prefix: guarded by the SubDeck pre-push hook only" "pushurl warning (hook only) in the run log"
 hasnt "$(printf '%s\n' "$PLOG" | grep 'remote same')" "url rewrite" "hook-only remote is not reported as rewritten"
 git -C "$P" remote remove origin; git -C "$P" remote remove same
 
@@ -444,6 +453,10 @@ has "$(lastmeta "$TX2")" '"git-dir:info/attributes"' "info/attributes listed"
 rm -f "$CD_/info/attributes"
 TG2="$(newtask "gitdir control" "src")"
 FAKE_CLI_TOUCH=src/fine.js r worker "$TG2" >/dev/null 2>&1; check "$?" "0" "negative control: same run without git-dir writes is clean"
+# Windows creates real symlinks only with the privilege (or Developer Mode); without it MSYS copies or fails, so skip explicitly
+SYMOK=0; ( export MSYS=winsymlinks:nativestrict; ln -s ../x "$W/probe.lnk" 2>/dev/null ) && [ -L "$W/probe.lnk" ] && SYMOK=1; rm -f "$W/probe.lnk"
+if [ "$SYMOK" = 1 ]; then
+export MSYS=winsymlinks:nativestrict
 TL="$(newtask "symlink" "src")"
 FAKE_CLI_SH='ln -s /etc/passwd src/abs; ln -s ../../outside src/rel; ln -s ../a.txt src/inner; ln -s s.js src/sib' r worker "$TL" >/dev/null 2>&1; check "$?" "5" "symlink pointing outside the worktree: violation"
 M="$(lastmeta "$TL")"
@@ -452,6 +465,10 @@ has "$M" '"symlink-escape:src/rel -> ../../outside"' "relative escape listed"
 hasnt "$M" 'src/inner' "link to a file inside the worktree allowed"
 hasnt "$M" 'src/sib' "sibling link allowed"
 has "$(lastevent writable_violation)" '"reason":"symlink-escape"' "writable_violation reason symlink-escape"
+unset MSYS
+else
+  echo "SKIP symlink-escape checks (6 checks): this system cannot create real symlinks (Windows without symlink privilege)"
+fi
 printf 'build/\n' > "$P/.gitignore"; git -C "$P" add .gitignore; git -C "$P" commit -qm ignore
 TI="$(newtask "ignored" "src")"
 FAKE_CLI_SH='mkdir -p build && echo x > build/out.bin' r worker "$TI" >/dev/null 2>&1; check "$?" "0" "gitignored file written: not a violation"

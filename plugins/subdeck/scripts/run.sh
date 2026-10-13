@@ -833,7 +833,10 @@ if [ "$EXPERIMENTAL" = true ]; then
   printf 'warning: %s profile is experimental (flags unverified)\n' "$TOOL" >> "$LOGF"
 fi
 [ "$MODEL_CHECK" = unknown ] && logh "warning: producer of $TASK unknown; verifier model not checked"
-CPID=""
+CPID=""; CANCELLED=0; TIMED_OUT=0
+# signals arriving during setup (after the first running meta) must still cancel the run
+on_signal() { CANCELLED=1; [ -n "$CPID" ] && stop_child; }
+trap 'on_signal' INT TERM HUP
 write_meta running "" "" null null '[]' 0 0
 
 # task status before the run (synthetic hook payloads keep the 0.7 rules in tasks.sh)
@@ -855,7 +858,6 @@ esac
 emit_event run_start "{\"agent_id\":$(jstr "$RUN_ID"),\"agent_type\":$(jstr "$AGENT_TYPE"),\"session_id\":$(jstr "$RUN_ID"),\"task\":$(jstr "$TASK"),\"role\":$(jstr "$ROLE"),\"class\":$(jstr "$CLASS"),\"tool\":$(jstr "$TOOL"),\"model\":$(jstr "$MODEL"),\"cwd\":$(jstr "$CWD"),\"worktree\":$(jstr "$WORKTREE"),\"branch\":$(jstr "$BRANCH"),\"base\":$(jstr "$BASE"),\"log\":$(jstr "$LOGF"),\"pid\":$$,\"timeout\":$TIMEOUT,\"experimental\":$EXPERIMENTAL,\"modelCheck\":$(jstr "$MODEL_CHECK")}"
 
 STDIN_SRC=/dev/null; [ "$PMODE" = stdin ] && STDIN_SRC="$PROMPTF"
-CANCELLED=0; TIMED_OUT=0
 kill_tree() { # signal
   local wp
   if [ "$PLAT" = win ] && [ -r "/proc/$CPID/winpid" ] && command -v taskkill >/dev/null 2>&1; then
@@ -870,9 +872,6 @@ stop_child() { # TERM, then KILL after 10 s
   while kill -0 "$CPID" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.2; i=$((i + 1)); done
   kill -0 "$CPID" 2>/dev/null && kill_tree KILL
 }
-on_signal() { CANCELLED=1; [ -n "$CPID" ] && stop_child; }
-trap 'on_signal' INT TERM HUP
-
 set -m
 (
   cd "$CWD" || exit 126
@@ -898,6 +897,7 @@ while kill -0 "$CPID" 2>/dev/null; do
   fi
   if [ $TICK -lt 25 ]; then sleep 0.2; TICK=$((TICK + 1)); else sleep 1; fi
 done
+[ "$CANCELLED" = 1 ] && kill -0 "$CPID" 2>/dev/null && stop_child
 wait "$CPID" 2>/dev/null; CLI_EXIT=$?
 trap - INT TERM HUP
 
