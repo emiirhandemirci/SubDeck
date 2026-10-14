@@ -135,6 +135,26 @@ check "$GO" "" "guard prints nothing for an allowed commit command"
 GO="$(pre agent01 'git add -A && git commit -m x')"
 has "$GO" "deny" "guard still denies git add -A in a commit chain"
 
+# 7d. HEAD is remembered only after the decision and only for a command that is not denied; a hanging git
+#     leaves no remembered HEAD behind (PostToolUse then records nothing) and does not hold the hook up
+PF="$(ls -d "$W/state"/*/checkpoint-pre 2>/dev/null | head -n 1)/agent01"
+rm -f "$PF"; pre agent01 'git add -A && git commit -m x' >/dev/null
+check "$([ -f "$PF" ] && echo y || echo n)" n "a denied commit command remembers no HEAD"
+pre agent01 'git commit -m fine' >/dev/null
+check "$(cat "$PF" 2>/dev/null)" "$(git -C "$P" rev-parse HEAD)" "an allowed commit command remembers HEAD"
+rm -f "$PF"; printf '{"guard":{"enabled":false}}' > "${PF%/checkpoint-pre/*}/config.json"
+pre agent01 'git add -A && git commit -m x' >/dev/null
+check "$(cat "$PF" 2>/dev/null)" "$(git -C "$P" rev-parse HEAD)" "guard=off: HEAD still remembered (only the rules are off)"
+rm -f "${PF%/checkpoint-pre/*}/config.json"
+pre "" 'git commit -m main' >/dev/null
+check "$(ls "${PF%/*}" | grep -vc '^agent0[12]$')" 0 "no agent id: nothing remembered"
+mkdir -p "$W/bin"; printf '#!/bin/sh\ncase "$*" in *rev-parse*) sleep 12 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" > "$W/bin/git"; chmod +x "$W/bin/git"
+S=$(date +%s%N 2>/dev/null); GO="$(PATH="$W/bin:$PATH" pre agent01 'git commit -m slow')"; E=$(date +%s%N 2>/dev/null)
+check "$GO" "" "hanging git: guard output unchanged"
+check "$([ -f "$PF" ] && echo y || echo n)" n "hanging git: the older remembered HEAD is dropped (fail closed)"
+case "$S$E" in *N*|"") ok "timing skipped (no %N)" ;; *) MS=$(( (E - S) / 1000000 )); if [ "$MS" -lt 3000 ]; then ok "hanging git: hook took ${MS} ms"; else bad "hanging git: hook took ${MS} ms"; fi ;; esac
+ls "${PF%/*}" | grep -q '\.tmp$' && bad "temp file left behind" || ok "no temp file left behind"
+
 # 8. speed of the hook for a commit (loose bound for slow Windows process spawns)
 pre agent01 'git commit -m d'
 H4="$(commit d "add d")"

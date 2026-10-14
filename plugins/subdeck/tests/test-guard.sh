@@ -884,6 +884,52 @@ else bad "no events.jsonl written for a denied command"; fi
 ejson 'git status' | SUBDECK_STATE_DIR="$ES" HOME="$EV" CLAUDE_PROJECT_DIR="$EP" bash "$G" >/dev/null
 [ "$(wc -l < "$EF" | tr -d ' ')" = 1 ] && ok "allowed command logs nothing" || bad "allowed command wrote an event"
 rm -rf "$EV" "$EP" "$ES"
+
+# ---- fail closed: side work (event log, checkpoints) and odd input never change the decision ----
+FX="$(mktemp -d)"; touch "$FX/notadir"
+# a broken state dir (a file, so the event log cannot be written) must not turn a deny into an allow
+for cpd in "$P" ""; do
+  got="$(bash_json 'git add -A' | SUBDECK_STATE_DIR="$FX/notadir" HOME="$H" CLAUDE_PROJECT_DIR="$cpd" bash "$G" | sed -n 's/.*"permissionDecision":"\([a-z]*\)".*/\1/p')"
+  [ "$got" = deny ] && ok "broken state dir still denies git add -A (CLAUDE_PROJECT_DIR=${cpd:+set})" || bad "broken state dir: git add -A got '$got' (CLAUDE_PROJECT_DIR=${cpd:+set})"
+done
+got="$(file_json Write "$P/.env" | SUBDECK_STATE_DIR="$FX/notadir" HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G" | sed -n 's/.*"permissionDecision":"\([a-z]*\)".*/\1/p')"
+[ "$got" = ask ] && ok "broken state dir still asks for .env" || bad "broken state dir: .env got '$got'"
+# a raw NUL byte (never valid JSON) fails closed, wherever it sits and however stdin is read
+nulcase() { # label CLAUDE_PROJECT_DIR printf-format (%s = cwd)
+  local got
+  got="$(printf "$3" "$P" | HOME="$H" CLAUDE_PROJECT_DIR="$2" bash "$G" | sed -n 's/.*"permissionDecision":"\([a-z]*\)".*/\1/p')"
+  [ "$got" = deny ] && ok "raw NUL $1: deny" || bad "raw NUL $1: got '$got', want deny"
+}
+for cpd in "$P" ""; do
+  nulcase "before the command (CLAUDE_PROJECT_DIR=${cpd:+set})" "$cpd" '{"session_id":"s","cwd":"%s","tool_name":"Bash",\000"tool_input":{"command":"git add -A"}}'
+  nulcase "inside tool_input (CLAUDE_PROJECT_DIR=${cpd:+set})" "$cpd" '{"session_id":"s","cwd":"%s","tool_name":"Bash","tool_input":{\000"command":"git add -A"}}'
+  nulcase "inside the command (CLAUDE_PROJECT_DIR=${cpd:+set})" "$cpd" '{"session_id":"s","cwd":"%s","tool_name":"Bash","tool_input":{"command":"\000git add -A"}}'
+  nulcase "after the payload (CLAUDE_PROJECT_DIR=${cpd:+set})" "$cpd" '{"session_id":"s","cwd":"%s","tool_name":"Bash","tool_input":{"command":"git add -A"}}\000'
+  nulcase "at the start (CLAUDE_PROJECT_DIR=${cpd:+set})" "$cpd" '\000{"session_id":"s","cwd":"%s","tool_name":"Bash","tool_input":{"command":"git add -A"}}'
+done
+got="$(printf '{"session_id":"s","cwd":"%s","tool_name":"Bash","tool_input":{"command":"git add -A"}}\000' "$P" | SUBDECK_GUARD=0 HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+[ -z "$got" ] && ok "raw NUL with SUBDECK_GUARD=0: no output" || bad "raw NUL with SUBDECK_GUARD=0 printed: $got"
+# a 2 MB Write to .env through a pipe (the real hook path) is decided well inside the 10 s hook timeout
+BIG="$(head -c 2097152 /dev/zero | tr '\0' 'a')"
+printf '{"session_id":"s","cwd":"%s","tool_name":"Write","tool_input":{"file_path":"%s/.env","content":"%s"}}' "$P" "$P" "$BIG" > "$FX/big.json"; BIG=""
+s=$(nowms); got="$(cat "$FX/big.json" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G" | sed -n 's/.*"permissionDecision":"\([a-z]*\)".*/\1/p')"; e=$(nowms)
+[ "$got" = ask ] && ok "2 MB Write to .env via pipe: ask" || bad "2 MB Write to .env via pipe: got '$got', want ask"
+[ $((e - s)) -lt 3000 ] && ok "2 MB Write via pipe decided in $((e - s)) ms (< 3000)" || bad "2 MB Write via pipe took $((e - s)) ms (>= 3000)"
+s=$(nowms); got="$(HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G" < "$FX/big.json" | sed -n 's/.*"permissionDecision":"\([a-z]*\)".*/\1/p')"; e=$(nowms)
+[ "$got" = ask ] && [ $((e - s)) -lt 3000 ] && ok "2 MB Write via file: ask in $((e - s)) ms" || bad "2 MB Write via file: got '$got' in $((e - s)) ms"
+# a hanging git in the checkpoint step (after the decision) neither changes nor holds up the decision
+REALGIT="$(command -v git)"; mkdir -p "$FX/bin"
+printf '#!/bin/sh\ncase "$*" in *rev-parse*) sleep 12 ;; esac\nexec "%s" "$@"\n' "$REALGIT" > "$FX/bin/git"; chmod +x "$FX/bin/git"
+hangrun() { printf '{"session_id":"s","cwd":"%s","agent_id":"agt9","tool_name":"Bash","tool_input":{"command":"%s"}}' "$P" "$1" | PATH="$FX/bin:$PATH" SUBDECK_STATE_DIR="$FX/st" HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G"; }
+s=$(nowms); got="$(hangrun 'git reset --hard HEAD && git commit -m x' | sed -n 's/.*"permissionDecision":"\([a-z]*\)".*/\1/p')"; e=$(nowms)
+[ "$got" = ask ] && ok "checkpoint git hang: ask kept" || bad "checkpoint git hang: got '$got', want ask"
+[ $((e - s)) -lt 3000 ] && ok "checkpoint git hang: hook done in $((e - s)) ms (< 3000)" || bad "checkpoint git hang: hook took $((e - s)) ms"
+s=$(nowms); got="$(hangrun 'git commit -m x')"; e=$(nowms)
+[ -z "$got" ] && [ $((e - s)) -lt 3000 ] && ok "checkpoint git hang: allowed commit, no output, $((e - s)) ms" || bad "checkpoint git hang: allowed commit printed '$got' in $((e - s)) ms"
+got="$(hangrun 'git add -A && git commit -m x' | sed -n 's/.*"permissionDecision":"\([a-z]*\)".*/\1/p')"
+[ "$got" = deny ] && ok "checkpoint git hang: deny kept" || bad "checkpoint git hang: got '$got', want deny"
+rm -rf "$FX"
+
 rm -rf "$H" "$P"
 echo "$PASS passed, $FAIL failed"
 [ $FAIL -eq 0 ]

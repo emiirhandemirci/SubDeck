@@ -304,7 +304,9 @@ SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds a
 
 - `/subdeck:settings` shows the effective rules.
 - `/subdeck:settings set push=off attribution=deny [--project]`, `guard=on` or `guard=off`, and `reset [--project]` change them. They write the `guard` key of `~/.subdeck/config.json` or the project config in `~/.subdeck/projects/<name>-<hash>/config.json`; the project file wins.
-- `SUBDECK_GUARD=0` disables the guard for a session.
+- `SUBDECK_GUARD=0` disables the guard hook for a session, and with it the automatic task checkpoints of agent commits (the hook that remembers HEAD before a commit no longer runs).
+- `guard=off` (setting) turns off only the guard rules; the hook still runs, so task checkpoints keep working.
+- A hook input that contains a raw NUL byte (never valid JSON) is denied.
 - In auto mode, "ask" acts as "deny": with the default `branches` mode an auto-mode agent can push to a feature branch, but never to a protected branch or a tag, and never force-push.
 - Rule ids that SubDeck does not recognise (for example from a newer version) are kept when `set` rewrites your config, and `show` lists them as "unknown (ignored)". They have no effect; `set <unknown-id>=...` is rejected. `reset` removes the whole `guard` key.
 - It is a guard rail, not a sandbox. Aliases, scripts and other interpreters can get around it.

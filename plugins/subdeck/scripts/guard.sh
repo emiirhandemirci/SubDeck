@@ -950,9 +950,11 @@ function jesc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/\n/, "\\n"
 
 # One guard_block event line (rule id, decision, tool name; never the command text) appended to the project
 # state dir events.jsonl, so Desk can show when a rule fired. Best effort: any failure is ignored.
+# Called only after the decision is printed and flushed, so a failed write can never change or suppress it
+# (an awk redirection that cannot open its file is fatal in most awks; gawk is told to make it non-fatal).
 function log_block(id, dec, tool, t,  pf0, dir, f, ts, aid, sid, line, dc) {
   pf0 = ENVIRON["SD_GUARD_PF"]; if (pf0 == "") return
-  dir = pf0; if (!sub(/[\/\\][^\/\\]*$/, "", dir) || dir ~ /["`$]/) return
+  dir = pf0; if (!sub(/[\/\\][^\/\\]*$/, "", dir) || dir ~ /["`$\047]/) return
   aid = ""; sid = ""
   if (match(t, /"agent_id"[ \t\n\r]*:[ \t\n\r]*"[A-Za-z0-9._:\/-]*"/)) { aid = substr(t, RSTART, RLENGTH); sub(/^[^:]*:[ \t\n\r]*"/, "", aid); sub(/"$/, "", aid) }
   if (match(t, /"session_id"[ \t\n\r]*:[ \t\n\r]*"[A-Za-z0-9._:\/-]*"/)) { sid = substr(t, RSTART, RLENGTH); sub(/^[^:]*:[ \t\n\r]*"/, "", sid); sub(/"$/, "", sid) }
@@ -961,19 +963,68 @@ function log_block(id, dec, tool, t,  pf0, dir, f, ts, aid, sid, line, dc) {
   gsub(/[^A-Za-z0-9_.-]/, "", tool)
   line = sprintf("{\"ts\":\"%s\",\"event\":\"guard_block\",\"agent_id\":\"%s\",\"agent_type\":\"\",\"transcript_path\":\"\",\"session_id\":\"%s\",\"payload\":{\"rule\":\"%s\",\"decision\":\"%s\",\"tool\":\"%s\",\"agent_id\":\"%s\",\"session_id\":\"%s\"}}", ts, aid, sid, id, dec, tool, aid, sid)
   f = dir "/events.jsonl"
-  system("mkdir -p \"" dir "\" 2>/dev/null")
+  if ("version" in PROCINFO) {
+    # gawk: a failed open only sets ERRNO; create the directory only when the first append fails
+    PROCINFO["NONFATAL"] = 1; ERRNO = ""
+    print line >> f; close(f)
+    if (ERRNO == "") return
+    ERRNO = ""; system("mkdir -p " sq(dir) " 2>/dev/null")
+    print line >> f; close(f)
+    return
+  }
+  # other awks: a redirection that cannot open its file is fatal; harmless here (the decision is already out)
+  system("mkdir -p " sq(dir) " 2>/dev/null")
   print line >> f
   close(f)
 }
 
 # ---------- modes ----------
-function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
+# Hook entry: the decision (if any) is printed and flushed first; then the guard_block event is logged; last, for
+# a commit-like Bash/PowerShell command of a sub-agent that is not denied, HEAD is remembered for checkpoints.
+# Neither side step can change the decision or its output.
+function do_hook(  t, nul) {
   t = ""
   while ((getline line) > 0) t = t line "\n"
+  DECDENY = 0; CPAID = ""; CPCWD = ""; LOGID = ""
+  nul = sprintf("%c", 0)
+  # a raw NUL byte is never valid JSON: fail closed (deny) instead of parsing what is left
+  if (ENVIRON["SD_GUARD_NUL"] == "1" || (nul != "" && index(t, nul))) hook_nul()
+  else hook_decide(t)
+  fflush()
+  if (LOGID != "") log_block(LOGID, LOGDEC, LOGTOOL, t)
+  if (CPAID != "" && !DECDENY) cp_pre(CPAID, CPCWD)
+}
+# Checkpoints (PreToolUse side): checkpoint.sh pre-args remembers HEAD (one git call, bounded wait, atomic write,
+# silent). Runs after the decision is out; PreToolUse still runs before the tool, so this is before the commit.
+function cp_pre(aid, cwd,  cps, sh, proj) {
+  cps = ENVIRON["SD_GUARD_CP"]; sh = ENVIRON["SD_GUARD_BASH"]; proj = ENVIRON["SD_GUARD_GP"]
+  if (cps == "" || sh == "") return
+  if (index(cps, "\047") || index(sh, "\047") || index(cwd, "\047") || index(proj, "\047")) return
+  system(sq(sh) " " sq(cps) " pre-args " sq(aid) " " sq(cwd) " " sq(proj) " </dev/null >/dev/null 2>&1")
+}
+function hook_nul(  rs) {
+  if (uf == "") uf = ENVIRON["HOME"] "/.subdeck/config.json"
+  if (pf == "") pf = ENVIRON["SD_GUARD_PF"]; if (lf == "") lf = ENVIRON["SD_GUARD_LF"]
+  initrules(); cfgfile(uf, "user"); if (lf != "" && lf != pf) cfgfile(lf, "project"); if (pf != "") cfgfile(pf, "project")
+  if (!ENABLED) return
+  DECDENY = 1
+  rs = "SubDeck guard: the hook input contains a raw NUL byte (not valid JSON), so the command cannot be checked; denied. Retry the call without NUL bytes."
+  if (ENVIRON["SUBDECK_TOOL"] == "copilot")
+    printf "{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"%s\",\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"%s\"}}\n", rs, rs
+  else
+    printf "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"%s\"}}\n", rs
+}
+function hook_decide(t,  tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp, aid) {
   HOOKPARSE = 1; WANT = "^/(tool_name|cwd|tool_input/command|tool_input/file_path|tool_input/path)$"
   if (!jparse(t)) return
   tool = V["/tool_name"]; cmd = V["/tool_input/command"]; fp = V["/tool_input/file_path"]; cwd = V["/cwd"]
   if (tool == "") return
+  # checkpoints: a commit-like command of a sub-agent (agent_id present) remembers HEAD unless it is denied,
+  # also when the guard itself is disabled in the config
+  if ((tool == "Bash" || tool == "bash" || tool == "PowerShell" || tool == "powershell") && cmd ~ /git.*commit/ && match(t, /"agent_id"[ \t]*:[ \t]*"[A-Za-z0-9._-]+"/)) {
+    aid = substr(t, RSTART, RLENGTH); sub(/^"agent_id"[ \t]*:[ \t]*"/, "", aid); sub(/"$/, "", aid)
+    CPAID = aid; CPCWD = cwd; gsub(/[[:cntrl:]]/, "", CPCWD)
+  }
   # other tools: Copilot reports lowercase runtime names and tool_input.path; Codex edits arrive as apply_patch
   if (tool == "bash") tool = "Bash"; else if (tool == "powershell") tool = "PowerShell"
   else if (tool == "edit") tool = "Edit"; else if (tool == "create") tool = "Write"
@@ -1015,7 +1066,7 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
     return
   }
   if (DENYID != "") { dec = "deny"; id = DENYID } else { dec = "ask"; id = ASKID }
-  log_block(id, dec, tool, t)
+  LOGID = id; LOGDEC = dec; LOGTOOL = tool   # logged by do_hook after the decision is printed
   # the other modes /subdeck:settings accepts for this rule (push: ask|branches|off, the rest: deny|ask|off)
   np = split(id == "push" ? "ask branches off" : "deny ask off", pl, " "); pp = ""
   for (pi = 1; pi <= np; pi++) if (pl[pi] != MODE[id]) pp = pp (pp == "" ? "" : "|") pl[pi]
@@ -1026,6 +1077,7 @@ function do_hook(  t, tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp) {
   if (WARNS != "") rs = rs " | " WARNS
   # Codex documents only deny for PreToolUse: an "ask" becomes a deny that tells the model to ask the user first
   if (dec == "ask" && ENVIRON["SUBDECK_TOOL"] == "codex") { dec = "deny"; rs = "Ask the user for approval first; retry only if they approve. " rs }
+  if (dec == "deny") DECDENY = 1
   if (ENVIRON["SUBDECK_TOOL"] == "copilot")
     # Copilot reads the decision at the top level; keep the Claude-shaped member too
     printf "{\"permissionDecision\":\"%s\",\"permissionDecisionReason\":\"%s\",\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"%s\",\"permissionDecisionReason\":\"%s\"}}\n", dec, jesc(rs), dec, jesc(rs)
@@ -1094,11 +1146,13 @@ BEGIN {
 if [ $# -eq 0 ] || [ "$1" = hook ]; then
   # project config paths (new state dir + legacy <project>/.subdeck) are computed here and passed via ENVIRON
   # (awk -v would mangle backslashes). Without CLAUDE_PROJECT_DIR the payload's cwd is needed first, so stdin
-  # is read by the bash builtin and handed to awk as a here-string; otherwise awk reads stdin directly.
-  # The payload is always read here (builtin): checkpoint.sh needs it for the PreToolUse side of checkpoints.
-  GP="${CLAUDE_PROJECT_DIR:-}"; GIN=""; GREAD=1
-  IFS= read -r -d '' GIN 2>/dev/null
+  # is read by the bash builtin and handed to awk as a here-string; otherwise awk reads stdin directly (the bash
+  # builtin reads a pipe one byte at a time: megabyte payloads would exceed the hook timeout).
+  GP="${CLAUDE_PROJECT_DIR:-}"; GIN=""; GREAD=0; SD_GUARD_NUL=""
   if [ -z "$GP" ]; then
+    # read -d '' returns 0 only when it stopped at a NUL byte: awk then fails closed
+    if IFS= read -r -d '' GIN 2>/dev/null; then SD_GUARD_NUL=1; fi
+    GREAD=1
     BS=$'\134'; re="\"cwd\"[[:space:]]*:[[:space:]]*\"(([^\"$BS$BS]|$BS$BS.)*)\""
     if [[ $GIN =~ $re ]]; then GP="${BASH_REMATCH[1]}"; GP="${GP//"$BS$BS"//}"; GP="${GP//"$BS"//}"; fi
   fi
@@ -1109,9 +1163,11 @@ if [ $# -eq 0 ] || [ "$1" = hook ]; then
   fi
   SD_GUARD_TASKS=""; [ -f "$GH/tasks.sh" ] && SD_GUARD_TASKS="$GH/tasks.sh"
   case "$SD_GUARD_TASKS" in ""|/*|[A-Za-z]:*) ;; *) SD_GUARD_TASKS="$(pwd)/$SD_GUARD_TASKS" ;; esac
-  export SD_GUARD_PF SD_GUARD_LF SD_GUARD_TASKS
-  # Checkpoints: remember HEAD before a git commit (only for commit-like commands; output and decision are untouched)
-  if [[ $GIN == *git*commit* ]] && [ -f "$GH/checkpoint.sh" ]; then ( . "$GH/checkpoint.sh"; sd_cp_run pre "$GIN" ) >/dev/null 2>&1 </dev/null; fi
+  # checkpoints (PreToolUse side): awk runs checkpoint.sh pre-args itself, after printing the decision
+  SD_GUARD_CP=""; [ -f "$GH/checkpoint.sh" ] && SD_GUARD_CP="$GH/checkpoint.sh"
+  case "$SD_GUARD_CP" in ""|/*|[A-Za-z]:*) ;; *) SD_GUARD_CP="$(pwd)/$SD_GUARD_CP" ;; esac
+  SD_GUARD_BASH="${BASH:-bash}"; SD_GUARD_GP="$GP"
+  export SD_GUARD_PF SD_GUARD_LF SD_GUARD_TASKS SD_GUARD_NUL SD_GUARD_CP SD_GUARD_BASH SD_GUARD_GP
   if [ "$GREAD" = 1 ]; then awk -v mode=hook "$GUARD_AWK" <<< "$GIN" 2>/dev/null
   else awk -v mode=hook "$GUARD_AWK" 2>/dev/null; fi
   exit 0
