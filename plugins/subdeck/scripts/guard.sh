@@ -1095,9 +1095,10 @@ if [ $# -eq 0 ] || [ "$1" = hook ]; then
   # project config paths (new state dir + legacy <project>/.subdeck) are computed here and passed via ENVIRON
   # (awk -v would mangle backslashes). Without CLAUDE_PROJECT_DIR the payload's cwd is needed first, so stdin
   # is read by the bash builtin and handed to awk as a here-string; otherwise awk reads stdin directly.
-  GP="${CLAUDE_PROJECT_DIR:-}"; GIN=""; GREAD=0
+  # The payload is always read here (builtin): checkpoint.sh needs it for the PreToolUse side of checkpoints.
+  GP="${CLAUDE_PROJECT_DIR:-}"; GIN=""; GREAD=1
+  IFS= read -r -d '' GIN 2>/dev/null
   if [ -z "$GP" ]; then
-    IFS= read -r -d '' GIN 2>/dev/null; GREAD=1
     BS=$'\134'; re="\"cwd\"[[:space:]]*:[[:space:]]*\"(([^\"$BS$BS]|$BS$BS.)*)\""
     if [[ $GIN =~ $re ]]; then GP="${BASH_REMATCH[1]}"; GP="${GP//"$BS$BS"//}"; GP="${GP//"$BS"//}"; fi
   fi
@@ -1109,6 +1110,8 @@ if [ $# -eq 0 ] || [ "$1" = hook ]; then
   SD_GUARD_TASKS=""; [ -f "$GH/tasks.sh" ] && SD_GUARD_TASKS="$GH/tasks.sh"
   case "$SD_GUARD_TASKS" in ""|/*|[A-Za-z]:*) ;; *) SD_GUARD_TASKS="$(pwd)/$SD_GUARD_TASKS" ;; esac
   export SD_GUARD_PF SD_GUARD_LF SD_GUARD_TASKS
+  # Checkpoints: remember HEAD before a git commit (only for commit-like commands; output and decision are untouched)
+  if [[ $GIN == *git*commit* ]] && [ -f "$GH/checkpoint.sh" ]; then ( . "$GH/checkpoint.sh"; sd_cp_run pre "$GIN" ) >/dev/null 2>&1 </dev/null; fi
   if [ "$GREAD" = 1 ]; then awk -v mode=hook "$GUARD_AWK" <<< "$GIN" 2>/dev/null
   else awk -v mode=hook "$GUARD_AWK" 2>/dev/null; fi
   exit 0

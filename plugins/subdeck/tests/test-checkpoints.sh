@@ -27,9 +27,9 @@ fire() {
     "$P" "$cmd" "${aid:+,\"agent_id\":\"$aid\"}" | bash "$CP"
   echo $?
 }
-pre() { # AGENT_ID COMMAND : PreToolUse payload (remembers HEAD before the command)
+pre() { # AGENT_ID COMMAND : PreToolUse payload through the guard hook (which remembers HEAD before a commit command)
   printf '{"hook_event_name":"PreToolUse","session_id":"s1","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s"}%s}' \
-    "$P" "$2" "${1:+,\"agent_id\":\"$1\"}" | bash "$CP" pre
+    "$P" "$2" "${1:+,\"agent_id\":\"$1\"}" | bash "$PL/scripts/guard.sh"
 }
 commit() { echo "$1" > "$P/$1.txt"; git -C "$P" add "$1.txt"; git -C "$P" commit -q -m "$2"; git -C "$P" rev-parse --short=10 HEAD; }
 
@@ -128,6 +128,12 @@ H5="$(commit e "add e")"; fire agent01 'git commit -m e' >/dev/null
 has "$(t history "$ID")" "$H5 add e" "agent01 got its own commit"
 fire agent02 'git commit -m e || true' >/dev/null
 check "$(t history "$ID2" | grep -c commit)" 0 "a HEAD recorded for another task is not recorded again"
+
+# 7c. the guard keeps its decision and output when it also remembers HEAD
+GO="$(pre agent01 'git commit -m fine')"
+check "$GO" "" "guard prints nothing for an allowed commit command"
+GO="$(pre agent01 'git add -A && git commit -m x')"
+has "$GO" "deny" "guard still denies git add -A in a commit chain"
 
 # 8. speed of the hook for a commit (loose bound for slow Windows process spawns)
 pre agent01 'git commit -m d'

@@ -117,17 +117,6 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.cmd\" checkpoint pre",
-            "shell": "bash",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "Bash|PowerShell|Write|Edit|MultiEdit",
         "hooks": [
           {
