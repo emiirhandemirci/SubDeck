@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# PostToolUse hook for Bash/PowerShell: when a task-linked agent ran a git commit, tasks.sh records a checkpoint.
+# PreToolUse (arg "pre") + PostToolUse hook for Bash/PowerShell: when a task-linked agent ran a git commit,
+# tasks.sh records a checkpoint, only if HEAD moved directly on top of the HEAD remembered before the call.
 # Non-commit calls cost nothing but this shell: stdin is read with builtins and only the tool_input command is
 # inspected (not the tool output); no process is spawned unless the command contains a git commit. Always exits 0.
 IFS= read -r -d '' PAYLOAD
@@ -19,5 +20,7 @@ if [ -z "$PROJECT" ]; then
   [[ $PAYLOAD =~ $CWD_RE ]] && PROJECT="${BASH_REMATCH[1]}"
 fi
 [ -n "$PROJECT" ] && [ -d "$PROJECT" ] || PROJECT="$(pwd)"
-printf '%s' "$PAYLOAD" | SUBDECK_METER=0 bash "$HERE/tasks.sh" --project "$PROJECT" hook Checkpoint >/dev/null 2>&1
+# "pre" (PreToolUse): remember HEAD before the command; default (PostToolUse): record the checkpoint
+EV=Checkpoint; [ "${1:-}" = pre ] && EV=CheckpointPre
+printf '%s' "$PAYLOAD" | SUBDECK_METER=0 bash "$HERE/tasks.sh" --project "$PROJECT" hook "$EV" >/dev/null 2>&1
 exit 0

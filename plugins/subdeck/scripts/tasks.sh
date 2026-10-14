@@ -1749,11 +1749,24 @@ cp_main() {
   g="$(jstring cwd)"
   [ -d "$g" ] || g="${SUBDECK_TASK_GIT:-}"
   [ -d "$g" ] || g="$PROJECT"
+  local pf="$STATE/checkpoint-pre/$AGENT_ID" pre="" par
+  if [ "${CP_PRE:-0}" = 1 ]; then
+    # PreToolUse: remember HEAD before the agent's command ("none" on an unborn branch)
+    pre="$(git -C "$g" rev-parse --verify -q HEAD 2>/dev/null)"; [ -n "$pre" ] || pre=none
+    mkdir -p "$STATE/checkpoint-pre" 2>/dev/null && printf '%s\n' "$pre" > "$pf" 2>/dev/null
+    return 0
+  fi
+  { read -r pre < "$pf"; } 2>/dev/null
+  [ -n "$pre" ] || return 0   # no remembered HEAD: fail closed
   head="$(git -C "$g" log -1 --format="%H${US}%ct${US}%s" 2>/dev/null)" || return 0
   [ -n "$head" ] || return 0
   hash="${head%%$US*}"; head="${head#*$US}"; ct="${head%%$US*}"; subj="${head#*$US}"
-  # PostToolUse fires only for a successful call; HEAD already recorded for any task (live or archived) belongs to someone else
-  if grep -l -F "commit: ${hash:0:10} " "$DIR"/t-*.md "$DIR"/archive/t-*.md >/dev/null 2>&1; then return 0; fi
+  # a command like "git commit || true" succeeds without committing: HEAD must have moved, directly on top of the remembered HEAD
+  [ "$hash" != "$pre" ] || return 0
+  par="$(git -C "$g" rev-parse --verify -q "HEAD^" 2>/dev/null)"
+  [ "$par" = "$pre" ] || { [ "$pre" = none ] && [ -z "$par" ]; } || return 0
+  # HEAD already recorded for any task (live or archived) belongs to someone else
+  if grep -q -F "commit: ${hash:0:10} " "$DIR"/t-*.md "$DIR"/archive/t-*.md >/dev/null 2>&1; then return 0; fi
   subj="${subj//[[:cntrl:]]/ }"; subj="${subj:0:120}"
   CP_HASH="$hash"; CP_SUBJ="$subj"
   f="$(git -C "$g" -c core.quotepath=false show --name-only --format= HEAD 2>/dev/null)"
@@ -1764,9 +1777,10 @@ cp_main() {
 }
 hook_main() {
   HOOK_EVENT="${ARGV[0]:-}"
-  case "$HOOK_EVENT" in SubagentStart|SubagentStop|StopFailure|Checkpoint) ;; *) return 0 ;; esac
+  case "$HOOK_EVENT" in SubagentStart|SubagentStop|StopFailure|Checkpoint|CheckpointPre) ;; *) return 0 ;; esac
   [ -n "$SD_KEY" ] || return 0
   resolve_dir
+  if [ "$HOOK_EVENT" = CheckpointPre ]; then CP_PRE=1; cp_main; flush_queue; return 0; fi
   if [ "$HOOK_EVENT" = Checkpoint ]; then cp_main; flush_queue; return 0; fi
   sfield agent_id; AGENT_ID="${V//[^A-Za-z0-9._-]/}"
   sfield agent_type; AGENT_TYPE="$V"

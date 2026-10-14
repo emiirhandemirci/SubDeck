@@ -27,12 +27,17 @@ fire() {
     "$P" "$cmd" "${aid:+,\"agent_id\":\"$aid\"}" | bash "$CP"
   echo $?
 }
+pre() { # AGENT_ID COMMAND : PreToolUse payload (remembers HEAD before the command)
+  printf '{"hook_event_name":"PreToolUse","session_id":"s1","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s"}%s}' \
+    "$P" "$2" "${1:+,\"agent_id\":\"$1\"}" | bash "$CP" pre
+}
 commit() { echo "$1" > "$P/$1.txt"; git -C "$P" add "$1.txt"; git -C "$P" commit -q -m "$2"; git -C "$P" rev-parse --short=10 HEAD; }
 
 ID="$(t new "ckpt job" --owner worker-sonnet --writable "a.txt,b.txt,c.txt")"
 t set "$ID" agent=agent01 >/dev/null
 
 # 1. linked agent commit -> checkpoint
+pre agent01 'git commit -m a'
 H1="$(commit a "add a")"; echo dirty > "$P/wip.txt"
 check "$(fire agent01 'git add a.txt && git commit -m \"add a\"')" 0 "hook exits 0"
 H="$(t history "$ID")"
@@ -59,9 +64,16 @@ check "$(t history "$ID" | grep -c commit)" 1 "a non-commit command does not che
 printf '{"hook_event_name":"PostToolUse","cwd":"%s","agent_id":"agent01","tool_input":{"command":"git log"},"tool_response":{"stdout":"git commit"}}' "$P" | bash "$CP"
 check "$(t history "$ID" | grep -c commit)" 1 "the word commit in the tool output alone does not checkpoint"
 
+# a command that succeeds without committing ("|| true") must not take over the manager's unrecorded commit
+pre agent01 'git commit -m nothing || true'
+fire agent01 'git commit -m nothing || true' >/dev/null
+check "$(t history "$ID" | grep -c commit)" 1 "failed commit followed by || true does not take the manager commit"
+
 # 3. second commit + manual step share one history
-fire agent01 'git commit -m b' >/dev/null
+pre agent01 'git commit -m b2'
+H2="$(commit b2 "add b2")"; fire agent01 'git commit -m b2' >/dev/null
 t step "$ID" --done "added a and b" --next "add c" >/dev/null
+pre agent01 'git commit -m c'
 H3="$(commit c "add c")"; fire agent01 'git commit -m c' >/dev/null
 H="$(t history "$ID")"
 check "$(printf '%s\n' "$H" | wc -l | tr -d ' ')" 4 "history: 3 commits + 1 step"
@@ -97,7 +109,7 @@ rm -f "$P/wip.txt"
 OUT="$(t rewind "$ID" "$H1" --apply 2>&1)"; check $? 0 "rewind --apply exits 0" 2>/dev/null
 check "$(git -C "$P" rev-list --count "$HEAD0..HEAD")" 2 "two revert commits created"
 check "$([ -f "$P/c.txt" ] && echo y || echo n)" n "c.txt reverted"
-check "$([ -f "$P/b.txt" ] && echo y || echo n)" n "b.txt reverted"
+check "$([ -f "$P/b2.txt" ] && echo y || echo n)" n "b2.txt reverted"
 check "$([ -f "$P/a.txt" ] && echo y || echo n)" y "a.txt (the checkpoint) kept"
 check "$(git -C "$P" merge-base --is-ancestor "$HEAD0" HEAD && echo y)" y "history not rewritten (old HEAD is an ancestor)"
 has "$(git -C "$P" log -1 --format=%s)" "Revert" "revert commit subject"
@@ -107,7 +119,18 @@ has "$R" "Reverted by a rewind" "resume-prompt lists reverted commits separately
 D="$(t rewind "$ID" "$H1")"
 has "$D" "Nothing to revert" "a second rewind finds nothing left to revert"
 
+# 7b. two linked agents share one tree: a HEAD already recorded for task 1 is not recorded again for task 2
+ID2="$(t new "second job" --owner worker-sonnet --writable "e.txt")"
+t set "$ID2" agent=agent02 >/dev/null
+pre agent02 'git commit -m e || true'
+pre agent01 'git commit -m e'
+H5="$(commit e "add e")"; fire agent01 'git commit -m e' >/dev/null
+has "$(t history "$ID")" "$H5 add e" "agent01 got its own commit"
+fire agent02 'git commit -m e || true' >/dev/null
+check "$(t history "$ID2" | grep -c commit)" 0 "a HEAD recorded for another task is not recorded again"
+
 # 8. speed of the hook for a commit (loose bound for slow Windows process spawns)
+pre agent01 'git commit -m d'
 H4="$(commit d "add d")"
 S=$(date +%s%N 2>/dev/null); fire agent01 'git commit -m d' >/dev/null; E=$(date +%s%N 2>/dev/null)
 case "$S$E" in *N*|"") ok "timing skipped (no %N)" ;; *) MS=$(( (E - S) / 1000000 )); if [ "$MS" -lt 5000 ]; then ok "hook took ${MS} ms"; else bad "hook took ${MS} ms"; fi ;; esac
