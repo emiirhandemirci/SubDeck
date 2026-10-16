@@ -1,0 +1,4 @@
+Checked the fake claims: the test does not cover the edge case.
+Findings: add a test for the empty input.
+Fingerprint: HEAD={HEAD} state=0
+Verdict: Needs fixes

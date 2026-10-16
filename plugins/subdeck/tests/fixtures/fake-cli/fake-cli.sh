@@ -13,6 +13,13 @@
 #   FAKE_CLI_SH=<command>   test-only: run with bash -c in the cwd after FAKE_CLI_TOUCH (rename, push, git dir,
 #                           symlink cases); with FAKE_CLI_LOG its exit code goes to <n>.<tool>.sh-exit, its output to .sh-out
 #   FAKE_CLI_MODE=quota|auth  canned stderr, exit 1 (gemini auth: 41), no reply
+#   FAKE_CLI_QUOTA_MSG=<text> quota mode: this stderr text instead of the canned one (reset-time parsing tests)
+#   FAKE_CLI_RUN=<script>   bash script run in the cwd before any output (the fake manager calls tasks.sh/autopilot.sh with it)
+#   FAKE_CLI_USAGE=<in>,<out> token usage in the output: claude `usage` object in the result, codex `turn.completed`,
+#                           gemini `stats.models`
+#   FAKE_CLI_HANG=1         no output; sleep until killed (stuck detection)
+#   FAKE_CLI_SESSION=<id>   claude session_id / codex thread_id in the output (default fake-0001 / fake-thread-0001)
+# Reply text: `{HEAD}` is replaced by the cwd's `git rev-parse --short=12 HEAD` (verifier fingerprint tests).
 # Output: claude one-line JSON (result, session_id fake-0001); gemini pretty JSON {"response":...};
 #   codex JSONL events on stdout and the reply written to the -o file; other tools the reply on stdout.
 
@@ -59,27 +66,40 @@ if [ -n "${FAKE_CLI_SH:-}" ]; then
   [ -n "${base:-}" ] && printf '%s\n' "$rc" > "$base.sh-exit"
 fi
 
+if [ -n "${FAKE_CLI_RUN:-}" ]; then
+  bash "$FAKE_CLI_RUN" > "${base:-/dev/null}${base:+.run-out}" 2>&1
+fi
+
+if [ "${FAKE_CLI_HANG:-}" = 1 ]; then
+  while :; do sleep 1; done
+fi
+
 case "${FAKE_CLI_MODE:-}" in
-  quota) echo 'Error: 429 Too Many Requests: rate limit exceeded' >&2; exit 1 ;;
+  quota) printf '%s\n' "${FAKE_CLI_QUOTA_MSG:-Error: 429 Too Many Requests: rate limit exceeded}" >&2; exit 1 ;;
   auth) echo 'Error: not logged in' >&2; [ "$TOOL" = gemini ] && exit 41; exit 1 ;;
 esac
 
 REPLY_FILE="${FAKE_CLI_REPLY:-worker-done.txt}"
 case "$REPLY_FILE" in */*) ;; *) REPLY_FILE="$FDIR/replies/$REPLY_FILE" ;; esac
 REPLY=""; [ -f "$REPLY_FILE" ] && REPLY="$(cat "$REPLY_FILE")"
+case "$REPLY" in *"{HEAD}"*) REPLY="${REPLY//\{HEAD\}/$(git rev-parse --short=12 HEAD 2>/dev/null)}" ;; esac
 jesc "$REPLY"
+UIN=1; UOUT=1; UJ=""
+if [ -n "${FAKE_CLI_USAGE:-}" ]; then UIN="${FAKE_CLI_USAGE%%,*}"; UOUT="${FAKE_CLI_USAGE#*,}"; fi
 
 case "$TOOL" in
   claude)
-    printf '{"type":"result","subtype":"success","is_error":false,"result":"%s","session_id":"fake-0001"}\n' "$JE" ;;
+    [ -n "${FAKE_CLI_USAGE:-}" ] && UJ=",\"usage\":{\"input_tokens\":$UIN,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":7,\"output_tokens\":$UOUT}"
+    printf '{"type":"result","subtype":"success","is_error":false,"result":"%s","session_id":"%s"%s}\n' "$JE" "${FAKE_CLI_SESSION:-fake-0001}" "$UJ" ;;
   gemini)
-    printf '{\n  "response": "%s",\n  "stats": {}\n}\n' "$JE" ;;
+    [ -n "${FAKE_CLI_USAGE:-}" ] && UJ="\"models\": {\"gemini-x\": {\"tokens\": {\"prompt\": $UIN, \"candidates\": $UOUT}}}"
+    printf '{\n  "response": "%s",\n  "stats": {%s}\n}\n' "$JE" "$UJ" ;;
   codex)
     out=""; prev=""
     for a in "$@"; do [ "$prev" = -o ] && out="$a"; prev="$a"; done
-    printf '{"type":"thread.started","thread_id":"fake-thread-0001"}\n{"type":"turn.started"}\n'
+    printf '{"type":"thread.started","thread_id":"%s"}\n{"type":"turn.started"}\n' "${FAKE_CLI_SESSION:-fake-thread-0001}"
     printf '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"%s"}}\n' "$JE"
-    printf '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}\n'
+    printf '{"type":"turn.completed","usage":{"input_tokens":%s,"cached_input_tokens":0,"output_tokens":%s}}\n' "$UIN" "$UOUT"
     [ -n "$out" ] && printf '%s\n' "$REPLY" > "$out" ;;
   *)
     [ -n "$REPLY" ] && printf '%s\n' "$REPLY" ;;

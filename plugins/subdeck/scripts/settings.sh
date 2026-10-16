@@ -20,6 +20,10 @@
 #       auto-bind=on|off                                    -> config key tasks.autoBind (written here)
 #       commit-pathspec|commit-scope=warn|off               -> guard.sh (guard.rules.<id>; warn-only rules)
 #       roles.<role>.tool|model|args|cmd|timeout=<v>        -> config member "roles" (written here; per role the whole object of one scope wins)
+#       loop-detect=on|off                                  -> config key loopDetect (written here; read by checkpoint.sh)
+#       autopilot.enabled|branch|max-parallel|max-runs-day|max-turns-day|stuck-minutes|tick-seconds|manager-gap|
+#         digest-hour|quiet-hours, autopilot.budget.tokens-day|tokens-week|runs-week -> config member "autopilot"
+#         (camelCase members, budget nested; per key project wins; autopilot.enabled only with --project)
 #       statusline=on|off                                   -> not written here (the skill edits settings.json)
 # Exit codes: show/help/reset always 0. json 0 (2 on a bad argument). set: 0 on success, 2 + one-line
 # error on stderr for any invalid key/value (nothing is written if any pair is invalid).
@@ -204,6 +208,20 @@ meta() {
     roles.*.args)    MG=roles; MT=string; MD="extra CLI flags, split on spaces ({sp} = a literal space); auto-approve flags are refused" ;;
     roles.*.cmd)     MG=roles; MT=string; MD="command for tool custom; must contain {prompt_file}" ;;
     roles.*.timeout) MG=roles; MT=int; MD="seconds before the run is stopped, 60-86400 (default 1800)" ;;
+    loop-detect)  MG=tasks; MT=bool; MO="on off"; MD="warn a sub-agent that repeats the same failing call 3 times to stop retrying" ;;
+    autopilot.enabled)        MG=autopilot; MT=bool; MO="on off"; MD="run the task queue unattended for this project (per project only)" ;;
+    autopilot.branch)         MG=autopilot; MT=string; MD="branch the autopilot integrates verified work into; empty = autopilot/<date of first start>" ;;
+    autopilot.max-parallel)   MG=autopilot; MT=int; MD="task runs at the same time, 1-8" ;;
+    autopilot.max-runs-day)   MG=autopilot; MT=int; MD="task runs per local day, 1-500" ;;
+    autopilot.max-turns-day)  MG=autopilot; MT=int; MD="manager turns per local day, 1-500" ;;
+    autopilot.stuck-minutes)  MG=autopilot; MT=int; MD="minutes without log or transcript growth before a run is stopped, 5-600" ;;
+    autopilot.tick-seconds)   MG=autopilot; MT=int; MD="seconds between ticks of the loop, 30-3600" ;;
+    autopilot.manager-gap)    MG=autopilot; MT=int; MD="minutes between manager turns, 0-240" ;;
+    autopilot.digest-hour)    MG=autopilot; MT=int; MD="local hour of the daily digest notification, 0-23" ;;
+    autopilot.quiet-hours)    MG=autopilot; MT=string; MD="local HH-HH window without launches or turns (may wrap midnight); empty = none" ;;
+    autopilot.budget.tokens-day)  MG=autopilot; MT=int; MD="tokens per local day, 0 = no limit (max 10^10)" ;;
+    autopilot.budget.tokens-week) MG=autopilot; MT=int; MD="tokens per ISO week, 0 = no limit (max 10^10)" ;;
+    autopilot.budget.runs-week)   MG=autopilot; MT=int; MD="task runs per ISO week, 0 = no limit (max 5000)" ;;
     *)            MG=guard; MT=enum; MO="deny ask off"; MD="guard rule" ;;
   esac
 }
@@ -286,7 +304,31 @@ END {
   if (sv("tasks/dir")) out("tasks.dir", EV, ES); else out("tasks.dir", "", "default")
   if (sv("tasks/reportCheck", "true false")) out("report-check", (EV == "true") ? "on" : "off", ES); else out("report-check", "on", "default")
   if (sv("tasks/autoBind", "true false")) out("auto-bind", (EV == "true") ? "on" : "off", ES); else out("auto-bind", "on", "default")
+  if (sv("loopDetect", "true false")) out("loop-detect", (EV == "true") ? "on" : "off", ES); else out("loop-detect", "on", "default")
   roles_out()
+  autopilot_out()
+}
+# autopilot: per key project wins over user; autopilot.enabled is read from the project scopes only
+function apint(k, path, def, lo, hi,   x) {
+  if (sv(path) && EV ~ /^[0-9]+$/ && length(EV) <= 11 && EV + 0 >= lo && EV + 0 <= hi) { x = EV; sub(/^0+/, "", x); if (x == "") x = "0"; out(k, x, ES) }
+  else out(k, def, "default")
+}
+function autopilot_out(   i, r) {
+  EV = ""; ES = "default"
+  for (i = 1; i <= 2; i++) { r = substr("pl", i, 1); if (((r, "autopilot/enabled") in S) && S[r, "autopilot/enabled"] ~ /^(true|false)$/) { EV = S[r, "autopilot/enabled"]; ES = "project"; break } }
+  if (ES == "project") out("autopilot.enabled", (EV == "true") ? "on" : "off", ES); else out("autopilot.enabled", "off", "default")
+  if (sv("autopilot/branch") && EV ~ /^[A-Za-z0-9._\/-]+$/ && length(EV) <= 100 && EV !~ /\.\./ && EV != "main" && EV != "master") out("autopilot.branch", EV, ES); else out("autopilot.branch", "", "default")
+  apint("autopilot.max-parallel", "autopilot/maxParallel", 2, 1, 8)
+  apint("autopilot.max-runs-day", "autopilot/maxRunsDay", 20, 1, 500)
+  apint("autopilot.max-turns-day", "autopilot/maxTurnsDay", 48, 1, 500)
+  apint("autopilot.stuck-minutes", "autopilot/stuckMinutes", 30, 5, 600)
+  apint("autopilot.tick-seconds", "autopilot/tickSeconds", 60, 30, 3600)
+  apint("autopilot.manager-gap", "autopilot/managerGap", 5, 0, 240)
+  apint("autopilot.digest-hour", "autopilot/digestHour", 8, 0, 23)
+  if (sv("autopilot/quietHours") && EV ~ /^([01][0-9]|2[0-3])-([01][0-9]|2[0-3])$/) out("autopilot.quiet-hours", EV, ES); else out("autopilot.quiet-hours", "", "default")
+  apint("autopilot.budget.tokens-day", "autopilot/budget/tokensDay", 0, 0, 10000000000)
+  apint("autopilot.budget.tokens-week", "autopilot/budget/tokensWeek", 0, 0, 10000000000)
+  apint("autopilot.budget.runs-week", "autopilot/budget/runsWeek", 0, 0, 5000)
 }
 # roles: per role the whole object of the first scope (project, legacy project, user) that has it
 function roles_out(   key, a, r, nr, i, j, t, sc, f, fv, src, v, order) {
@@ -367,7 +409,7 @@ show() {
       cur="$g"
       case "$g" in models) echo "Models" ;; notify) echo "Notifications" ;; push) echo "Push" ;; guard) echo "Guard" ;;
         protect) echo "Protected files" ;; resources) echo "Protected resources" ;; context) echo "Context" ;;
-        tasks) echo "Tasks" ;; roles) echo "Roles" ;; statusline) echo "Status line" ;; esac
+        tasks) echo "Tasks" ;; roles) echo "Roles" ;; autopilot) echo "Autopilot" ;; statusline) echo "Status line" ;; esac
     fi
     if [ "$g" = roles ]; then
       case "$k" in
@@ -381,7 +423,9 @@ show() {
       esac
       continue
     fi
-    case "$k" in protect|protect-*) [ -n "$v" ] || v="(none)" ;; context) [ "$v" = 0 ] && v="0 (auto)" ;; tasks.dir) [ -n "$v" ] || v="(state dir)" ;; esac
+    case "$k" in protect|protect-*) [ -n "$v" ] || v="(none)" ;; context) [ "$v" = 0 ] && v="0 (auto)" ;; tasks.dir) [ -n "$v" ] || v="(state dir)" ;;
+      autopilot.branch) [ -n "$v" ] || v="(autopilot/<date>)" ;; autopilot.quiet-hours) [ -n "$v" ] || v="(none)" ;;
+      autopilot.budget.*) [ "$v" = 0 ] && v="0 (no limit)" ;; esac
     [ "$s" = default ] && s=""
     printf '  %-19s %-20s %s\n' "$k" "$v" "$s"
   done <<< "$REC"
@@ -409,8 +453,8 @@ EOF
     [ -n "$k" ] || continue
     [ "$g" = roles ] && continue
     case "$t" in
-      int) r="a number (tokens)" ;;
-      string) r="a path (empty = default)" ;;
+      int) if [ "$g" = autopilot ]; then r="a number"; else r="a number (tokens)"; fi ;;
+      string) if [ "$g" = autopilot ]; then r="text (empty = default)"; else r="a path (empty = default)"; fi ;;
       list) if [ -n "$o" ]; then r="comma list of: ${o// /, }"; else r="comma list"; fi ;;
       *) r="${o// /|}" ;;
     esac
@@ -486,6 +530,24 @@ role_raw() { # file role -> raw JSON object of roles.<role> in that file (empty 
 rfield() { printf '%s' "$1" | obj_members "^\"$2\"[ \t]*:" value 2>/dev/null; }   # object field -> raw value
 runq() { RQ="${1#\"}"; RQ="${RQ%\"}"; }
 # roles_write file: apply the role objects computed in RJ_<id> (object text or "-" = remove) to the "roles" member
+# ap_write file: the "autopilot" member; APF/APB = touched camelCase fields (top level / budget), values in
+# APV_<field> / APBV_<field> (raw JSON or "-" = remove). Other members (also unknown ones) are kept verbatim.
+ap_write() {
+  local f="$1" raw braw="" inner="" binner="" body="" bbody="" line k v re bre
+  raw="$(member_value "$f" autopilot)"; case "$raw" in "{"*) ;; *) raw="" ;; esac
+  [ -n "$raw" ] && braw="$(printf '%s' "$raw" | obj_members '^"budget"[ \t]*:' value 2>/dev/null)"
+  case "$braw" in "{"*) ;; *) braw="" ;; esac
+  re='^"(budget'; for k in $APF; do re="$re|$k"; done; re="$re)\"[ \t]*:"
+  bre='^"(-'; for k in $APB; do bre="$bre|$k"; done; bre="$bre)\"[ \t]*:"
+  [ -n "$raw" ] && inner="$(printf '%s' "$raw" | obj_members "$re" except 2>/dev/null)"
+  [ -n "$braw" ] && binner="$(printf '%s' "$braw" | obj_members "$bre" except 2>/dev/null)"
+  while IFS= read -r line; do [ -n "$line" ] && body="$body$line,"; done <<< "$inner"
+  for k in $APF; do eval "v=\${APV_$k}"; [ "$v" = - ] || body="$body\"$k\":$v,"; done
+  while IFS= read -r line; do [ -n "$line" ] && bbody="$bbody$line,"; done <<< "$binner"
+  for k in $APB; do eval "v=\${APBV_$k}"; [ "$v" = - ] || bbody="$bbody\"$k\":$v,"; done
+  [ -n "$bbody" ] && body="$body\"budget\":{${bbody%,}},"
+  if [ -z "$body" ]; then member_write "$f" autopilot remove; else member_write "$f" autopilot "{${body%,}}"; fi
+}
 roles_write() {
   local f="$1" raw members m n rid body="" seen=" " line
   raw="$(member_value "$f" roles)"
@@ -518,7 +580,14 @@ case "$CMD" in
     [ ${#PAIRS[@]} -gt 0 ] || die "set needs key=value pairs, e.g. set notify=on worker=opus"
     RULES=" $STATIC_RULES push "; RE_MODEL="^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$"; RE_NUM="^[0-9]{1,9}$"
     MP=(); GP=(); NV=""; NE=""; GE=""; SL=""; PUSH=""; PB=""; PBSET=0; PRSET=0; PR=""; UP=""; CX=""
-    TDOP=keep; TD=""; RCOP=keep; RC=""; ABOP=keep; AB=""; RES=(); ROLELIST=" "
+    TDOP=keep; TD=""; RCOP=keep; RC=""; ABOP=keep; AB=""; RES=(); ROLELIST=" "; APF=""; APB=""; LD=""
+    apset() { case " $APF " in *" $1 "*) ;; *) APF="$APF $1" ;; esac; printf -v "APV_$1" '%s' "$2"; }
+    apbset() { case " $APB " in *" $1 "*) ;; *) APB="$APB $1" ;; esac; printf -v "APBV_$1" '%s' "$2"; }
+    apnum() { # key value lo hi -> AN (normalised number) or die
+      [[ $2 =~ ^[0-9]{1,11}$ ]] || die "$1 must be a whole number $3-$4 (got '$2')"
+      AN="$(printf '%s' "$2" | sed 's/^0*//')"; [ -n "$AN" ] || AN=0
+      awk -v n="$AN" -v lo="$3" -v hi="$4" 'BEGIN { exit !(n + 0 >= lo + 0 && n + 0 <= hi + 0) }' || die "$1 must be $3-$4 (got '$2')"
+    }
     for kv in "${PAIRS[@]}"; do
       k="${kv%%=*}"; v="${kv#*=}"; lower "$v"; lv="$LOW"
       case "$k" in
@@ -602,6 +671,31 @@ case "$CMD" in
           rid="${rn//-/_}"
           case "$ROLELIST" in *" $rn "*) ;; *) ROLELIST="$ROLELIST$rn " ;; esac
           printf -v "RF_${rid}_$fld" '%s' "$v"; printf -v "RS_${rid}_$fld" '%s' 1 ;;
+        loop-detect)
+          case "$lv" in on|true) LD=true ;; off|false) LD=false ;; *) die "loop-detect must be on or off (got '$v')" ;; esac ;;
+        autopilot.enabled)
+          [ "$SCOPE" = --project ] || die "autopilot.enabled is per project: add --project"
+          case "$lv" in on|true) apset enabled true ;; off|false) apset enabled false ;; *) die "autopilot.enabled must be on or off (got '$v')" ;; esac ;;
+        autopilot.branch)
+          if [ -z "$v" ]; then apset branch -
+          else
+            { [[ $v =~ ^[A-Za-z0-9._/-]{1,100}$ ]] && case "$v" in *..*) false ;; *) true ;; esac; } || die "autopilot.branch: invalid branch name '$v' (letters, digits, . _ / -; max 100; no ..)"
+            case "$v" in main|master) die "autopilot.branch may not be $v (the autopilot never works on main or master)" ;; esac
+            apset branch "\"$v\""
+          fi ;;
+        autopilot.max-parallel) apnum "$k" "$v" 1 8; apset maxParallel "$AN" ;;
+        autopilot.max-runs-day) apnum "$k" "$v" 1 500; apset maxRunsDay "$AN" ;;
+        autopilot.max-turns-day) apnum "$k" "$v" 1 500; apset maxTurnsDay "$AN" ;;
+        autopilot.stuck-minutes) apnum "$k" "$v" 5 600; apset stuckMinutes "$AN" ;;
+        autopilot.tick-seconds) apnum "$k" "$v" 30 3600; apset tickSeconds "$AN" ;;
+        autopilot.manager-gap) apnum "$k" "$v" 0 240; apset managerGap "$AN" ;;
+        autopilot.digest-hour) apnum "$k" "$v" 0 23; apset digestHour "$AN" ;;
+        autopilot.quiet-hours)
+          if [ -z "$v" ]; then apset quietHours -
+          else [[ $v =~ ^([01][0-9]|2[0-3])-([01][0-9]|2[0-3])$ ]] || die "autopilot.quiet-hours must be HH-HH in 24 h local time, e.g. 22-07 (got '$v')"; apset quietHours "\"$v\""; fi ;;
+        autopilot.budget.tokens-day) apnum "$k" "$v" 0 10000000000; apbset tokensDay "$AN" ;;
+        autopilot.budget.tokens-week) apnum "$k" "$v" 0 10000000000; apbset tokensWeek "$AN" ;;
+        autopilot.budget.runs-week) apnum "$k" "$v" 0 5000; apbset runsWeek "$AN" ;;
         statusline)
           case "$lv" in on|install) SL=on ;; off|remove) SL=off ;; *) die "statusline must be on or off (got '$v')" ;; esac ;;
         *)
@@ -650,7 +744,7 @@ case "$CMD" in
       printf -v "RJ_$rid" '%s' "{$body}"
     done
     # a corrupt target file must not leave a half-applied set
-    if { [ -n "$CX" ] || [ $TDOP != keep ] || [ $RCOP != keep ] || [ $ABOP != keep ]; } && ! ctx_members "$TARGET" >/dev/null; then die "$TARGET is not a valid JSON object; left untouched"; fi
+    if { [ -n "$CX" ] || [ $TDOP != keep ] || [ $RCOP != keep ] || [ $ABOP != keep ] || [ -n "$APF$APB$LD" ]; } && ! ctx_members "$TARGET" >/dev/null; then die "$TARGET is not a valid JSON object; left untouched"; fi
     OUT=""; ERRLINE=""; SNAP=""; SNAPSET=0
     if [ -f "$TARGET" ]; then IFS= read -r -d "" SNAP < "$TARGET"; SNAPSET=1; fi   # restored if any routed write fails
     route() { # run a routed command, keep its first output line, remember the first error
@@ -677,6 +771,12 @@ case "$CMD" in
     if [ -z "$ERRLINE" ] && { [ $TDOP != keep ] || [ $RCOP != keep ] || [ $ABOP != keep ]; }; then
       if l="$(tasks_write "$TARGET" $TDOP "$TD" $RCOP "$RC" $ABOP "$AB")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
     fi
+    if [ -z "$ERRLINE" ] && [ -n "$APF$APB" ]; then
+      if l="$(ap_write "$TARGET")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
+    fi
+    if [ -z "$ERRLINE" ] && [ -n "$LD" ]; then
+      if l="$(member_write "$TARGET" loopDetect "$LD")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
+    fi
     if [ -z "$ERRLINE" ] && [ "$ROLELIST" != " " ]; then
       if l="$(roles_write "$TARGET")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
     fi
@@ -695,6 +795,8 @@ case "$CMD" in
     ctx_write "$TARGET" remove >/dev/null
     member_write "$TARGET" tasks remove >/dev/null
     member_write "$TARGET" roles remove >/dev/null
+    member_write "$TARGET" autopilot remove >/dev/null
+    member_write "$TARGET" loopDetect remove >/dev/null
     echo; show ;;
 esac
 exit 0

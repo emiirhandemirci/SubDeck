@@ -35,7 +35,7 @@ has "$out" '^ +tasks.dir +\(state dir\)' "table: tasks.dir default"
 has "$out" '^ +report-check +on *$' "table: report-check default on"
 has "$out" '^More: /subdeck:settings help$' "table: help pointer"
 hasnt "$out" '->' "table: no resolved-model rows"
-[ "$(printf '%s\n' "$out" | wc -l)" -le 52 ] && ok "table stays short" || bad "table too long"
+[ "$(printf '%s\n' "$out" | wc -l)" -le 68 ] && ok "table stays short (autopilot adds one line per key)" || bad "table too long"
 
 # ---- help ----
 out="$(run help)"; rc=$?
@@ -411,6 +411,52 @@ out="$(run)"
 has "$out" '^ +light +haiku *$' "reset: light back to haiku"
 has "$out" '^ +auto-bind +on *$' "reset: auto-bind back to on"
 has "$out" '^ +commit-scope +warn *$' "reset: commit-scope back to warn"
+rm -f "$CFG"; rm -rf "${SS:?}"/*
+
+# ---- autopilot keys (0.9) and loop-detect ----
+out="$(run)"
+has "$out" '^Autopilot$' "group: Autopilot"
+has "$out" '^ +autopilot.enabled +off *$' "autopilot off by default"
+has "$out" '^ +autopilot.max-parallel +2 *$' "max-parallel default 2"
+has "$out" '^ +autopilot.budget.tokens-day +0 \(no limit\)' "tokens-day default no limit"
+has "$out" '^ +loop-detect +on *$' "loop-detect default on"
+j="$(run json)"
+has "$j" '"key":"roles\.[a-z-]*\.timeout".*"key":"autopilot\.enabled"' "json: autopilot group after roles"
+has "$j" '"key":"autopilot.digest-hour","value":8,"source":"default","group":"autopilot","type":"int"' "json: digest-hour int default 8"
+out="$(run set autopilot.enabled=on 2>&1)"; rc=$?
+[ $rc -eq 2 ] && ok "autopilot.enabled at user scope: exit 2" || bad "autopilot.enabled user scope exit $rc"
+has "$out" 'autopilot.enabled is per project: add --project' "user scope message"
+[ ! -f "$CFG" ] && ok "refused set writes nothing" || bad "refused set wrote $CFG"
+printf '{"autopilot":{"enabled":true,"maxParallel":4}}' > "$H/.subdeck/config.json"
+j="$(run json --project)"
+has "$j" '"key":"autopilot.enabled","value":"off","source":"default"' "user-scope enabled value is ignored"
+has "$j" '"key":"autopilot.max-parallel","value":4,"source":"user"' "user-scope max-parallel is read"
+rm -f "$CFG"
+for bad in autopilot.max-parallel=0 autopilot.max-parallel=9 autopilot.max-runs-day=501 autopilot.stuck-minutes=4 autopilot.tick-seconds=29 \
+  autopilot.manager-gap=241 autopilot.digest-hour=24 autopilot.quiet-hours=7-9 autopilot.quiet-hours=24-01 autopilot.branch=main \
+  autopilot.branch=a..b "autopilot.branch=a b" autopilot.budget.runs-week=5001 autopilot.budget.tokens-day=10000000001 autopilot.budget.tokens-day=-1 loop-detect=maybe; do
+  run set "$bad" --project >/dev/null 2>&1; rc=$?
+  [ $rc -eq 2 ] && ok "refused: $bad" || bad "accepted: $bad (exit $rc)"
+done
+[ ! -f "$PS/config.json" ] && ok "invalid autopilot values write nothing" || bad "invalid value wrote $PS/config.json"
+run set autopilot.enabled=on autopilot.max-parallel=3 autopilot.quiet-hours=22-07 autopilot.branch=ap/night autopilot.budget.tokens-week=5000 loop-detect=off --project >/dev/null 2>&1
+c="$(cat "$PS/config.json" 2>/dev/null)"
+has "$c" '"autopilot":\{[^}]*"enabled":true' "config member autopilot.enabled"
+has "$c" '"maxParallel":3' "camelCase member maxParallel"
+has "$c" '"quietHours":"22-07"' "quietHours string"
+has "$c" '"budget":\{"tokensWeek":5000\}' "budget nested"
+has "$c" '"loopDetect":false' "loopDetect member (read by checkpoint.sh)"
+run set autopilot.budget.runs-week=10 autopilot.branch= --project >/dev/null 2>&1
+c="$(cat "$PS/config.json" 2>/dev/null)"
+has "$c" '"budget":\{"tokensWeek":5000,"runsWeek":10\}' "budget members merged"
+hasnt "$c" '"branch"' "empty branch removes the member"
+has "$c" '"maxParallel":3' "other autopilot members kept"
+out="$(HOME="$H" bash "$S" show "$P")"
+has "$out" '^ +autopilot.enabled +on +project' "show: enabled from project"
+has "$out" '^ +loop-detect +off +project' "show: loop-detect off"
+run reset --project >/dev/null 2>&1
+c="$(cat "$PS/config.json" 2>/dev/null)"
+hasnt "$c" 'autopilot|loopDetect' "reset removes autopilot and loopDetect"
 rm -f "$CFG"; rm -rf "${SS:?}"/*
 
 # ---- skill file ----
