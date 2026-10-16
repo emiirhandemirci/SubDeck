@@ -78,11 +78,11 @@ test('UI wiring: Task group, waiting item jumps to the agent, Tasks tab hidden w
   assert.match(html, /id="tabTasks"[^>]*\bhidden\b/);
 });
 
-test('splitAgents: running, actionable, recent and selected stay; old finished collapse', () => {
+test('splitAgents: running, actionable and selected stay; other finished agents collapse', () => {
   const now = Date.parse('2026-10-07T12:00:00Z'), ago = m => new Date(now - m * 60000).toISOString();
   const a = (id, o = {}) => ({ id, state: 'finished', updatedAt: ago(60), ...o });
   const r = splitAgents([a('old1'), a('old2'), a('run', { state: 'running' }), a('new', { updatedAt: ago(2) }), a('sel'),
     a('nr', { reportMissing: { at: 'x' } }), a('tk', { task: { id: 't-1', status: 'review' } })], 'sel', now);
-  assert.deepEqual(r.quiet.map(x => x.id), ['old1', 'old2']);
-  assert.equal(r.shown.length, 5);
+  assert.deepEqual(r.quiet.map(x => x.id), ['old1', 'old2', 'new']);
+  assert.equal(r.shown.length, 4);
 });

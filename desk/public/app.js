@@ -417,19 +417,25 @@ function renderMapInner() {
     head.insertBefore(toolBadge(s.tool), head.children[1]);
     card.append(head);
     if (s.children.length) {
+      const sp = splitAgents(s.children, S.selectedSession);
+      const open = store.get('open.' + s.id, false);
+      const toggle = ev => { if (ev) ev.stopPropagation(); store.set('open.' + s.id, !open); renderMap(); };
+      const chev = el('button', 'chev', open ? '▾' : '▸'); chev.type = 'button';
+      chev.setAttribute('aria-expanded', String(open)); chev.setAttribute('aria-label', open ? 'Collapse agents' : 'Expand agents'); chev.tabIndex = -1;
+      chev.addEventListener('click', toggle);
+      head.insertBefore(chev, head.firstChild);
+      head.addEventListener('dblclick', toggle);
       const ul = el('ul', 'agents');
       ul.setAttribute('role', 'group');
-      const sp = splitAgents(s.children, S.selectedSession);
-      const open = sp.quiet.length > 0 && store.get('fin.' + s.id, false);
       const add = c => { const li = el('li'); li.append(sessionLine(c, 'agent')); ul.append(li); };
       for (const c of (open ? s.children : sp.shown)) add(c);
-      if (sp.quiet.length) {
-        const li = el('li'); const b = el('button', 'linklike muted fin-toggle', `${open ? '▾' : '▸'} ${sp.quiet.length} finished agent${sp.quiet.length === 1 ? '' : 's'}`);
-        b.type = 'button'; b.setAttribute('aria-expanded', String(open));
-        b.addEventListener('click', ev => { ev.stopPropagation(); store.set('fin.' + s.id, !open); renderMap(); });
+      if (!open && sp.quiet.length) {
+        const li = el('li'); const b = el('button', 'linklike muted fin-toggle', `+${sp.quiet.length} agent${sp.quiet.length === 1 ? '' : 's'}`);
+        b.type = 'button'; b.setAttribute('aria-expanded', 'false');
+        b.addEventListener('click', toggle);
         li.append(b); ul.append(li);
       }
-      card.append(ul);
+      if (ul.children.length) card.append(ul);
     }
     box.append(card);
   }

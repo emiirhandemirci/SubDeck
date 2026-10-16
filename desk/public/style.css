@@ -457,3 +457,6 @@ button.revent { cursor: pointer; }
 code.cmd { white-space: normal; word-break: normal; overflow-wrap: normal; }
 
 .fin-toggle { font-size: var(--fs-sm); padding: 2px 0 2px 4px; }
+
+.chev { border: 0; background: transparent; color: var(--muted); padding: 0 2px; width: 16px; cursor: pointer; font-size: var(--fs-sm); }
+.chev:hover { color: var(--text); }
