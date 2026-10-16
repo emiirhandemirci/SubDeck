@@ -1,6 +1,6 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
-import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText, cumulativeTokensText, cumulativeTokensTitle, agentTokensText, quotaBanner, laterSuccess, splitAgents, hiddenSummary, cliText, rowBadges, statusLegend } from './format.js';
+import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText, cumulativeTokensText, cumulativeTokensTitle, cacheShareText, agentTokensText, quotaBanner, laterSuccess, splitAgents, hiddenSummary, cliText, rowBadges, statusLegend } from './format.js';
 import { initSettings } from './settings.js';
 import { writeJSON } from './token.js';
 import { initTasks, resumeLines, handoffSummary, checkpointRows, ruleEventRows } from './tasks.js';
@@ -389,7 +389,7 @@ function sessionLine(s, cls) {
   if (rb) { const b = el('span', 'tag runbadge', rb); b.title = `Headless run: ${rb}`; line.append(b); }
   else if (s.agentType && cls === 'agent') line.append(el('span', 'tag mono', s.agentType));
   const ct = s.parentId ? cumulativeTokensText(s) : agentTokensText(s);
-  if (ct) { const c = el('span', 'tag tokens', ct); c.title = s.parentId ? cumulativeTokensTitle(s) : 'Cumulative tokens of the agents of this session'; line.append(c); }
+  if (ct) { const c = el('span', 'tag tokens', ct); c.title = s.parentId ? cumulativeTokensTitle(s) : ['Cumulative tokens of the agents of this session', cacheShareText(s)].filter(Boolean).join('\n'); line.append(c); }
   const u = contextUsage(s, S.ctxWindow);
   line.append(el('span', 'meta-line muted', u ? `${formatDuration(s.durationMs)} · ${u.pct === null ? u.text : `${formatTokens(u.tokens)} · ${u.pct}%`}` : formatDuration(s.durationMs)));
   if (u && u.pct !== null) line.append(usageBar(u));
@@ -759,6 +759,7 @@ function renderDetailInner(box) {
   if (!s.resume) { const r = rowBadges(s, FAIL_LABEL); if (r.secondary) { const b = el('span', r.secondary.cls, r.secondary.text); b.title = r.secondary.title; row('Notice', b); } if (r.details.length) row('Task info', r.details.join('. ')); }
   if (s.reportTooLong) row('Report', el('span', 'muted', `Longer than 9 lines${Number.isInteger(s.reportTooLong.lines) ? ` (${s.reportTooLong.lines})` : ''}`));
   { const ct = s.parentId ? cumulativeTokensText(s) : agentTokensText(s); if (ct) row(s.parentId ? 'Cumulative tokens' : 'Agent tokens', s.parentId ? cumulativeTokensText(s, true) : ct); }
+  { const cs = cacheShareText(s); if (cs) row('Prompt cache', cs.replace(/^Cache /, '')); }
   if (s.run) {
     const rb = runBadgeText(s.run);
     if (rb) row('Run', rb);

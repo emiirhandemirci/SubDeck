@@ -239,7 +239,7 @@ async function scanSpawns(file, st, cache) {
 export async function readUsage(file, st, cache) {
   const key = 'u:' + file;
   let c = cache.get(key);
-  if (!c || st.size < c.offset) c = { offset: 0, byId: new Map(), anon: [0, 0], total: null };
+  if (!c || st.size < c.offset) c = { offset: 0, byId: new Map(), anon: [0, 0, 0, 0, 0], total: null };
   if (st.size > c.offset) {
     const fh = await fs.open(file, 'r');
     try {
@@ -258,16 +258,18 @@ export async function readUsage(file, st, cache) {
           const m = o && o.type === 'assistant' && o.message && typeof o.message === 'object' ? o.message : null;
           if (!m || !m.usage || typeof m.usage !== 'object') continue;
           const n = k => (Number.isFinite(m.usage[k]) && m.usage[k] > 0 ? m.usage[k] : 0);
-          const v = [n('input_tokens') + n('cache_creation_input_tokens') + n('output_tokens'), n('cache_read_input_tokens')];
-          if (typeof m.id === 'string' && m.id) c.byId.set(m.id, v); else { c.anon[0] += v[0]; c.anon[1] += v[1]; }
+          const inAll = n('input_tokens') + n('cache_creation_input_tokens') + n('cache_read_input_tokens');   // everything the request sent, cached or not
+          const v = [n('input_tokens') + n('cache_creation_input_tokens') + n('output_tokens'), n('cache_read_input_tokens'), inAll];
+          if (typeof m.id === 'string' && m.id) c.byId.set(m.id, v);
+          else { c.anon[0] += v[0]; c.anon[1] += v[1]; c.anon[2] += inAll; c.anon[3]++; c.anon[4] = Math.max(c.anon[4], inAll); }
         }
         carry = Buffer.from(all.subarray(nl + 1));
       }
       c.offset = pos - carry.length;
     } finally { await fh.close(); }
-    let b = c.anon[0], k = c.anon[1];
-    for (const v of c.byId.values()) { b += v[0]; k += v[1]; }
-    c.total = b + k > 0 ? { billed: b, cached: k } : null;
+    let b = c.anon[0], k = c.anon[1], all = c.anon[2], req = c.anon[3], big = c.anon[4];
+    for (const v of c.byId.values()) { b += v[0]; k += v[1]; all += v[2]; req++; if (v[2] > big) big = v[2]; }
+    c.total = b + k > 0 ? { billed: b, cached: k, input: all, requests: req, largest: big } : null;
   }
   cache.set(key, c);
   return c.total;
@@ -689,6 +691,7 @@ export function mayHaveSpawned(p, c) {
 
 /** Phase 2 for one group: whole-transcript completion records and nested sub-agent parents (incremental after the first scan). */
 async function resolveSpawns(g, cache) {
+  g.topCum = await readUsage(g.file, g.st, cache);
   if (!g.subs.length) return;
   await mapLimit(g.subs, IO_LIMIT, async s => { s.cum = await readUsage(s.file, s.st, cache); });
   g.completions = await readCompletions(g.file, g.st, cache);
@@ -715,6 +718,13 @@ async function resolveSpawns(g, cache) {
   }
 }
 
+/** Prompt-cache stats of one or more usage totals: { cache: { read, input, requests, largest } }, or nothing when no request carried usage. */
+function cacheOf(list) {
+  let read = 0, input = 0, requests = 0, largest = 0;
+  for (const u of list) if (u && u.requests > 0) { read += u.cached; input += u.input; requests += u.requests; largest = Math.max(largest, u.largest); }
+  return requests ? { cache: { read, input, requests, largest } } : {};
+}
+
 /** Builds the adapter sessions of one group (the session and its sub-agents). */
 function groupSessions(g, hookInfo, teams) {
   const sessions = [];
@@ -730,7 +740,7 @@ function groupSessions(g, hookInfo, teams) {
     : { title: `Session ${g.uuid.slice(0, 8)}`, titleSource: 'fallback' };
   sessions.push({ ...base, nativeId: g.uuid, parentNativeId: null, depth: 0, ...title, agentType: null, model: g.top.model, effort: efforts.get('s:' + g.uuid) || null,
     createdAt: g.top.createdAt || msToIso(g.st.birthtimeMs || g.st.mtimeMs), updatedAt: mt, endedAt: null,
-    tokens: { context: g.top.tokens, total: null }, lastActivity: g.top.lastActivity,
+    tokens: { context: g.top.tokens, total: null, ...cacheOf([g.topCum, ...g.subs.map(x => x.cum)]) }, lastActivity: g.top.lastActivity,
     refs: { file: g.file, db: null, key: null }, ...failOf(fails.get('s:' + g.uuid), g.st.mtimeMs), ...taskFields(hookInfo, 's:' + g.uuid, null, g.st.mtimeMs),
     stateBasis: failedBasis(fails.get('s:' + g.uuid), g.st.mtimeMs) || waitingBasis(g.top.pending, notifs.get('s:' + g.uuid), g.st.mtimeMs, mt, notifTypes.get('s:' + g.uuid)) || { kind: 'mtime', at: mt, stateSource: 'mtime' } });
   const seen = new Set();
@@ -754,7 +764,7 @@ function groupSessions(g, hookInfo, teams) {
       model: s.tr.model || (s.meta && s.meta.model) || null,
       createdAt: earlier(s.tr.createdAt, hook && hook.start) || smt, updatedAt: smt, endedAt: (hook && hook.stop) || (done && done.at) || null,
       ...(runStartedAt ? { runStartedAt } : {}),
-      tokens: { context: s.tr.tokens, total: s.cum ? s.cum.billed : null, ...(s.cum ? { cached: s.cum.cached } : {}) }, lastActivity: s.tr.lastActivity,
+      tokens: { context: s.tr.tokens, total: s.cum ? s.cum.billed : null, ...(s.cum ? { cached: s.cum.cached } : {}), ...cacheOf([s.cum]) }, lastActivity: s.tr.lastActivity,
       refs: { file: s.file, db: null, key: null }, failure: s.tr.failure, ...failOf(fails.get('a:' + s.agentId), s.st.mtimeMs), ...taskFields(hookInfo, 'a:' + s.agentId, hook, s.st.mtimeMs),
       stateBasis: subBasis(hook, smt, done, waitingBasis(s.tr.pending, notifs.get('a:' + s.agentId), s.st.mtimeMs, smt, notifTypes.get('a:' + s.agentId)), failedBasis(fails.get('a:' + s.agentId), s.st.mtimeMs)) });
   }

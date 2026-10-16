@@ -253,7 +253,16 @@ export function cumulativeTokensTitle(s) {
   const t = s && s.tokens;
   if (!t || !Number.isFinite(t.total)) return null;
   const c = Number.isFinite(t.cached) && t.cached > 0 ? ` ${formatTokens(t.cached)} more tokens were served from cache and are not counted.` : '';
-  return `Tokens this agent used over all its turns (input + cache writes + output).${c}`;
+  const cs = cacheShareText(s);
+  return `Tokens this agent used over all its turns (input + cache writes + output).${c}${cs ? `\n${cs}` : ''}`;
+}
+
+/** "Cache 82 % · 38 requests · largest 65k" from tokens.cache, else null. Plain text for the token chip tooltip and the detail pane. */
+export function cacheShareText(s) {
+  const c = s && s.tokens && s.tokens.cache;
+  if (!c || !(c.requests > 0) || !(c.input > 0)) return null;
+  const pct = Math.round(c.read / c.input * 100);
+  return `Cache ${pct} % · ${c.requests} request${c.requests === 1 ? '' : 's'} · largest ${formatTokens(c.largest)}`;
 }
 
 /** "agents: 120.0k tokens" for a session header (sum over its sub-agents), else null. */

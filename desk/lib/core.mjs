@@ -130,7 +130,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
           title: s.title, titleSource: s.titleSource, agentType: s.agentType ?? null, model: s.model ?? null, effort: typeof s.effort === 'string' ? s.effort : null,
           state: 'unknown', stateSource: 'none',
           createdAt: s.createdAt ?? null, runStartedAt: s.runStartedAt ?? null, updatedAt: s.updatedAt ?? null, endedAt: s.endedAt ?? null, durationMs: null,
-          tokens: { context: s.tokens.context ?? null, total: s.tokens.total ?? null, ...(Number.isFinite(s.tokens.cached) ? { cached: s.tokens.cached } : {}) },
+          tokens: { context: s.tokens.context ?? null, total: s.tokens.total ?? null, ...(Number.isFinite(s.tokens.cached) ? { cached: s.tokens.cached } : {}), ...(s.tokens.cache && s.tokens.cache.requests > 0 ? { cache: s.tokens.cache } : {}) },
           lastActivity: la ? { at: la.at ?? null, kind: la.kind, toolName: la.toolName ?? null, summary: la.summary ?? null } : null,
           refs: { file: s.refs?.file ?? null, db: s.refs?.db ?? null, key: s.refs?.key ?? null },
           archived: !!s.archived, childCount: 0, agentTokens: null,
@@ -233,7 +233,7 @@ export function createCore({ env, adapters, now = Date.now, timeoutMs = 5000, fi
     const hashes = new Map();
     for (const p of snap.projects) {
       const own = snap.sessions.filter(s => s.projectId === p.id)
-        .map(s => [s.id, s.state, s.updatedAt, s.tokens.context, s.title, s.lastActivity && s.lastActivity.at, s.parentId, s.reportMissing || null, s.interrupted || null, s.taskId ?? null, s.reportTooLong || null, s.tokens.total ?? null, s.agentTokens ?? null]);
+        .map(s => [s.id, s.state, s.updatedAt, s.tokens.context, s.title, s.lastActivity && s.lastActivity.at, s.parentId, s.reportMissing || null, s.interrupted || null, s.taskId ?? null, s.reportTooLong || null, s.tokens.total ?? null, s.agentTokens ?? null, s.tokens.cache ? s.tokens.cache.requests : null]);
       hashes.set(p.id, JSON.stringify([p.tools, p.sessionCount, p.agentCount, p.runningCount, p.waitingCount, p.noticeCount, p.lastActivityAt, own]));
     }
     const changed = [];

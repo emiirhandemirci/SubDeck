@@ -82,9 +82,9 @@ test('readUsage: cumulative per agent, streamed message ids once, cache reads ap
   const cache = new Map();
   const f = path.join(tmp('v81-u-'), 'agent.jsonl');
   fs.copyFileSync(USAGE, f);
-  assert.deepEqual(await readUsage(f, fs.statSync(f), cache), { billed: 175, cached: 2200 });   // m1 once (150) + m2 (25)
+  assert.deepEqual(await readUsage(f, fs.statSync(f), cache), { billed: 175, cached: 2200, input: 2315, requests: 2, largest: 1205 });   // m1 once (150) + m2 (25)
   fs.appendFileSync(f, JSON.stringify({ type: 'assistant', message: { id: 'm3', usage: { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 5 } } }) + '\n{"type":"assis');
-  assert.deepEqual(await readUsage(f, fs.statSync(f), cache), { billed: 178, cached: 2205 });   // partial last line ignored
+  assert.deepEqual(await readUsage(f, fs.statSync(f), cache), { billed: 178, cached: 2205, input: 2321, requests: 3, largest: 1205 });   // partial last line ignored
   assert.equal(await readUsage(path.join(tmp('v81-e-'), 'none.jsonl'), { size: 0 }, new Map()), null);
 });
 
