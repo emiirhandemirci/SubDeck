@@ -37,7 +37,7 @@ test('rowBadges: only ONE secondary badge, interrupted wins; not tracked is a de
 test('statusLegend lists every state and extra badge with a sentence', () => {
   const l = statusLegend();
   assert.deepEqual(l.filter(x => x.kind === 'state').map(x => x.word), ['running', 'waiting', 'done', 'failed', 'stopped']);
-  assert.deepEqual(l.filter(x => x.kind === 'extra').map(x => x.word), ['interrupted', 'no report', 'needs you', 'review', 'long report']);
+  assert.deepEqual(l.filter(x => x.kind === 'extra').map(x => x.word), ['interrupted', 'no report', 'needs you', 'review']);
   assert.ok(l.every(x => x.tip.length > 20));
 });
 

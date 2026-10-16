@@ -733,6 +733,7 @@ function renderDetailInner(box) {
   row('State', st);
   const fd = failureBadge(s); if (fd) row('Failure', fd);
   if (!s.resume) { const r = rowBadges(s, FAIL_LABEL); if (r.secondary) { const b = el('span', r.secondary.cls, r.secondary.text); b.title = r.secondary.title; row('Notice', b); } if (r.details.length) row('Task info', r.details.join('. ')); }
+  if (s.reportTooLong) row('Report', el('span', 'muted', `Longer than 9 lines${Number.isInteger(s.reportTooLong.lines) ? ` (${s.reportTooLong.lines})` : ''}`));
   { const ct = s.parentId ? cumulativeTokensText(s) : agentTokensText(s); if (ct) row(s.parentId ? 'Cumulative tokens' : 'Agent tokens', s.parentId ? cumulativeTokensText(s, true) : ct); }
   if (s.run) {
     const rb = runBadgeText(s.run);

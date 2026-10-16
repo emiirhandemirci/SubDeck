@@ -347,7 +347,6 @@ const SECOND_TIP = {
   'no report': 'No report: the agent ended without a Stop:/Tested: report (also not as a hand-back message). Ask it for the report.',
   'needs you': 'Needs you: its task is waiting for your answer. Open the agent to see the question.',
   review: 'Review: the agent reported done and its task waits for verification.',
-  'long report': 'Long report: the final report is over 9 lines. Re-instruct the agent; do not re-read it.',
 };
 /** Legend entries for the "?" popover: [{ word, tip, kind: 'state'|'extra' }]. */
 export function statusLegend() {
@@ -371,7 +370,6 @@ export function rowBadges(s, failKinds = {}) {
     const n = s.interrupted.files;
     secondary = sec('interrupted', `${SECOND_TIP.interrupted} Cause: ${s.interrupted.errorType || 'unknown'}${Number.isInteger(n) ? `, ${n} uncommitted file${n === 1 ? '' : 's'}` : ''}.`);
   } else if (s && s.reportMissing) secondary = sec('no report');
-  else if (s && s.reportTooLong) secondary = sec('long report', `${SECOND_TIP['long report']}${Number.isInteger(s.reportTooLong.lines) ? ` (${s.reportTooLong.lines} lines)` : ''}`);
   // a linked task adds at most one actionable marker: needs-you > interrupted > review (no new colours)
   const ts = s && s.task && s.task.status;
   const tk = s && s.task ? ` Task ${s.task.id}: ${ts}.` : '';
