@@ -364,7 +364,7 @@ export function rowBadges(s, failKinds = {}) {
   const primary = { text: word, cls: `chip ${s && s.state}`, title: ROW_TIP[word] };
   let secondary = null;
   const f = s && s.state === 'failed' ? (s.failure && typeof s.failure === 'object' ? s.failure : {}) : null;
-  const sec = (text, title) => ({ text, cls: 'tag notice', title: title || SECOND_TIP[text] });
+  const sec = (text, title) => ({ text, cls: text === 'needs you' ? 'mark mark-need' : (text === 'interrupted' || text === 'review') ? 'mark' : 'tag notice', title: title || SECOND_TIP[text] });
   if (f) {
     if (f.kind && f.kind !== 'unknown' && failKinds[f.kind]) secondary = { text: failKinds[f.kind], cls: 'tag fail', title: `Failure (${f.kind})${typeof f.detail === 'string' && f.detail ? `: ${f.detail}` : ''}. Open the agent for details.` };
   } else if (s && s.interrupted) {
@@ -378,7 +378,7 @@ export function rowBadges(s, failKinds = {}) {
   if (ts === 'needs-user') secondary = sec('needs you', SECOND_TIP['needs you'] + tk);
   else if (ts === 'interrupted' && !(secondary && secondary.text === 'interrupted')) secondary = sec('interrupted', SECOND_TIP.interrupted + tk);
   else if (ts === 'review' && !secondary) secondary = sec('review', SECOND_TIP.review + tk);
-  else if (secondary && tk && secondary.cls === 'tag notice') secondary.title += tk;
+  else if (secondary && tk && secondary.cls !== 'tag fail') secondary.title += tk;
   const details = [];
   if (s && s.taskId) details.push(s.task ? `Task ${s.taskId} (${ts})` : `Task ${s.taskId}`);
   else if (s && s.parentId && s.tracked === false) details.push('Not tracked: no task, so no report check or notification');

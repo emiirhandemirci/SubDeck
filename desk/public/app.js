@@ -40,7 +40,8 @@ function failureBadge(s) {
 function rowStatus(s) {   // one primary status badge, at most one actionable secondary badge; bookkeeping lives in the tooltip
   const r = rowBadges(s, FAIL_LABEL);
   const p = el('span', `state-word ${r.primary.cls}`, r.primary.text); p.title = r.primary.title;
-  const out = [p];
+  const marked = r.secondary && /^mark/.test(r.secondary.cls);   // a task marker replaces the generic done/stopped word
+  const out = marked && (r.primary.text === 'done' || r.primary.text === 'stopped') ? [] : [p];
   if (r.secondary) { const b = el('span', r.secondary.cls, r.secondary.text); b.title = r.secondary.title; out.push(b); }
   return { nodes: out, details: r.details };
 }
@@ -689,11 +690,11 @@ function taskGroup(r) {
   g.append(el('h4', 'subhead', 'Task'));
   const dl = el('dl', 'kv props');
   const row = (k, v) => { dl.append(el('dt', null, k)); dl.append(el('dd', null, v)); };
-  row('Key', `${r.taskId}${r.title ? ' ' + T(r.title) : ''}`);
+  row('Key', r.taskId);
   row('Status', r.status);
   if (r.status === 'needs-user' && r.question) {
     row('Question', T(r.question));
-    const h = el('code', null, `tasks.sh answer ${r.taskId} "<answer>"`);
+    const h = el('code', 'cmd', `tasks.sh answer ${r.taskId} "<answer>"`);
     dl.append(el('dt', null, 'Answer with')); const dd = el('dd'); dd.append(h); dl.append(dd);
   }
   const rt = { status: r.status, handoff: r.handoff, lastStep: r.lastStep };
@@ -738,7 +739,7 @@ function renderDetailInner(box) {
   const st = el('span'); st.append(dot(s.state), document.createTextNode(` ${STATE_LABEL[s.state]} (${SOURCE_LABEL[s.stateSource]})`));
   row('State', st);
   const fd = failureBadge(s); if (fd) row('Failure', fd);
-  { const r = rowBadges(s.resume ? { ...s, task: { id: s.resume.taskId, status: s.resume.status } } : s, FAIL_LABEL); if (r.secondary) { const b = el('span', r.secondary.cls, r.secondary.text); b.title = r.secondary.title; row('Notice', b); } if (r.details.length) row('Task info', r.details.join('. ')); }
+  if (!s.resume) { const r = rowBadges(s, FAIL_LABEL); if (r.secondary) { const b = el('span', r.secondary.cls, r.secondary.text); b.title = r.secondary.title; row('Notice', b); } if (r.details.length) row('Task info', r.details.join('. ')); }
   { const ct = s.parentId ? cumulativeTokensText(s) : agentTokensText(s); if (ct) row(s.parentId ? 'Cumulative tokens' : 'Agent tokens', s.parentId ? cumulativeTokensText(s, true) : ct); }
   if (s.run) {
     const rb = runBadgeText(s.run);

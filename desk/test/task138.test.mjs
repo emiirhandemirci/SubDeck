@@ -44,7 +44,7 @@ test('rowBadges: one task marker, needs-you > interrupted > review; unlinked age
   assert.equal(rowBadges({ ...t('needs-user'), interrupted: { errorType: 'quota', files: 1 } }).secondary.text, 'needs you');
   assert.equal(rowBadges({ ...t('review'), interrupted: { errorType: 'quota', files: 1 } }).secondary.text, 'interrupted');
   assert.equal(rowBadges({ state: 'finished', parentId: 'p', tracked: false }).secondary, null);
-  assert.equal(rowBadges(t('needs-user')).secondary.cls, 'tag notice');   // existing class: no new colour
+  assert.equal(rowBadges(t('needs-user')).secondary.cls, 'mark mark-need');   // plain text, no box
 });
 
 test('project tree: linked agents carry task key and status, unlinked ones do not', async () => {

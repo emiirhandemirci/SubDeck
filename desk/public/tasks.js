@@ -54,7 +54,7 @@ export function tabLabel(projects) {
   for (const p of projects || []) for (const t of p.tasks || []) { total++; if (t.status === 'interrupted' || t.status === 'blocked' || t.status === 'needs-user') attn++; }
   if (!total) return { text: 'Tasks', title: '' };
   const title = `${total} task${total === 1 ? '' : 's'}${attn ? `, ${attn} blocked, interrupted or waiting for you` : ''}`;
-  return { text: attn ? `Tasks (${total}) !${attn}` : `Tasks (${total})`, title };
+  return { text: `Tasks ${total}`, title };
 }
 
 export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessions, closeOthers }) {

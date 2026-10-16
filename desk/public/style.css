@@ -132,7 +132,7 @@ button.live { font-family: inherit; cursor: pointer; }
 
 /* ---------- agent map ---------- */
 .card { border: 1px solid var(--border); border-radius: var(--r); margin-bottom: var(--s3); padding: 6px; background: var(--card); transition: border-color var(--dur); }
-.card.st-waiting { border-color: color-mix(in srgb, var(--waiting) 60%, var(--border)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--waiting) 25%, transparent); }
+.card.st-waiting { border-color: color-mix(in srgb, var(--waiting) 60%, var(--border)); }
 .card.st-failed { border-color: color-mix(in srgb, var(--failed) 40%, var(--border)); }
 .head, .agent { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; cursor: pointer; border-radius: var(--r-sm); border: 0; transition: background var(--dur); }
 .head { padding: 8px 10px; }
@@ -147,7 +147,7 @@ button.live { font-family: inherit; cursor: pointer; }
 .agent .title { font-weight: 500; }
 
 .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; display: inline-block; }
-.dot.waiting { background: var(--waiting); animation: pulse-waiting 1.1s infinite; }
+.dot.waiting { background: var(--waiting); }
 .dot.running { background: var(--running); }
 .dot.idle { background: var(--idle); }
 .dot.finished, .dot.stale { background: var(--finished); }
@@ -162,7 +162,6 @@ button.live { font-family: inherit; cursor: pointer; }
 .statebit { display: inline-flex; align-items: center; gap: 6px; }
 .tag { font-size: var(--fs-sm); padding: 0 6px; border-radius: var(--r-sm); background: transparent; border: 1px solid var(--border); color: var(--muted); line-height: 18px; }
 .tag.mono { font-family: var(--mono); }
-@keyframes pulse-waiting { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--waiting) 70%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
 
 .row:focus-visible, .head:focus-visible, .agent:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
@@ -454,3 +453,7 @@ button.revent { cursor: pointer; }
 
 /* tabular figures for every count, time and token number */
 .tag, .count, .pill, .chip, .meta-line, .last-scan, .tcount, .tcard-meta, .wp-for, .wp-sub, dl.props, ol.calls, .rtable td, .proj-head, .live, .badge { font-variant-numeric: tabular-nums; }
+
+.mark { font-size: var(--fs-sm); color: var(--muted); }
+.mark-need { color: var(--waiting); font-weight: 600; }
+code.cmd { white-space: normal; word-break: normal; overflow-wrap: normal; }
