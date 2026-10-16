@@ -345,6 +345,8 @@ const ROW_TIP = {
 const SECOND_TIP = {
   interrupted: 'Interrupted: the agent was cut off mid-task (rate limit, kill or session end). Its task has a handoff note; resume the agent or revert its files.',
   'no report': 'No report: the agent ended without a Stop:/Tested: report (also not as a hand-back message). Ask it for the report.',
+  'needs you': 'Needs you: its task is waiting for your answer. Open the agent to see the question.',
+  review: 'Review: the agent reported done and its task waits for verification.',
   'long report': 'Long report: the final report is over 9 lines. Re-instruct the agent; do not re-read it.',
 };
 /** Legend entries for the "?" popover: [{ word, tip, kind: 'state'|'extra' }]. */
@@ -370,8 +372,15 @@ export function rowBadges(s, failKinds = {}) {
     secondary = sec('interrupted', `${SECOND_TIP.interrupted} Cause: ${s.interrupted.errorType || 'unknown'}${Number.isInteger(n) ? `, ${n} uncommitted file${n === 1 ? '' : 's'}` : ''}.`);
   } else if (s && s.reportMissing) secondary = sec('no report');
   else if (s && s.reportTooLong) secondary = sec('long report', `${SECOND_TIP['long report']}${Number.isInteger(s.reportTooLong.lines) ? ` (${s.reportTooLong.lines} lines)` : ''}`);
+  // a linked task adds at most one actionable marker: needs-you > interrupted > review (no new colours)
+  const ts = s && s.task && s.task.status;
+  const tk = s && s.task ? ` Task ${s.task.id}: ${ts}.` : '';
+  if (ts === 'needs-user') secondary = sec('needs you', SECOND_TIP['needs you'] + tk);
+  else if (ts === 'interrupted' && !(secondary && secondary.text === 'interrupted')) secondary = sec('interrupted', SECOND_TIP.interrupted + tk);
+  else if (ts === 'review' && !secondary) secondary = sec('review', SECOND_TIP.review + tk);
+  else if (secondary && tk && secondary.cls === 'tag notice') secondary.title += tk;
   const details = [];
-  if (s && s.taskId) details.push(`Task ${s.taskId}`);
+  if (s && s.taskId) details.push(s.task ? `Task ${s.taskId} (${ts})` : `Task ${s.taskId}`);
   else if (s && s.parentId && s.tracked === false) details.push('Not tracked: no task, so no report check or notification');
   if (s && s.accepted) details.push('Accepted: its task is done or approved; later notifications from it are stale');
   return { primary, secondary, details };

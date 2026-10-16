@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Desk: task essentials in Sessions:** an agent linked to a task shows at most one extra marker in its row (needs you, then interrupted, then review; hover for the task key and status), and its detail pane has a compact Task group: status, the question with the `tasks.sh answer` hint, Last done, Next, Handoff files and the last 3 checkpoints. Clicking a task in the "N waiting" list jumps to its agent in Sessions. The Tasks tab stays as the optional board and is hidden while no project has tasks or rule events.
+
 ## 0.8.3 - 2026-10-14
 
 - **Checkpoints, history and rewind:** a git commit by an agent linked to a task is now recorded automatically in the task's `## Progress` (time, agent, commit and subject, changed and uncommitted file names; no contents). `tasks.sh history <id>` lists commits and manual steps together, `tasks.sh resume-prompt <id>` prints the resume text (Last done, Next, commits already done, uncommitted files, transcript), and `tasks.sh rewind <id> <#N|hash>` shows which commits to undo as `git revert` commands; `--apply` (run only after your explicit yes, clean tree only) creates the revert commits, never resets or rewrites history. Desk task cards show a short checkpoint timeline.

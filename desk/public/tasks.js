@@ -252,6 +252,10 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
   function updateTab() {
     const l = tabLabel(st.data ? st.data.projects : []);
     const b = $('tabTasks');
+    // the board is optional: hide the tab while no project has tasks or rule events (until the first load it stays hidden too)
+    const has = !!st.data && projectsWithTasks().length > 0;
+    b.hidden = !has;
+    if (!has && st.open) { show(false); $('tabSessions').click(); }
     b.textContent = l.text;
     b.title = l.title;
   }

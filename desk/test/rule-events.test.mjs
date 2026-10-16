@@ -97,6 +97,6 @@ test('UI wiring: collapsible details list in the Tasks tab, detail pane shows th
   assert.match(tasks, /el\('details', 'sect revents'\)/);
   assert.match(tasks, /if \(!rows\.length\) return null/);
   assert.match(tasks, /showSessions\(\); openSession\(p\.projectId, r\.agentSessionId\)/);
-  assert.match(app, /if \(s\.resume\) \{/);
+  assert.match(app, /if \(s\.resume\) box\.append\(taskGroup\(s\.resume\)\)/);
   assert.match(app, /resumeLines\(rt\)/);
 });

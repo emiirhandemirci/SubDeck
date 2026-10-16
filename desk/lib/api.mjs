@@ -74,20 +74,28 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
   }
 
   // task ids of a project whose work was accepted: archived/done, or the latest verdict is Approved
-  async function acceptedIds(snap, projectId) {
+  async function taskIndex(snap, projectId) {
     const p = snap.projects.find(x => x.id === projectId);
-    if (!p || !p.path || !snap.sessions.some(s => s.projectId === projectId && s.taskId)) return new Set();
-    try {
-      const r = await reader.read(p.path);
-      return new Set(r.tasks.filter(t => t.task.archived || t.task.status === 'done' || t.task.verdict === 'Approved').map(t => t.task.id));
-    } catch { return new Set(); }
+    if (!p || !p.path || !snap.sessions.some(s => s.projectId === projectId && s.taskId)) return new Map();
+    try { return new Map((await reader.read(p.path)).tasks.map(t => [t.task.id, t.task])); } catch { return new Map(); }
+  }
+  const isAccepted = t => !!t && (t.archived || t.status === 'done' || t.verdict === 'Approved');
+  async function acceptedIds(snap, projectId) {
+    const idx = await taskIndex(snap, projectId);
+    return new Set([...idx.values()].filter(isAccepted).map(t => t.id));
   }
 
   async function projectTree(snap, id) {
     const project = snap.projects.find(p => p.id === id);
     if (!project) return null;
-    const acc = await acceptedIds(snap, id);
-    const own = snap.sessions.filter(s => s.projectId === id).map(s => (s.taskId && acc.has(s.taskId) ? { ...s, accepted: true } : s));
+    const idx = await taskIndex(snap, id);
+    // a linked agent carries its task's key and status so the row can show one actionable marker
+    const link = s => {
+      const t = s.taskId && idx.get(s.taskId);
+      if (!t) return s;
+      return { ...s, ...(isAccepted(t) ? { accepted: true } : {}), task: { id: t.id, status: t.status } };
+    };
+    const own = snap.sessions.filter(s => s.projectId === id).map(link);
     const w = x => (x.state === 'waiting' ? 1 : 0);   // blocked-on-user first
     const byUpdated = (a, b) => w(b) - w(a) || String(b.updatedAt).localeCompare(String(a.updatedAt));
     const childOrder = (a, b) => w(b) - w(a) || (b.state === 'running') - (a.state === 'running') || String(b.createdAt).localeCompare(String(a.createdAt));
@@ -104,11 +112,13 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
       if (!p.path || (only && p.id !== only)) continue;
       let r;
       try { r = await reader.read(p.path); } catch { continue; }
+      const kids = snap.sessions.filter(x => x.projectId === p.id && x.parentId);
       for (const t of r.tasks) {
         if (t.task.status !== 'needs-user' || t.task.archived) continue;
+        const ag = (t.task.agent && kids.find(x => x.nativeId === t.task.agent)) || kids.find(x => x.taskId === t.task.id) || null;
         out.push({ id: 'task:' + p.id + '/' + t.task.id, kind: 'task', taskId: t.task.id, projectId: p.id, projectName: p.name, projectPath: p.path,
           tool: null, title: t.task.title, question: t.task.question || '', agent: t.task.agent || null, agentType: t.task.owner || null, isAgent: !!t.task.agent,
-          stateSource: 'task', waitingKind: 'needs-user', since: t.task.updated || null });
+          agentSessionId: ag ? ag.id : null, stateSource: 'task', waitingKind: 'needs-user', since: t.task.updated || null });
       }
     }
     return out;
@@ -275,7 +285,7 @@ export function createApi({ core, getPort, startedAt, days, version, publicDir, 
     if (s.taskId && p && p.path) {
       try {
         const t = await reader.get(p.path, s.taskId);
-        if (t && t.task) resume = { taskId: t.task.id, status: t.task.status, handoff: t.handoff || null, lastStep: t.task.lastStep || null };
+        if (t && t.task) resume = { taskId: t.task.id, title: t.task.title || '', status: t.task.status, question: t.task.question || '', handoff: t.handoff || null, lastStep: t.task.lastStep || null, checkpoints: (t.task.checkpoints || []).slice(-8) };
       } catch { /* task is optional */ }
     }
     return { generatedAt: iso(), session: { ...s, resume,

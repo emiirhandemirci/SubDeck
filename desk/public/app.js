@@ -3,7 +3,7 @@
 import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText, cumulativeTokensText, cumulativeTokensTitle, agentTokensText, quotaBanner, laterSuccess, cliText, rowBadges, statusLegend } from './format.js';
 import { initSettings } from './settings.js';
 import { writeJSON } from './token.js';
-import { initTasks, resumeLines, handoffSummary } from './tasks.js';
+import { initTasks, resumeLines, handoffSummary, checkpointRows } from './tasks.js';
 import { runBadgeText, RUN_STATUS_LABEL, mountRunLog } from './runs.js';
 
 const $ = id => document.getElementById(id);
@@ -93,7 +93,11 @@ async function loadWaitingList() {
   if (wp.open) renderWaitingPanel();
 }
 async function openWaitingItem(it) {
-  if (it.kind === 'task') { $('tabTasks').click(); return; }
+  if (it.kind === 'task') {
+    if (it.agentSessionId) { settingsUi.show(false); tasksUi.show(false); await selectProject(it.projectId, false); await selectSession(it.agentSessionId, true); }
+    else $('tabTasks').click();
+    return;
+  }
   await selectProject(it.projectId, false);
   await selectSession(it.id, true);
 }
@@ -679,6 +683,35 @@ function renderDetail() {
   renderDetailInner(box);
   if (keepTop) box.scrollTop = keepTop;
 }
+// Compact "Task" property group of a linked agent: the same data as the Tasks board card, reusing its renderers.
+function taskGroup(r) {
+  const g = el('div', 'content'); g.id = 'taskGroup';
+  g.append(el('h4', 'subhead', 'Task'));
+  const dl = el('dl', 'kv props');
+  const row = (k, v) => { dl.append(el('dt', null, k)); dl.append(el('dd', null, v)); };
+  row('Key', `${r.taskId}${r.title ? ' · ' + T(r.title) : ''}`);
+  row('Status', r.status);
+  if (r.status === 'needs-user' && r.question) {
+    row('Question', T(r.question));
+    const h = el('code', null, `tasks.sh answer ${r.taskId} "<answer>"`);
+    dl.append(el('dt', null, 'Answer with')); const dd = el('dd'); dd.append(h); dl.append(dd);
+  }
+  const rt = { status: r.status, handoff: r.handoff, lastStep: r.lastStep };
+  for (const l of resumeLines(rt)) { const i = l.indexOf(': '); row(l.slice(0, i), T(l.slice(i + 2))); }
+  const hs = handoffSummary(rt); if (hs) row('Handoff', hs);
+  const fl = r.handoff && r.handoff.fileList;
+  if (fl && fl.length) row('Handoff files', T(fl.slice(0, 8).join(', ') + (fl.length > 8 ? ` +${fl.length - 8} more` : '')));
+  const cp = checkpointRows({ checkpoints: r.checkpoints }, 3);
+  if (cp.rows.length) {
+    dl.append(el('dt', null, 'Checkpoints'));
+    const dd = el('dd', 'tcard-checkpoints');
+    if (cp.more) dd.append(el('div', 'muted', `+${cp.more} earlier`));
+    for (const c of cp.rows) { const x = el('div', 'tcard-cp'); x.append(el('span', null, relativeTime(c.at, Date.now())), el('span', 'mono', c.hash), el('span', null, T(c.text))); dd.append(x); }
+    dl.append(dd);
+  }
+  g.append(dl);
+  return g;
+}
 function renderDetailInner(box) {
   box.replaceChildren();
   const s = S.detail;
@@ -705,7 +738,7 @@ function renderDetailInner(box) {
   const st = el('span'); st.append(dot(s.state), document.createTextNode(` ${STATE_LABEL[s.state]} (${SOURCE_LABEL[s.stateSource]})`));
   row('State', st);
   const fd = failureBadge(s); if (fd) row('Failure', fd);
-  { const r = rowBadges(s, FAIL_LABEL); if (r.secondary) { const b = el('span', r.secondary.cls, r.secondary.text); b.title = r.secondary.title; row('Notice', b); } if (r.details.length) row('Task info', r.details.join('. ')); }
+  { const r = rowBadges(s.resume ? { ...s, task: { id: s.resume.taskId, status: s.resume.status } } : s, FAIL_LABEL); if (r.secondary) { const b = el('span', r.secondary.cls, r.secondary.text); b.title = r.secondary.title; row('Notice', b); } if (r.details.length) row('Task info', r.details.join('. ')); }
   { const ct = s.parentId ? cumulativeTokensText(s) : agentTokensText(s); if (ct) row(s.parentId ? 'Cumulative tokens' : 'Agent tokens', s.parentId ? cumulativeTokensText(s, true) : ct); }
   if (s.run) {
     const rb = runBadgeText(s.run);
@@ -714,15 +747,6 @@ function renderDetailInner(box) {
     if (s.run.branch) row('Branch', s.run.branch);
     if (s.run.worktree) row('Worktree', tildify(s.run.worktree, S.home));
     if (s.run.violations.length) row('Violations', T(s.run.violations.join(', ')));
-  }
-  if (s.resume) {
-    // same data as the task card: Last done / Next, and the uncommitted files of an interruption
-    const rt = { status: s.resume.status, handoff: s.resume.handoff, lastStep: s.resume.lastStep };
-    const lines = resumeLines(rt);
-    for (const l of lines) { const i = l.indexOf(': '); row(l.slice(0, i), T(l.slice(i + 2))); }
-    const hs = handoffSummary(rt); if (hs) row('Handoff', hs);
-    const fl = s.resume.handoff && s.resume.handoff.fileList;
-    if (fl && fl.length) row('Handoff files', T(fl.slice(0, 8).join(', ') + (fl.length > 8 ? ` +${fl.length - 8} more` : '')));
   }
   row('Started', when(s.createdAt));
   if (s.runStartedAt) row('Latest run started', when(s.runStartedAt));
@@ -751,6 +775,7 @@ function renderDetailInner(box) {
     row('Data', wrap);
   }
   box.append(dl);
+  if (s.resume) box.append(taskGroup(s.resume));
   if (s.run && s.run.taskId && s.run.ts) {
     const rl = el('div', 'content'); rl.id = 'runLog';
     const h = el('h4', 'subhead', 'Run log'); rl.append(h);
