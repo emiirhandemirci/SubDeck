@@ -234,7 +234,7 @@ function renderSrcPanel() {
   if (!det.length) box.append(el('p', 'pop-empty', 'No supported tool found yet.'));
   for (const s of det) {
     const r = el('div', 'pop-row');
-    const head = el('div', 'pop-name'); head.append(el('span', `pop-dot ${s.health}`), el('span', null, `${s.label}: ${sourceStatus(s)}`));
+    const head = el('div', 'pop-name'); head.append(el('span', null, `${s.label}: ${sourceStatus(s)}`));
     r.append(head);
     for (const line of sourceTip(s).split('\n')) r.append(el('div', 'pop-sub', line));
     box.append(r);
@@ -313,13 +313,6 @@ else window.addEventListener('resize', fitSources);
 function renderSources() {
   const box = $('sources');
   box.replaceChildren();
-  for (const s of S.sources.filter(x => x.detected)) {
-    const b = el('span', `badge src ${s.health} tool-${s.id}`);
-    b.append(document.createTextNode(`${s.label}: ${sourceStatus(s)}`));
-    b.title = sourceTip(s);
-    b.setAttribute('aria-label', b.title.split('\n').join('. '));
-    box.append(b);
-  }
   const last = S.sources.map(s => s.lastScanAt).filter(Boolean).sort().pop();
   $('lastScan').textContent = last ? formatClock(last) : '';
   $('lastScan').title = last ? `Last scan ${formatClock(last)}` : '';

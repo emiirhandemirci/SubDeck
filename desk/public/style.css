@@ -70,8 +70,6 @@ h1, h2, h3 { font-weight: 650; }
 .pop-sub { font-size: var(--fs-sm); color: var(--muted); padding-left: 16px; overflow-wrap: anywhere; }
 .pop-name.muted + .pop-sub { padding-left: 0; }
 .pop-empty { margin: 4px 0; font-size: var(--fs-row); color: var(--muted); }
-.pop-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
-.pop-dot.ok { background: var(--running); } .pop-dot.degraded { background: var(--idle); } .pop-dot.error { background: var(--failed); }
 .status { margin-left: auto; display: flex; gap: var(--s2); align-items: center; }
 .last-scan { font-size: var(--fs-row); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .badge { display: inline-flex; gap: 6px; align-items: center; padding: 2px 8px; border-radius: var(--r-sm); background: transparent; border: 1px solid var(--border); font-size: var(--fs-row); line-height: 20px; white-space: nowrap; }
