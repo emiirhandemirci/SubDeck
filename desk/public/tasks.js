@@ -57,8 +57,8 @@ export function tabLabel(projects) {
   return { text: `Tasks ${total}`, title };
 }
 
-export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessions, closeOthers }) {
-  const st = { open: false, data: null, error: null, project: '', expanded: new Set(), bodies: new Map(), gen: 0, runLogs: new Set(), eventsOpen: new Set(), mounts: [], pending: [] };
+export function initTasks({ $, el, store, getJSON, relativeTime, openSession, showSessions, closeOthers }) {
+  const st = { board: !!store.get('tasksBoard', false), open: false, data: null, error: null, project: '', expanded: new Set(), bodies: new Map(), gen: 0, runLogs: new Set(), eventsOpen: new Set(), mounts: [], pending: [] };
 
   function projectsWithTasks() { return (st.data ? st.data.projects : []).filter(p => p.tasks.length || (p.ruleEvents || []).length); }
 
@@ -252,10 +252,9 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
   function updateTab() {
     const l = tabLabel(st.data ? st.data.projects : []);
     const b = $('tabTasks');
-    // the board is optional: hide the tab while no project has tasks or rule events (until the first load it stays hidden too)
-    const has = !!st.data && projectsWithTasks().length > 0;
-    b.hidden = !has;
-    if (!has && st.open) { show(false); $('tabSessions').click(); }
+    // the board is an optional view: hidden unless the Settings toggle "Show tasks board" is on
+    b.hidden = !st.board;
+    if (!st.board && st.open) { show(false); $('tabSessions').click(); }
     b.textContent = l.text;
     b.title = l.title;
   }
@@ -273,5 +272,5 @@ export function initTasks({ $, el, getJSON, relativeTime, openSession, showSessi
   $('tasksProject').addEventListener('change', e => { st.project = e.target.value; render(); });
   load().catch(() => {});
 
-  return { show, reload: () => load(), state: st };
+  return { show, reload: () => load(), state: st, setBoard: on => { st.board = !!on; store.set('tasksBoard', st.board); updateTab(); } };
 }

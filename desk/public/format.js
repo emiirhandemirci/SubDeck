@@ -391,3 +391,15 @@ export function laterSuccess(sessions, q) {
   const ok = c => c && c.state === 'finished' && !c.reportMissing && !c.interrupted && c.updatedAt && Date.parse(c.updatedAt) > at + 1000;
   return (sessions || []).some(s => ok(s) || (s.children || []).some(ok));
 }
+
+/** Splits a session's agents into always-visible ones and collapsible quiet finished ones: running, waiting, failed, actionable marker, finished within 5 minutes, or selected stay visible. */
+export function splitAgents(children, selectedId, now = Date.now()) {
+  const shown = [], quiet = [];
+  for (const c of children || []) {
+    const r = rowBadges(c);
+    const recent = Date.parse(c.endedAt || c.updatedAt) > now - 300000;
+    const loud = c.id === selectedId || ['running', 'waiting', 'failed'].includes(c.state) || (r.secondary && r.secondary.cls !== 'tag fail' ? true : !!r.secondary) || recent;
+    (loud ? shown : quiet).push(c);
+  }
+  return { shown, quiet };
+}

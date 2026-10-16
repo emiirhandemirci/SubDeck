@@ -86,7 +86,7 @@ function themeIcon(id) {
   return svg;
 }
 
-export function initSettings({ $, el, store, getJSON, token, getProject, onWindow, onNotify }) {
+export function initSettings({ $, el, store, getJSON, token, getProject, onWindow, onNotify, getBoard, onBoard }) {
   const st = { theme: store.get('theme', 'system'), scope: 'user', data: null, error: null, busy: false, open: false, msg: null, gen: 0 };
   if (!THEMES.some(t => t[0] === st.theme)) st.theme = 'system';
 
@@ -380,7 +380,16 @@ export function initSettings({ $, el, store, getJSON, token, getProject, onWindo
     for (const [id, label] of THEMES) { const o = el('option', null, label); o.value = id; if (id === st.theme) o.selected = true; sel.append(o); }
     sel.addEventListener('change', () => setTheme(sel.value));
     ar.append(al, sel, el('span', 'tag', 'this browser'));
-    ap.append(ar); box.append(ap);
+    ap.append(ar);
+    if (onBoard) {
+      const br = el('div', 'srow');
+      const bl = el('label', 'slabel'); bl.htmlFor = 'set-board'; bl.append(el('span', 'skey', 'Show tasks board'), el('span', 'sdesc muted', 'Adds the Tasks tab (all tasks, checkpoints). Off by default; daily use needs only Sessions.'));
+      const cb = el('input'); cb.type = 'checkbox'; cb.id = 'set-board'; cb.checked = !!(getBoard && getBoard());
+      cb.addEventListener('change', () => onBoard(cb.checked));
+      br.append(bl, cb, el('span', 'tag', 'this browser'));
+      ap.append(br);
+    }
+    box.append(ap);
     if (st.msg) { const m = el('p', `smsg ${st.msg.bad ? 'bad' : 'ok'}`, st.msg.text); m.setAttribute('role', st.msg.bad ? 'alert' : 'status'); box.append(m); }
     if (st.error) { const m = el('p', 'notice error', st.error); m.setAttribute('role', 'alert'); box.append(m); return; }
     if (!st.data) { const e = el('div', 'empty'); e.append(el('strong', 'empty-title', 'Loading settings…'), el('span', 'empty-hint', 'Reading the configuration can take a few seconds.')); box.append(e); return; }

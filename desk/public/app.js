@@ -1,9 +1,9 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
-import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText, cumulativeTokensText, cumulativeTokensTitle, agentTokensText, quotaBanner, laterSuccess, cliText, rowBadges, statusLegend } from './format.js';
+import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText, cumulativeTokensText, cumulativeTokensTitle, agentTokensText, quotaBanner, laterSuccess, splitAgents, cliText, rowBadges, statusLegend } from './format.js';
 import { initSettings } from './settings.js';
 import { writeJSON } from './token.js';
-import { initTasks, resumeLines, handoffSummary, checkpointRows } from './tasks.js';
+import { initTasks, resumeLines, handoffSummary, checkpointRows, ruleEventRows } from './tasks.js';
 import { runBadgeText, RUN_STATUS_LABEL, mountRunLog } from './runs.js';
 
 const $ = id => document.getElementById(id);
@@ -419,7 +419,16 @@ function renderMapInner() {
     if (s.children.length) {
       const ul = el('ul', 'agents');
       ul.setAttribute('role', 'group');
-      for (const c of s.children) { const li = el('li'); li.append(sessionLine(c, 'agent')); ul.append(li); }
+      const sp = splitAgents(s.children, S.selectedSession);
+      const open = sp.quiet.length > 0 && store.get('fin.' + s.id, false);
+      const add = c => { const li = el('li'); li.append(sessionLine(c, 'agent')); ul.append(li); };
+      for (const c of (open ? s.children : sp.shown)) add(c);
+      if (sp.quiet.length) {
+        const li = el('li'); const b = el('button', 'linklike muted fin-toggle', `${open ? '▾' : '▸'} ${sp.quiet.length} finished agent${sp.quiet.length === 1 ? '' : 's'}`);
+        b.type = 'button'; b.setAttribute('aria-expanded', String(open));
+        b.addEventListener('click', ev => { ev.stopPropagation(); store.set('fin.' + s.id, !open); renderMap(); });
+        li.append(b); ul.append(li);
+      }
       card.append(ul);
     }
     box.append(card);
@@ -439,7 +448,7 @@ async function loadProject() {
   try {
     const d = await getJSON(`/api/projects/${encodeURIComponent(S.selectedProject)}`);
     S.project = d.project; S.sessions = d.sessions;
-    try { const t = (await getJSON(`/api/tasks?project=${encodeURIComponent(S.selectedProject)}`)).projects[0]; S.projInfo = t ? { quota: t.quota, cli: t.cli } : null; } catch { S.projInfo = null; }
+    try { const t = (await getJSON(`/api/tasks?project=${encodeURIComponent(S.selectedProject)}`)).projects[0]; S.projInfo = t ? { quota: t.quota, cli: t.cli, ruleEvents: t.ruleEvents || [] } : null; } catch { S.projInfo = null; }
     if (settingsUi) settingsUi.projectChanged();
   } catch { S.project = null; S.sessions = []; }
   renderMap();
@@ -771,6 +780,13 @@ function renderDetailInner(box) {
   }
   box.append(dl);
   if (s.resume) box.append(taskGroup(s.resume));
+  { const ev = ruleEventRows({ ruleEvents: S.projInfo && S.projInfo.ruleEvents }).filter(e => e.agentSessionId === s.id).slice(0, 10);
+    if (ev.length) {
+      const g = el('div', 'content'); g.id = 'ruleEvents'; g.append(el('h4', 'subhead', 'Rule events'));
+      const l = el('dl', 'kv props');
+      for (const e of ev) { const dt = el('dt', null, relativeTime(e.at, Date.now())); dt.title = e.at; l.append(dt); const dd = el('dd'); dd.append(el('span', 'mono', e.rule), document.createTextNode('  ' + T(e.text))); l.append(dd); }
+      g.append(l); box.append(g);
+    } }
   if (s.run && s.run.taskId && s.run.ts) {
     const rl = el('div', 'content'); rl.id = 'runLog';
     const h = el('h4', 'subhead', 'Run log'); rl.append(h);
@@ -860,8 +876,9 @@ function connect() {
 settingsUi = initSettings({ $, el, store, getJSON,
   getProject: () => (S.project ? { id: S.project.id, name: S.project.name } : null),
   onNotify: on => { S.notify = on; renderBell(); },
+  getBoard: () => !!(tasksUi && tasksUi.state.board), onBoard: on => tasksUi.setBoard(on),
   onWindow: n => { S.ctxWindow = n; renderMap(); if (S.detail) renderDetail(); } });
-tasksUi = initTasks({ $, el, getJSON, relativeTime,
+tasksUi = initTasks({ $, el, store, getJSON, relativeTime,
   openSession: async (projectId, sessionId) => { await selectProject(projectId, false); await selectSession(sessionId, true); },
   showSessions: () => { settingsUi.show(false); tasksUi.show(false); },
   closeOthers: () => settingsUi.show(false) });

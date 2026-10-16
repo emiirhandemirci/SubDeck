@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { createTasksReader } from '../lib/tasks.mjs';
 import { createApi } from '../lib/api.mjs';
-import { rowBadges } from '../public/format.js';
+import { rowBadges, splitAgents } from '../public/format.js';
 import './fixtures/tmpclean.mjs';
 
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
@@ -73,6 +73,16 @@ test('UI wiring: Task group, waiting item jumps to the agent, Tasks tab hidden w
   assert.match(app, /tasks\.sh answer \$\{r\.taskId\}/);
   assert.match(app, /checkpointRows\(\{ checkpoints: r\.checkpoints \}, 3\)/);
   assert.match(app, /selectSession\(it\.agentSessionId, true\)/);
-  assert.match(tasks, /b\.hidden = !has/);
+  assert.match(tasks, /b\.hidden = !st\.board/);
+  assert.match(app, /function renderDetailInner[\s\S]*id = 'ruleEvents'/);
   assert.match(html, /id="tabTasks"[^>]*\bhidden\b/);
+});
+
+test('splitAgents: running, actionable, recent and selected stay; old finished collapse', () => {
+  const now = Date.parse('2026-10-07T12:00:00Z'), ago = m => new Date(now - m * 60000).toISOString();
+  const a = (id, o = {}) => ({ id, state: 'finished', updatedAt: ago(60), ...o });
+  const r = splitAgents([a('old1'), a('old2'), a('run', { state: 'running' }), a('new', { updatedAt: ago(2) }), a('sel'),
+    a('nr', { reportMissing: { at: 'x' } }), a('tk', { task: { id: 't-1', status: 'review' } })], 'sel', now);
+  assert.deepEqual(r.quiet.map(x => x.id), ['old1', 'old2']);
+  assert.equal(r.shown.length, 5);
 });

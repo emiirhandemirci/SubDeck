@@ -455,3 +455,5 @@ button.revent { cursor: pointer; }
 .mark { font-size: var(--fs-sm); color: var(--muted); }
 .mark-need { color: var(--waiting); font-weight: 600; }
 code.cmd { white-space: normal; word-break: normal; overflow-wrap: normal; }
+
+.fin-toggle { font-size: var(--fs-sm); padding: 2px 0 2px 4px; }
