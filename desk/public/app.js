@@ -689,7 +689,7 @@ function taskGroup(r) {
   g.append(el('h4', 'subhead', 'Task'));
   const dl = el('dl', 'kv props');
   const row = (k, v) => { dl.append(el('dt', null, k)); dl.append(el('dd', null, v)); };
-  row('Key', `${r.taskId}${r.title ? ' · ' + T(r.title) : ''}`);
+  row('Key', `${r.taskId}${r.title ? ' ' + T(r.title) : ''}`);
   row('Status', r.status);
   if (r.status === 'needs-user' && r.question) {
     row('Question', T(r.question));
