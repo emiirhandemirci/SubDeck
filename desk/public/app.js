@@ -1,6 +1,6 @@
 // desk/public/app.js
 // SubDeck Desk UI: three panes, SSE-driven partial refresh, keyboard navigation. Data only via textContent.
-import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText, cumulativeTokensText, cumulativeTokensTitle, agentTokensText, quotaBanner, laterSuccess, splitAgents, cliText, rowBadges, statusLegend } from './format.js';
+import { formatDuration, formatTokens, relativeTime, formatClock, STATE_LABEL, SOURCE_LABEL, TOOL_BADGE, groupProjects, filterProjects, middleEllipsis, tildify, tildifyText, markdownLite, formatToolTime, contextUsage, lineDiff, sourceStatus, emptyProjectsText, noMatchText, cumulativeTokensText, cumulativeTokensTitle, agentTokensText, quotaBanner, laterSuccess, splitAgents, hiddenSummary, cliText, rowBadges, statusLegend } from './format.js';
 import { initSettings } from './settings.js';
 import { writeJSON } from './token.js';
 import { initTasks, resumeLines, handoffSummary, checkpointRows, ruleEventRows } from './tasks.js';
@@ -425,6 +425,15 @@ function renderMapInner() {
       chev.addEventListener('click', toggle);
       head.insertBefore(chev, head.firstChild);
       head.addEventListener('dblclick', toggle);
+      if (!open) {
+        const hs = hiddenSummary(sp.quiet);
+        if (hs.length) {
+          const sm = el('span', 'hidden-sum muted');
+          hs.forEach((h, i) => { if (i) sm.append(document.createTextNode(' · ')); sm.append(h.need ? el('span', 'need', h.text) : document.createTextNode(h.text)); });
+          sm.title = 'Hidden agents that need action; expand to see them';
+          head.append(sm);
+        }
+      }
       const ul = el('ul', 'agents');
       ul.setAttribute('role', 'group');
       const add = c => { const li = el('li'); li.append(sessionLine(c, 'agent')); ul.append(li); };

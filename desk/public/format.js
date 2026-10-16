@@ -392,14 +392,20 @@ export function laterSuccess(sessions, q) {
   return (sessions || []).some(s => ok(s) || (s.children || []).some(ok));
 }
 
-/** Splits a session's agents into always-visible ones and collapsible quiet finished ones: running, waiting, failed, actionable marker or selected stay visible. */
-export function splitAgents(children, selectedId, now = Date.now()) {
+/** Splits a session's agents: running ones (and the selected one) stay visible, the rest are quiet. */
+export function splitAgents(children, selectedId) {
   const shown = [], quiet = [];
-  for (const c of children || []) {
-    const r = rowBadges(c);
-    const recent = Date.parse(c.endedAt || c.updatedAt) > now - 300000;
-    const loud = c.id === selectedId || ['running', 'waiting', 'failed'].includes(c.state) || (r.secondary && r.secondary.cls !== 'tag fail' ? true : !!r.secondary);
-    (loud ? shown : quiet).push(c);
-  }
+  for (const c of children || []) (c.id === selectedId || c.state === 'running' ? shown : quiet).push(c);
   return { shown, quiet };
+}
+
+/** Muted summary of the actionable hidden agents, e.g. [{ text: '1 needs you', need: true }, { text: '1 interrupted' }]. */
+export function hiddenSummary(quiet) {
+  const n = { need: 0, interrupted: 0, 'no report': 0, review: 0 };
+  for (const c of quiet || []) {
+    const t = rowBadges(c).secondary;
+    if (c.state === 'waiting' || (t && t.text === 'needs you')) n.need++;
+    else if (t && n[t.text] !== undefined) n[t.text]++;
+  }
+  return [['need', 'needs you'], ['interrupted', 'interrupted'], ['no report', 'no report'], ['review', 'review']].filter(([k]) => n[k]).map(([k, w]) => ({ text: `${n[k]} ${w}`, need: k === 'need' }));
 }

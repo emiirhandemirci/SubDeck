@@ -460,3 +460,7 @@ code.cmd { white-space: normal; word-break: normal; overflow-wrap: normal; }
 
 .chev { border: 0; background: transparent; color: var(--muted); padding: 0 2px; width: 16px; cursor: pointer; font-size: var(--fs-sm); }
 .chev:hover { color: var(--text); }
+
+.hidden-sum { font-size: var(--fs-sm); }
+.hidden-sum .need { color: var(--waiting); font-weight: 600; }
+.fin-toggle { color: var(--muted); }
