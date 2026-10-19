@@ -382,6 +382,7 @@ autopilot.sh stop         # writes the kill switch; the loop ends within one tic
 - **Daily summary.** Once a day (`autopilot.digest-hour`, 8) a digest lists what needs you, what is done and verified, what is in review, interrupted or blocked, and token use. It is also sent as a notification.
 - **Per-task sessions.** Where the CLI supports it, the producer's session id is stored per task and role and resumed on the next run, so a retry continues with context instead of starting over.
 - **Never.** Autopilot never pushes, merges into another branch, rebases, resets, force-completes a task, answers your questions or marks a task done without an approved verifier verdict. A task needs a `Done when` line to be eligible.
+- **What the guard cannot see.** The guard and the other hooks read command text only: a script file or Makefile that runs `git push` is not caught by them. The real backstops against a push are the push blocker (a `pushInsteadOf` rewrite plus a pre-push hook that every run gets) and the `--disallowedTools` list that claude runs get; treat the whole thing as a guard rail, not a sandbox.
 
 The header of `autopilot.sh` lists every command. To run it from an OS scheduler (cron, `schtasks`) instead of the detached loop, call `autopilot.sh tick` on an interval.
 
