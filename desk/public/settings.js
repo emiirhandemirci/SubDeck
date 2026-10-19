@@ -4,7 +4,7 @@
 import { writeJSON } from './token.js';
 export const GROUPS = [
   ['models', 'Models'], ['notify', 'Notifications'], ['push', 'Push'], ['guard', 'Guard rules'],
-  ['protect', 'Protected paths'], ['resources', 'Protected resources'], ['tasks', 'Tasks'], ['roles', 'Roles'], ['context', 'Context window'], ['statusline', 'Status line'],
+  ['protect', 'Protected paths'], ['resources', 'Protected resources'], ['tasks', 'Tasks'], ['roles', 'Roles'], ['autopilot', 'Autopilot'], ['context', 'Context window'], ['statusline', 'Status line'],
 ];
 export const THEMES = [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']];
 
