@@ -249,14 +249,15 @@ check "$(events autopilot_stuck)" "1" "no growth for stuck-minutes -> stuck even
 has "$(lastevent autopilot_stuck)" '"reason":"no-growth"' "stuck reason no-growth"
 waitruns
 NOWV=$(( $(date +%s) + 460 )) ap tick
-check "$(field "$S" status)" "interrupted" "stuck run cancelled -> task interrupted"
+intr() { grep "\"event\":\"task_interrupted\"" "$ST/events.jsonl" 2>/dev/null | grep -c "\"task\":\"$1\""; }   # the status can already be in-progress again: the same tick relaunches an interrupted task
+[ "$(intr "$S")" -ge 1 ] && ok "stuck run cancelled -> task interrupted (event)" || bad "no task_interrupted event for the stuck run"
 check "$(field "$S" strikes)" "1" "stuck run -> one strike"
 t show "$S" --section handoff | grep -q 'interrupted' && ok "stuck: Handoff written" || bad "stuck: no Handoff"
 # orphan: a running meta whose pid is gone
 O="$(t new "orphan" --writable src --done-when d)"; t set "$O" status=in-progress
 mkdir -p "$ST/runs/$O"; printf '{"version":1,"task":"%s","role":"worker","class":"worker","tool":"codex","model":"","runId":"run-%s-20251009T000000Z","pid":999999,"startedAt":"2025-10-09T00:00:00Z","endedAt":null,"status":"running"}\n' "$O" "$O" > "$ST/runs/$O/20251009T000000Z.json"
 NOWV=$(( $(date +%s) + 500 )) ap tick
-check "$(field "$O" status)" "interrupted" "orphaned run -> interrupted"
+[ "$(intr "$O")" -ge 1 ] && ok "orphaned run -> interrupted (event)" || bad "no task_interrupted event for the orphan"
 check "$(field "$O" strikes)" "1" "orphan -> strike"
 has "$(grep "run-$O-" "$APD/ledger.tsv")" "orphaned" "orphan ledger row"
 # report_missing: an ok run whose reply had no report
@@ -265,7 +266,7 @@ export FAKE_CLI_REPLY=no-report.txt
 NOWV=$(( $(date +%s) + 600 )) ap tick; waitruns; unset FAKE_CLI_REPLY
 NOWV=$(( $(date +%s) + 660 )) ap tick
 check "$(field "$R" strikes)" "1" "report_missing -> strike"
-check "$(field "$R" status)" "interrupted" "report_missing -> interrupted"
+[ "$(intr "$R")" -ge 1 ] && ok "report_missing -> interrupted (event)" || bad "no task_interrupted event for report_missing"
 
 # ---------- 7. 3-strike rule (strikes and needsFixes) ----------
 K="$(t new "three" --writable src --done-when d)"
