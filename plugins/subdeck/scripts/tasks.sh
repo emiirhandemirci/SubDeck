@@ -13,7 +13,7 @@
 #   history <id> [--tsv]       checkpoints of the task, oldest first: manual steps plus automatic commit checkpoints (a task-linked
 #                              agent's git commit is recorded by the PostToolUse hook: time, commit, subject, file names, dirty names)
 #   resume-prompt <id>         the text to resume an interrupted agent with: Last done / Next, commits already done, uncommitted files, transcript
-#   rewind <id> <#N|hash> [--apply]   dry by default: lists the commits after that checkpoint and the git revert commands; --apply (clean tree
+#   rewind <id> <#N|hash> [--apply]   (--apply refused under SUBDECK_AUTOPILOT=1) dry by default: lists the commits after that checkpoint and the git revert commands; --apply (clean tree
 #                              required) creates the revert commits; never resets, rewrites history or pushes
 #   ask <id> [--by manager|autopilot|user|agent] <text|->   park the task as needs-user with a question (key question, "## Question")
 #   answer <id> <text|-> [--status s]   record the answer; status back to what it was before the ask (in-progress becomes open: the Start hook moves it on when the agent is resumed)
@@ -898,6 +898,7 @@ cmd_rewind() {
     ARGV=("${ARGV[@]:1}")
   done
   [ -n "$id" ] && [ -n "$cpt" ] || die 2 "usage: rewind <id> <checkpoint #N|hash> [--apply]"
+  [ "$apply" = 1 ] && [ "${SUBDECK_AUTOPILOT:-}" = 1 ] && die 3 "refused: rewind --apply is for the user; the autopilot may not undo work"
   cp_open_task "$id"
   cp_entries "$T_BODY"
   cpt="${cpt#\#}"

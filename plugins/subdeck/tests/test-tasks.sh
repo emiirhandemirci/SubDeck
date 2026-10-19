@@ -444,6 +444,7 @@ t set "$S2" status=needs-user 2>/dev/null; check "$?" "2" "set status=needs-user
 t ask "$S2" --by autopilot "Q1?"; t set "$S2" status=open 2>/dev/null; check "$?" "3" "set status on a needs-user task: exit 3"
 t done "$S2" 2>/dev/null; check "$?" "3" "done on a needs-user task: exit 3"
 SUBDECK_AUTOPILOT=1 t answer "$S2" "x" 2>/dev/null; check "$?" "3" "answer refused under SUBDECK_AUTOPILOT=1"
+SUBDECK_AUTOPILOT=1 t rewind "$S2" "#1" --apply 2>/dev/null; check "$?" "3" "rewind --apply refused under SUBDECK_AUTOPILOT=1"
 echo
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
