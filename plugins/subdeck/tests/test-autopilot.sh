@@ -168,9 +168,15 @@ check "$(sed 's/"lastTickAt":"[^"]*"//' "$APD/status.json")" "$S1" "idempotent t
 
 # ---------- 4. manager turn: trigger, fingerprint skip, gap ----------
 B="$(t new "Blocked thing" --writable src --done-when "x")"; t set "$B" status=blocked
-TB="$(events autopilot_turn_start)"; NOWV=$((T0 + 400)) ap tick; waitruns
+export FAKE_CLI_LOG="$W/mlog"; TB="$(events autopilot_turn_start)"; NOWV=$((T0 + 400)) ap tick; waitruns
 T1="$(events autopilot_turn_start)"
 check "$T1" "$((TB + 1))" "manager turn started for a blocked task"
+unset FAKE_CLI_LOG
+MENV="$(cat "$W"/mlog/*.claude.env 2>/dev/null)"; MARGV="$(cat "$W"/mlog/*.claude.argv 2>/dev/null)"
+has "$MENV" 'SUBDECK_AUTOPILOT=1' "manager turn runs with SUBDECK_AUTOPILOT=1 (the guard denies rewrites and pushes)"
+has "$MENV" 'SUBDECK_ROLE=manager' "manager turn env role manager"
+has "$MARGV" 'Bash(git reset --hard:*)' "manager turn: claude disallows git reset --hard"
+has "$MARGV" 'Bash(git push:*)' "manager turn: claude disallows git push"
 ls "$APD/turns/"*.prompt.md >/dev/null 2>&1 && ok "turn prompt written" || bad "no turn prompt"
 PF="$(ls "$APD/turns/"*.prompt.md | tail -n 1)"
 has "$(cat "$PF")" "# SubDeck autopilot turn" "prompt header"
