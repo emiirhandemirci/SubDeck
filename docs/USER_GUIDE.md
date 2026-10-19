@@ -360,6 +360,31 @@ Points to know:
 - Code goes to the provider of the mapped tool (see Privacy below). The SubDeck guard hooks run only in Claude runs; for other tools the worktree and a writable-path check after the run are the safety net.
 - Per-tool setup, login, exit codes and a smoke checklist: [runs.md](runs.md).
 
+## 9d. Autopilot (opt-in)
+
+Autopilot works your task queue unattended, for example overnight. It is off by default and enabled per project. A small bash supervisor (`autopilot.sh`, no server, no database) picks ready tasks, runs a worker, then a verifier on a different model, and integrates verified work into its own branch. A headless manager turn handles the judgement calls (asking you, splitting large tasks) using the rules in `scripts/autopilot-prompt.md`.
+
+```
+/subdeck:settings set --project autopilot.enabled=on
+autopilot.sh dry-run      # prints what one tick would do; changes nothing
+autopilot.sh start        # checks, creates the autopilot branch and worktree, starts the loop
+autopilot.sh status       # state, next tick, active runs, queue, budget, tasks waiting on you
+autopilot.sh stop         # writes the kill switch; the loop ends within one tick (--now also stops active runs)
+```
+
+- **Branch.** Work goes to `autopilot/<date>` (or `autopilot.branch`) in a separate worktree. Your checkout is never touched. You merge that branch yourself.
+- **Kill switch.** `autopilot.sh stop` or the file `~/.subdeck/autopilot.STOP` (all projects) stops launching within one tick.
+- **Limits.** `autopilot.max-parallel` (default 2), `autopilot.max-runs-day` (20), `autopilot.max-turns-day` (48), optional token and weekly run budgets (`autopilot.budget.*`, 0 = no limit) and `autopilot.quiet-hours` (for example `22-07`, no launches inside). When a limit is reached the loop pauses until the next local day or week.
+- **Provider quota.** When a tool reports a usage limit, only that tool pauses until its reset time, or with a back-off of 30 minutes doubling up to 6 hours when no time is given. A login problem pauses that tool until you run `autopilot.sh resume`.
+- **Stuck detection.** A run with no new log or transcript output for `autopilot.stuck-minutes` (30) is stopped (only the run autopilot started) and the task becomes `interrupted` with a handoff.
+- **Three strikes.** After 3 failed verifications (or stuck runs) on the same task, autopilot stops retrying it and asks you one question (`needs-user`).
+- **Needs you.** Questions appear in `autopilot.sh status`, Desk and the daily summary. Answer with `tasks.sh answer <id> "<answer>"`; autopilot never answers for you.
+- **Daily summary.** Once a day (`autopilot.digest-hour`, 8) a digest lists what needs you, what is done and verified, what is in review, interrupted or blocked, and token use. It is also sent as a notification.
+- **Per-task sessions.** Where the CLI supports it, the producer's session id is stored per task and role and resumed on the next run, so a retry continues with context instead of starting over.
+- **Never.** Autopilot never pushes, merges into another branch, rebases, resets, force-completes a task, answers your questions or marks a task done without an approved verifier verdict. A task needs a `Done when` line to be eligible.
+
+The header of `autopilot.sh` lists every command. To run it from an OS scheduler (cron, `schtasks`) instead of the detached loop, call `autopilot.sh tick` on an interval.
+
 ## 10. Settings: status line
 
 `/subdeck:settings set statusline=on` adds an optional line to the Claude Code status bar with the agent counts of the current project, for example `SubDeck ● 2 running  ◐ 1 waiting  ✕ 1 failed`. Groups with a zero count are hidden; an idle project shows just `SubDeck`. The counts use the same waiting and stale rules as `/subdeck:status`.

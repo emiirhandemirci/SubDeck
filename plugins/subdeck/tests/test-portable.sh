@@ -68,4 +68,7 @@ if [ -f "$RT" ]; then
     [ -e "$PL/../../$l" ] || [ -e "$PL/../../docs/$l" ] || echo "BROKEN $l"; done > "$T/links"
   [ -s "$T/links" ] && bad "broken doc links: $(tr '\n' ' ' < "$T/links")" || ok "docs links resolve"
 else bad "docs/runs.md missing"; fi
+AP_RULES="$PL/scripts/autopilot-prompt.md"
+if [ -f "$AP_RULES" ] && head -1 "$AP_RULES" | grep -q '^You are headless' && grep -q 'Never push' "$AP_RULES" && grep -q '^`Launched:' "$AP_RULES" && ! grep -q $'\r' "$AP_RULES" && ! grep -Eq '[0-9]{4}-[0-9]{2}-[0-9]{2}|t-[0-9a-f]{4}' "$AP_RULES"; then ok "autopilot-prompt.md: headless first line, never-rules, reply format, no dates or ids"; else bad "autopilot-prompt.md content"; fi
+grep -q '^## 12b. Autopilot' "$PL/skills-portable/orchestrator/SKILL.md" && ok "orchestrator: autopilot section in portable copy" || bad "orchestrator autopilot section missing in portable copy"
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" -eq 0 ]
