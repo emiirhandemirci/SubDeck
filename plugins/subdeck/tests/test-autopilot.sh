@@ -212,14 +212,16 @@ if want queue; then
 # ---------- 5. queue: validation, max-parallel, max-runs-day ----------
 mkproj p3; pset autopilot.enabled=on autopilot.max-parallel=1 autopilot.max-runs-day=2
 X1="$(t new "x1" --writable src --done-when d)"; X2="$(t new "x2" --writable src --done-when d)"; X3="$(t new "x3" --writable src --done-when d)"
-export FAKE_CLI_SLEEP=3
+printf '#!/usr/bin/env bash\nwhile [ ! -e "%s/go" ]; do sleep 0.2; done\n' "$W" > "$W/wait.sh"; rm -f "$W/go"
+export FAKE_CLI_RUN="$W/wait.sh"   # the first run holds its slot until $W/go exists (no timing)
 NOWV=$T0 ap tick
 check "$(events autopilot_launch)" "1" "max-parallel 1: one launch"
 check "$(ls "$APD/queue" | wc -l | tr -d ' ')" "2" "the other two stay queued"
-OUT="$(ap launch worker "$X2")"; has "$OUT" "refused: already queued" "launch: already queued refused"
+QID="$(ls "$APD/queue" | head -n 1 | sed 's/^[0-9]*-[0-9]*-\(t-[0-9a-f]*\)-.*/\1/')"
+OUT="$(ap launch worker "$QID")"; has "$OUT" "refused: already queued" "launch: already queued refused"
 NOWV=$((T0 + 1)) ap tick
 check "$(events autopilot_launch)" "1" "slot busy: still one launch"
-waitruns; unset FAKE_CLI_SLEEP
+touch "$W/go"; waitruns; unset FAKE_CLI_RUN
 NOWV=$((T0 + 60)) ap tick; waitruns
 check "$(events autopilot_launch)" "2" "slot free: the next one launches"
 NOWV=$((T0 + 120)) ap tick; waitruns
