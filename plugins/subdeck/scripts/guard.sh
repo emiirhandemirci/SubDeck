@@ -539,6 +539,39 @@ function prot_cmd(cmd, d, id, k, nw,  i, x, sc, inplace, svcur, dd) {
     CUR = svcur
   }
 }
+# ---------- autopilot run (SUBDECK_AUTOPILOT=1): never rewrite history, push, delete branches, answer or rewind ----------
+# Only active in a run started by the autopilot; every decision for other runs is unchanged. Always deny (never ask,
+# never off): nobody can answer an ask in a headless run, and the rule modes of the user do not apply.
+function ap_on() { if (APON == "") APON = (ENVIRON["SUBDECK_AUTOPILOT"] == "1") ? 1 : 0; return APON }
+function ap_deny(what) { if (DENYID == "") { DENYID = "autopilot"; APINFO = what } }
+function ap_git(sc, d, id, k, nw,  i, x, flag, pos) {
+  if (sc == "push") ap_deny("git push")
+  else if (sc == "rebase" || sc == "filter-branch" || sc == "filter-repo") ap_deny("git " sc)
+  else if (sc == "reset") { for (i = k; i <= nw; i++) if (W[d, id, i] ~ /^--(hard|merge)$/) ap_deny("git reset " W[d, id, i]) }
+  else if (sc == "branch") {
+    flag = 0; pos = 0
+    for (i = k; i <= nw; i++) {
+      x = W[d, id, i]
+      if (x ~ /^--(delete|force|move)$/ || (x ~ /^-[a-zA-Z]+$/ && x ~ /[dDmMf]/)) flag = 1
+      else if (x !~ /^-/ && x !~ /^subdeck\//) pos = 1
+    }
+    if (flag && pos) ap_deny("git branch delete/move of a branch other than subdeck/*")
+  }
+}
+function ap_cmd(d, id, k, nw,  i, x, b, sb, ts) {
+  ts = 0; sb = ""
+  for (i = k; i <= nw; i++) {
+    x = W[d, id, i]; b = x; sub(/.*[\/\\]/, "", b)
+    if (!ts) { if (b == "tasks.sh") ts = 1; continue }
+    if (x == "--project") { i++; continue }
+    if (x ~ /^-/) continue
+    sb = x; break
+  }
+  if (!ts || sb == "") return
+  if (sb == "answer") ap_deny("tasks.sh answer")
+  else if (sb == "rewind") { for (i = k; i <= nw; i++) if (W[d, id, i] == "--apply") ap_deny("tasks.sh rewind --apply") }
+  else if (sb == "done") { for (i = k; i <= nw; i++) if (W[d, id, i] == "--force") ap_deny("tasks.sh done --force") }
+}
 function seg(d, id,  nw, k, x, cmd, j, str) {
   nw = WC[d, id]; k = 1
   if (PPON) for (j = 1; j <= RN[d, id]; j++) pp_check(RD[d, id, j], 0)
@@ -563,6 +596,7 @@ function seg(d, id,  nw, k, x, cmd, j, str) {
   cmd = x; sub(/.*[\/\\]/, "", cmd); cmd = tolower(cmd); sub(/\.exe$/, "", cmd)
   if (PPON) prot_cmd(cmd, d, id, k + 1, nw)
   if (PRON) pr_cmd(cmd, d, id, k + 1, nw)
+  if (ap_on()) ap_cmd(d, id, k, nw)
   if (cmd == "git") git_seg(d, id, k + 1, nw)
   else if (PSM && cmd ~ /^(rm|remove-item|ri|del|erase|rd|rmdir)$/) ps_rm_seg(d, id, k + 1, nw)
   else if (PSM && cmd == "cmd") {
@@ -609,6 +643,7 @@ function git_seg(d, id, k, nw,  x, sc, i, j, ch, len, force, dd, npos, noop, cdi
   }
   if (k > nw) return
   sc = W[d, id, k]; k++
+  if (ap_on()) ap_git(sc, d, id, k, nw)
   if (sc == "add") {
     dd = 0
     for (i = k; i <= nw; i++) {
@@ -938,6 +973,7 @@ function reason(id) {
   if (id == "force-push") return "SubDeck guard (force-push): a force push rewrites remote history. Push without --force/-f/--force-with-lease/+refspec, or ask the user to run it by hand."
   if (id == "push" && PUSHINFO != "") return "SubDeck guard (push): " PUSHINFO "; get the user\047s approval first (push mode branches: protected branches, tags and branch-moving merges/rebases/resets ask; other pushes are allowed)."
   if (id == "push") return "SubDeck guard (push): pushing publishes commits to the remote; get the user\047s approval first."
+  if (id == "autopilot") return "SubDeck guard (autopilot): " APINFO " is not allowed in an autopilot run; use tasks.sh ask <id> to put the question to the user, and let the user do this by hand."
   if (id == "history-rewrite") return "SubDeck guard (history-rewrite): git reset --hard / rebase / filter-branch / filter-repo / clean -f discard or rewrite work; get the user\047s approval first."
   if (id == "rm-rf-danger") return "SubDeck guard (rm-rf-danger): this recursive delete targets /, a drive root, the home directory, the project root or one of their ancestors. Delete specific subdirectories instead."
   if (id == "secret-files") return "SubDeck guard (secret-files): this file looks like a secret (.env, key, certificate, credentials); get the user\047s approval before writing it."
@@ -1070,7 +1106,7 @@ function hook_decide(t,  tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp, a
   # the other modes /subdeck:settings accepts for this rule (push: ask|branches|off, the rest: deny|ask|off)
   np = split(id == "push" ? "ask branches off" : "deny ask off", pl, " "); pp = ""
   for (pi = 1; pi <= np; pi++) if (pl[pi] != MODE[id]) pp = pp (pp == "" ? "" : "|") pl[pi]
-  rs = reason(id) " To change this rule: /subdeck:settings set " id "=" pp
+  rs = reason(id) (id == "autopilot" ? "" : " To change this rule: /subdeck:settings set " id "=" pp)
   if (id == "protected-paths") rs = rs " (or unprotect=<glob>)"
   if (id == "protected-resources") rs = rs " (or change protect-ports=, protect-hosts=, protect-procs=)"
   if (id == "push" && MODE[id] == "branches") rs = rs " (or protect-branches=<glob>[,<glob>])"

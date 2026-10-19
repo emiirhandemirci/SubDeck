@@ -773,7 +773,9 @@ for tok in ${ATOKS[@]+"${ATOKS[@]}"}; do
     "{model_args}") [ -n "$MODEL" ] && { pget "$TOOL" model; add_tokens "$PV"; } ;;
     "{cwd_args}") pget "$TOOL" cwd; add_tokens "$PV" ;;
     "{resume_args}") [ "$RESUMED" = 1 ] && { pget "$TOOL" resume; add_tokens "$PV"; } ;;
-    "{restrict_args}") pget "$TOOL" restrict; add_tokens "$PV" ;;
+    "{restrict_args}") pget "$TOOL" restrict; add_tokens "$PV"
+      # an autopilot run on claude: also no history rewrites or branch deletes (the guard hook denies them too)
+      [ "${SUBDECK_AUTOPILOT:-}" = 1 ] && [ "$TOOL" = claude ] && add_tokens "Bash(git{sp}reset{sp}--hard:*) Bash(git{sp}reset{sp}--merge:*) Bash(git{sp}rebase:*) Bash(git{sp}branch{sp}-D:*) Bash(git{sp}branch{sp}-d:*) Bash(git{sp}branch{sp}-M:*)" ;;
     "{user_args}") split_user_args "$R_ARGS"; for u in ${UARGS[@]+"${UARGS[@]}"}; do ARGV_OUT[${#ARGV_OUT[@]}]="$u"; done ;;
     *) subst "$tok"; ARGV_OUT[${#ARGV_OUT[@]}]="$SUB" ;;
   esac

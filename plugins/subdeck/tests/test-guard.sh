@@ -930,6 +930,48 @@ got="$(hangrun 'git add -A && git commit -m x' | sed -n 's/.*"permissionDecision
 [ "$got" = deny ] && ok "checkpoint git hang: deny kept" || bad "checkpoint git hang: got '$got', want deny"
 rm -rf "$FX"
 
+# ---- autopilot runs (SUBDECK_AUTOPILOT=1): deny, never ask; other runs unchanged ----
+setbranch main
+while IFS=$'\t' read -r want cmd; do
+  [ -n "$want" ] || continue
+  SUBDECK_AUTOPILOT=1 expect "$want" "$cmd" "autopilot run: $cmd"
+done <<'APTABLE'
+deny	git push
+deny	git push origin subdeck/t-1
+deny	git push --force origin main
+deny	git reset --hard
+deny	git reset --hard HEAD~2
+deny	git reset --merge
+deny	git rebase main
+deny	git filter-branch --all
+deny	git branch -D main
+deny	git branch -D release/1.0
+deny	git branch --delete feature
+deny	git branch -M other
+deny	cd sub && git push
+deny	bash -c "git push origin x"
+deny	bash scripts/tasks.sh --project /x answer t-1 yes
+deny	bash scripts/tasks.sh answer t-1 -
+deny	bash scripts/tasks.sh rewind t-1 abc123 --apply
+deny	bash scripts/tasks.sh done t-1 --force
+allow	bash scripts/tasks.sh rewind t-1 abc123
+allow	bash scripts/tasks.sh done t-1
+allow	bash scripts/tasks.sh ask t-1 "which one?"
+allow	git branch -D subdeck/t-1
+allow	git branch
+allow	git status
+allow	git reset HEAD file.txt
+allow	git commit -m "x" -- a.txt
+APTABLE
+# the same commands outside an autopilot run keep their old decisions
+expect ask "git reset --hard" "normal run: reset --hard still asks"
+expect ask "git reset --merge" "normal run: reset --merge unchanged (asks on main)"
+expect allow "git branch -D feature" "normal run: branch -D unchanged"
+expect allow "bash scripts/tasks.sh answer t-1 yes" "normal run: tasks.sh answer allowed"
+got="$(bash_json "git push" | SUBDECK_AUTOPILOT=1 HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+has "$got" '"permissionDecision":"deny".*SubDeck guard \(autopilot\)' "autopilot deny reason names the autopilot"
+SUBDECK_AUTOPILOT=1 SUBDECK_GUARD=0 expect allow "git push" "SUBDECK_GUARD=0 still disables the guard"
+
 rm -rf "$H" "$P"
 echo "$PASS passed, $FAIL failed"
 [ $FAIL -eq 0 ]
