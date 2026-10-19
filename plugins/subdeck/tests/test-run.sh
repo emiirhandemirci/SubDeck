@@ -44,6 +44,8 @@ lastevent() { grep "\"event\":\"$1\"" "$ST/events.jsonl" 2>/dev/null | tail -n 1
 newtask() { t new "${1:-job}" --writable "${2-a.txt,src}"; }
 ROLES_ALL='{"roles":{"worker":{"tool":"codex","model":"gpt-5-codex"},"verifier":{"tool":"claude","model":"opus"},"researcher":{"tool":"gemini","model":"gemini-2.5-pro"}}}'
 
+# SUBDECK_TEST_SECTION=0.9 runs only the 0.9 section (13g) and the bash 3.2 scan
+if [ "${SUBDECK_TEST_SECTION:-all}" = all ]; then
 # ---------- 1. roles ----------
 ucfg '{"roles":{"worker":{"tool":"codex","model":"gpt-5-codex","timeout":900},"ui-worker":{"tool":"custom","cmd":"mytool --in {prompt_file}"},"BAD NAME":{"tool":"codex"}}}'
 OUT="$(r roles)"
@@ -503,6 +505,75 @@ for a in "--permission-mode plan --effort high" "-s workspace-write -c x=1" "--m
   r worker "$TDL" --dry-run >/dev/null 2>&1; check "$?" "0" "negative control: run.sh allows $a"
   ( H2="$(mktemp -d)"; HOME="$H2" bash "$PL/scripts/settings.sh" set roles.worker.tool=claude "roles.worker.args=$a" >/dev/null 2>&1; rc=$?; rm -rf "$H2"; exit $rc ); check "$?" "0" "negative control: settings.sh allows $a"
 done
+ucfg "$ROLES_ALL"
+
+fi
+# ---------- 13g. 0.9: refusals, SUBDECK_RUN_BASE, tokens, session resume, manager-turn ----------
+ucfg "$ROLES_ALL"
+TNU="$(newtask "nu")"; t ask "$TNU" --by manager "Which API?"
+r worker "$TNU" >/dev/null 2>&1; check "$?" "2" "needs-user task refused"
+has "$(lastevent run_refused)" '"reason":"needs-user"' "run_refused reason needs-user"
+TAQ="$(newtask "aq")"
+SUBDECK_AUTOPILOT=1 r worker "$TAQ" >/dev/null 2>&1; check "$?" "2" "autopilot child without LAUNCH=1 refused"
+has "$(lastevent run_refused)" '"reason":"autopilot-queue"' "run_refused reason autopilot-queue"
+SUBDECK_AUTOPILOT=1 SUBDECK_AUTOPILOT_LAUNCH=1 r worker "$TAQ" --dry-run >/dev/null 2>&1; check "$?" "0" "negative control: LAUNCH=1 passes"
+git -C "$P" branch -q apbase; echo more > "$P/ap.txt"; git -C "$P" add ap.txt; git -C "$P" commit -qm "after apbase"
+TRB="$(newtask "runbase")"
+SUBDECK_RUN_BASE=apbase r worker "$TRB" >/dev/null 2>&1
+check "$(git -C "$P" rev-parse "subdeck/$TRB")" "$(git -C "$P" rev-parse apbase)" "SUBDECK_RUN_BASE: new worktree branch starts at the base ref"
+TRB2="$(newtask "runbase2")"
+SUBDECK_RUN_BASE=nosuchref r worker "$TRB2" >/dev/null 2>&1; check "$?" "2" "SUBDECK_RUN_BASE that is not a commit: refused"
+for spec in claude:150:30 codex:150:30 gemini:150:30 opencode:0:0; do
+  tool="${spec%%:*}"; rest="${spec#*:}"; win="${rest%%:*}"; wout="${rest#*:}"
+  ucfg "{\"roles\":{\"worker\":{\"tool\":\"$tool\"}}}"
+  TU="$(newtask "usage-$tool")"
+  FAKE_CLI_USAGE=150,30 r worker "$TU" >/dev/null 2>&1
+  M="$(lastmeta "$TU" | tr -d '\n')"
+  if [ "$tool" = opencode ]; then has "$M" '"tokens":{"in":0,"out":0,"known":false}' "tokens unknown for $tool"
+  else has "$M" "\"tokens\":{\"in\":$win,\"out\":$wout,\"known\":true}" "tokens parsed for $tool"; fi
+done
+has "$(lastevent run_end)" '"tokensIn":0,"tokensOut":0,"tokensKnown":false' "run_end token fields"
+ucfg '{"roles":{"worker":{"tool":"claude","model":"sonnet"}}}'
+TS1="$(newtask "resume")"
+FAKE_CLI_SESSION=sess-r1 r worker "$TS1" >/dev/null 2>&1
+check "$(cat "$ST/runs/$TS1/session.worker")" "claude	sonnet	sess-r1" "session id stored per task and role"
+D="$(r worker "$TS1" --dry-run 2>/dev/null)"
+has "$D" "session: resume sess-r1" "next run resumes the stored session"
+check "$(printf '%s\n' "$D" | awk '/^argv:$/{f=1;next} /^env:$/{f=0} f' | sed -n '2,4p' | tr '\n' ' ')" "-p --resume sess-r1 " "claude argv: --resume <id>"
+has "$(r worker "$TS1" --fresh --dry-run 2>/dev/null)" "session: new" "--fresh ignores the stored session"
+ucfg '{"roles":{"worker":{"tool":"claude","model":"opus"}}}'
+has "$(r worker "$TS1" --dry-run 2>/dev/null)" "session: new" "another model: no resume"
+ucfg '{"roles":{"worker":{"tool":"claude","model":"sonnet"}}}'
+FAKE_CLI_LOG="$W/logres" FAKE_CLI_EXIT=1 FAKE_CLI_REPLY=no-report.txt r worker "$TS1" >/dev/null 2>&1
+grep -qx -- '--resume' "$W/logres/1.claude.argv" && ok "real run passes --resume to the CLI" || bad "real run without --resume"
+[ ! -f "$ST/runs/$TS1/session.worker" ] && ok "failed resumed run drops the session" || bad "failed resumed run kept the session"
+ucfg '{"roles":{"worker":{"tool":"codex"}}}'
+TS2="$(newtask "resume-codex")"; r worker "$TS2" >/dev/null 2>&1
+has "$(r worker "$TS2" --dry-run 2>/dev/null)" "session: new" "codex: no resume (profile has none)"
+t set "$TS2" status=in-progress; t interrupt "$TS2" --reason stuck >/dev/null
+has "$(r worker "$TS2" --dry-run 2>/dev/null)" "## Resume point" "interrupted task without resume gets the resume point"
+ucfg '{"roles":{"manager":{"tool":"claude","model":"opus"}}}'
+printf '# SubDeck autopilot turn x\nhello\n' > "$W/turn.md"; mkdir -p "$W/turns"
+FAKE_CLI_LOG="$W/logmt" FAKE_CLI_USAGE=10,5 r manager-turn --prompt-file "$W/turn.md" --cwd "$P" --out-dir "$W/turns" >/dev/null 2>&1; check "$?" "0" "manager-turn exits 0"
+MJ=""; for x in "$W/turns"/*.json; do [ -f "$x" ] && MJ="$(tr -d '\n' < "$x")"; done
+has "$MJ" '"task":"","title":"","role":"manager","class":"manager"' "manager-turn meta: no task, class manager"
+has "$MJ" '"worktree":""' "manager-turn meta: no worktree"
+has "$MJ" '"writableCheck":"skipped"' "manager-turn meta: writable check skipped"
+has "$MJ" '"tokens":{"in":10,"out":5,"known":true}' "manager-turn tokens"
+check "$(cat "$W/logmt/1.claude.stdin")" "$(cat "$W/turn.md")" "manager-turn prompt is the file as is"
+check "$(cat "$W/logmt/1.claude.cwd")" "$(cd "$P" && pwd)" "manager-turn runs in --cwd"
+has "$(cat "$W/logmt/1.claude.env")" "SUBDECK_ROLE=manager" "manager-turn env role manager"
+has "$(cat "$W/logmt/1.claude.env")" "GIT_CONFIG_KEY_0=url.subdeck-no-push://.pushInsteadOf" "manager-turn env carries the push blocker"
+ls "$W/turns" | grep -q 'prompt.md' && bad "manager-turn copied the prompt" || ok "manager-turn leaves the prompt where it is"
+has "$(lastevent run_end)" '"agent_type":"manager-run"' "run_end agent_type manager-run"
+has "$(lastevent run_end)" '"task":""' "run_end task empty"
+mkdir "$W/turns/.lock"; echo "$$ 0" > "$W/turns/.lock/owner"
+r manager-turn --prompt-file "$W/turn.md" --cwd "$P" --out-dir "$W/turns" >/dev/null 2>&1; check "$?" "4" "manager-turn lock busy: exit 4"
+rm -rf "$W/turns/.lock"
+ucfg '{"roles":{}}'
+r manager-turn --prompt-file "$W/turn.md" --cwd "$P" --out-dir "$W/turns" >/dev/null 2>&1; check "$?" "2" "manager-turn unmapped manager: exit 2"
+r manager-turn --cwd "$P" --out-dir "$W/turns" >/dev/null 2>&1; check "$?" "2" "manager-turn without --prompt-file: exit 2"
+r manager "$TS2" >/dev/null 2>&1; check "$?" "2" "run.sh manager <id> stays refused"
 ucfg "$ROLES_ALL"
 
 # ---------- 14. bash 3.2 rules ----------

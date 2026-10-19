@@ -18,6 +18,13 @@
 #   3 verifier would be the same model as the producer, 4 busy (a run of this task is active), 5 writable violation,
 #   6 auth, 7 quota, 124 timeout, 127 CLI not on PATH, 130 cancelled.
 # Files: <state>/runs/<id>/<ts>.{log,out,prompt.md,final.txt,last.txt,json} (ts = YYYYMMDDTHHMMSSZ, UTC).
+#   <state>/runs/<id>/session.<role> = "<tool>\t<model|->\t<session id>" of the last run of that role: the next run of the
+#   same task, role, tool and model resumes that CLI session when the profile has a resume field (claude: --resume);
+#   --fresh ignores it; a resumed run that fails drops it. Meta and run_end carry token usage (profile field usage).
+# manager-turn (autopilot): roles.manager with the prompt file as is, in --cwd, files in --out-dir (<ts>.{log,out,final.txt,
+#   last.txt,json}, lock <out-dir>/.lock), meta task "" class manager writableCheck skipped; no task hooks.
+# Refusals (exit 2): a task in needs-user; a task run under SUBDECK_AUTOPILOT=1 without SUBDECK_AUTOPILOT_LAUNCH=1
+#   (use autopilot.sh launch). SUBDECK_RUN_BASE=<ref>: base of a newly created task worktree (default HEAD).
 # Env (tests): SUBDECK_ROLES_DIR = rulebook dir (default scripts/roles).
 
 LC_COLLATE=C
@@ -52,7 +59,7 @@ jstr() { jesc "$1"; printf '"%s"' "$JE"; }
 jnum() { if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi; }
 
 # ---------- arguments ----------
-PROJECT=""; POS=(); WT_MODE=""; DRY=0; TIMEOUT_OVR=""; JSON=0; LINES=""; FORCE=0; BADOPT=""
+PROJECT=""; POS=(); WT_MODE=""; DRY=0; TIMEOUT_OVR=""; JSON=0; LINES=""; FORCE=0; BADOPT=""; FRESH=0; MT_PROMPT=""; MT_CWD=""; MT_OUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --project) [ $# -ge 2 ] || die 2 "--project needs a directory"; PROJECT="$2"; shift 2 ;;
@@ -66,11 +73,16 @@ while [ $# -gt 0 ]; do
     --lines) [ $# -ge 2 ] || die 2 "--lines needs a number"; LINES="$2"; shift 2 ;;
     --lines=*) LINES="${1#--lines=}"; shift ;;
     --force) FORCE=1; shift ;;
+    --fresh) FRESH=1; shift ;;
+    --prompt-file|--cwd|--out-dir)
+      [ $# -ge 2 ] || die 2 "$1 needs a value"
+      case "$1" in --prompt-file) MT_PROMPT="$2" ;; --cwd) MT_CWD="$2" ;; --out-dir) MT_OUT="$2" ;; esac
+      shift 2 ;;
     --*) BADOPT="$1"; shift ;;
     *) POS[${#POS[@]}]="$1"; shift ;;
   esac
 done
-USAGE='usage: run.sh [--project <dir>] <role> <task-id> [--worktree|--no-worktree] [--dry-run] [--timeout S] | roles [--json] | tail <task-id> [--lines N] | cleanup <task-id> [--force]'
+USAGE='usage: run.sh [--project <dir>] <role> <task-id> [--worktree|--no-worktree] [--fresh] [--dry-run] [--timeout S] | manager-turn --prompt-file F --cwd D --out-dir O [--timeout S] [--dry-run] | roles [--json] | tail <task-id> [--lines N] | cleanup <task-id> [--force]'
 [ -n "$BADOPT" ] && die 2 "unknown option $BADOPT ($USAGE)"
 [ ${#POS[@]} -gt 0 ] || die 2 "$USAGE"
 
@@ -210,7 +222,7 @@ subst() {
     val=""; local known=1
     case "$name" in
       model) val="$V_MODEL" ;; cwd) val="$V_CWD" ;; prompt) val="$V_PROMPT" ;; prompt_file) val="$V_PROMPT_FILE" ;;
-      last_file) val="$V_LAST_FILE" ;; cmd) [ -z "$q" ] && val="$V_CMD" || known=0 ;;
+      last_file) val="$V_LAST_FILE" ;; session) val="${V_SESSION:-}" ;; cmd) [ -z "$q" ] && val="$V_CMD" || known=0 ;;
       sp) [ -z "$q" ] && val=" " || known=0 ;; empty) [ -z "$q" ] && val="" || known=0 ;;
       *) known=0 ;;
     esac
@@ -540,12 +552,28 @@ case "${POS[0]}" in
 esac
 
 # ---------- run: resolve ----------
-ROLE="${POS[0]}"; TASK="${POS[1]:-}"
-[ ${#POS[@]} -eq 2 ] || refuse 2 usage "$USAGE"
-[[ $ROLE =~ $ROLE_RE ]] || refuse 2 usage "invalid role name '$ROLE'"
-[[ $TASK =~ $ID_RE ]] || refuse 2 usage "invalid task id '$TASK'"
-role_class "$ROLE"; AGENT_TYPE="$CLASS-run"
-[ "$CLASS" = manager ] && refuse 2 usage "the manager role is not runnable (start that CLI yourself)"
+MT=0
+if [ "${POS[0]}" = manager-turn ]; then
+  # one headless manager turn (autopilot): roles.manager, prompt file as is, no task, no hooks, no writable check
+  MT=1; ROLE=manager; TASK=""; CLASS=manager; AGENT_TYPE=manager-run
+  [ ${#POS[@]} -eq 1 ] || refuse 2 usage "usage: run.sh [--project P] manager-turn --prompt-file F --cwd D --out-dir O [--timeout S] [--dry-run]"
+  { [ -n "$MT_PROMPT" ] && [ -n "$MT_CWD" ] && [ -n "$MT_OUT" ]; } || refuse 2 usage "manager-turn needs --prompt-file, --cwd and --out-dir"
+  [ -f "$MT_PROMPT" ] || refuse 2 not-found "prompt file not found: $MT_PROMPT"
+  [ -d "$MT_CWD" ] || refuse 2 not-found "cwd not found: $MT_CWD"
+  MT_CWD="$(cd "$MT_CWD" && pwd)"
+else
+  [ -z "$MT_PROMPT$MT_CWD$MT_OUT" ] || refuse 2 usage "--prompt-file, --cwd and --out-dir are for manager-turn only"
+  ROLE="${POS[0]}"; TASK="${POS[1]:-}"
+  [ ${#POS[@]} -eq 2 ] || refuse 2 usage "$USAGE"
+  [[ $ROLE =~ $ROLE_RE ]] || refuse 2 usage "invalid role name '$ROLE'"
+  [[ $TASK =~ $ID_RE ]] || refuse 2 usage "invalid task id '$TASK'"
+  role_class "$ROLE"; AGENT_TYPE="$CLASS-run"
+  [ "$CLASS" = manager ] && refuse 2 usage "the manager role is not runnable (start that CLI yourself)"
+  # under the autopilot every task run goes through its queue (autopilot.sh launch); only the supervisor sets LAUNCH=1
+  if [ "${SUBDECK_AUTOPILOT:-}" = 1 ] && [ "${SUBDECK_AUTOPILOT_LAUNCH:-}" != 1 ]; then
+    refuse 2 autopilot-queue "under the autopilot task runs are queued: use autopilot.sh launch $ROLE $TASK"
+  fi
+fi
 if [ -n "$TIMEOUT_OVR" ]; then
   [[ $TIMEOUT_OVR =~ ^[0-9]{1,6}$ ]] && [ "$((10#$TIMEOUT_OVR))" -ge 1 ] || refuse 2 usage "--timeout needs whole seconds >= 1"
 fi
@@ -560,14 +588,18 @@ pget "$TOOL" bin; BIN="$PV"
 TIMEOUT="${R_TIMEOUT:-$DEFAULT_TIMEOUT}"; [ -n "$TIMEOUT_OVR" ] && TIMEOUT="$TIMEOUT_OVR"
 TIMEOUT=$((10#$TIMEOUT))
 
-task_dir
-if [ -f "$TDIR/$TASK.md" ]; then TFILE="$TDIR/$TASK.md"
-elif [ -f "$TDIR/archive/$TASK.md" ]; then refuse 2 not-found "task $TASK is archived (done)"
-else refuse 2 not-found "task not found: $TASK ($TDIR)"; fi
-read_task "$TFILE" || refuse 2 not-found "task file unreadable: $TFILE"
-writable_items
-RULEBOOK="$ROLES_DIR/$CLASS.md"
-[ -f "$RULEBOOK" ] || refuse 2 not-found "rulebook missing: $RULEBOOK"
+TK_title=""; TK_status=""; TK_tool=""; TK_model=""; TK_worktree=""; TK_writable=""; WITEMS=(); TFILE=""; RULEBOOK=""
+if [ "$MT" = 0 ]; then
+  task_dir
+  if [ -f "$TDIR/$TASK.md" ]; then TFILE="$TDIR/$TASK.md"
+  elif [ -f "$TDIR/archive/$TASK.md" ]; then refuse 2 not-found "task $TASK is archived (done)"
+  else refuse 2 not-found "task not found: $TASK ($TDIR)"; fi
+  read_task "$TFILE" || refuse 2 not-found "task file unreadable: $TFILE"
+  [ "$TK_status" = needs-user ] && refuse 2 needs-user "task $TASK waits for the user's answer (tasks.sh answer $TASK <text>)"
+  writable_items
+  RULEBOOK="$ROLES_DIR/$CLASS.md"
+  [ -f "$RULEBOOK" ] || refuse 2 not-found "rulebook missing: $RULEBOOK"
+fi
 
 # verifier must be a different model than the producer (exact normalized tool/model)
 MODEL_CHECK="n/a"
@@ -586,7 +618,16 @@ command -v "$BIN" >/dev/null 2>&1 || refuse 127 not-found "$BIN not found on PAT
 
 # working directory
 GIT=0; is_git "$PROJECT" && GIT=1
-WT_PATH="$STATE/worktrees/$TASK"; USE_WT=0; WT_ACTION=""
+WT_PATH="$STATE/worktrees/$TASK"; USE_WT=0; WT_ACTION=""; PREFIX=""; BASE=""
+# base of a newly created task worktree: SUBDECK_RUN_BASE (the autopilot branch) or HEAD
+RUN_BASE_REF="${SUBDECK_RUN_BASE:-HEAD}"
+if [ "$MT" = 1 ]; then
+  CWD="$MT_CWD"; WORKTREE=""
+  BRANCH="$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+else
+if [ -n "${SUBDECK_RUN_BASE:-}" ] && [ "$GIT" = 1 ] && ! git -C "$PROJECT" rev-parse --verify --quiet "$SUBDECK_RUN_BASE^{commit}" >/dev/null 2>&1; then
+  refuse 2 usage "SUBDECK_RUN_BASE '$SUBDECK_RUN_BASE' is not a commit in $PROJECT"
+fi
 case "$CLASS" in
   worker) [ "$WT_MODE" = no ] || USE_WT=1 ;;
   *) [ "$WT_MODE" = yes ] && USE_WT=1 ;;
@@ -622,25 +663,40 @@ else
 fi
 WORKTREE=""; [ "$USE_WT" = 1 ] && WORKTREE="$WT_PATH"
 [ "$CWD" != "$PROJECT" ] && [ "$USE_WT" = 0 ] && WORKTREE="$CWD"
+fi
 # read-only classes have nothing writable
 [ "$CLASS" = worker ] || WITEMS=()
 
 # lock (checked here; taken only by a real run)
-LOCK="$STATE/runs/$TASK/.lock"
-lock_state check || refuse 4 busy "a run of $TASK is already active ($LOCK)"
+if [ "$MT" = 1 ]; then RUNDIR="$MT_OUT"; BUSYMSG="a manager turn is already active"
+else RUNDIR="$STATE/runs/$TASK"; BUSYMSG="a run of $TASK is already active"; fi
+LOCK="$RUNDIR/.lock"
+lock_state check || refuse 4 busy "$BUSYMSG ($LOCK)"
 
 # run files
-RUNDIR="$STATE/runs/$TASK"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 if [ "$DRY" = 0 ]; then
   mkdir -p "$RUNDIR" 2>/dev/null || die 2 "cannot create $RUNDIR"
-  lock_take || refuse 4 busy "a run of $TASK is already active ($LOCK)"
+  lock_take || refuse 4 busy "$BUSYMSG ($LOCK)"
   trap 'lock_release' EXIT
   while [ -e "$RUNDIR/$TS.json" ]; do sleep 1; TS="$(date -u +%Y%m%dT%H%M%SZ)"; done
 fi
-RUN_ID="run-$TASK-$TS"
+if [ "$MT" = 1 ]; then RUN_ID="turn-$TS"; else RUN_ID="run-$TASK-$TS"; fi
 F="$RUNDIR/$TS"
 LOGF="$F.log"; OUTF="$F.out"; PROMPTF="$F.prompt.md"; FINALF="$F.final.txt"; LASTF="$F.last.txt"; METAF="$F.json"
+[ "$MT" = 1 ] && PROMPTF="$MT_PROMPT"
+
+# per task and role CLI session (resumed on the next run of the same task, role, tool and model)
+SESSF=""; RESUME_SID=""; RESUMED=0
+if [ "$MT" = 0 ]; then
+  SESSF="$STATE/runs/$TASK/session.$ROLE"
+  if [ "$FRESH" = 0 ] && [ -f "$SESSF" ]; then
+    IFS="$TAB" read -r s_tool s_model s_id < "$SESSF" 2>/dev/null
+    if [ "$s_tool" = "$TOOL" ] && [ "$s_model" = "${MODEL:--}" ] && [[ ${s_id:-} =~ ^[A-Za-z0-9._:-]{1,128}$ ]]; then
+      pget "$TOOL" resume; [ -n "$PV" ] && { RESUME_SID="$s_id"; RESUMED=1; }
+    fi
+  fi
+fi
 
 # ---------- prompt ----------
 build_prompt() {
@@ -680,13 +736,24 @@ build_prompt() {
       printf '%s\n' 'Fingerprint: HEAD=<hash> state=<cksum>' 'Verdict: Approved | Needs fixes | Escalate' ;;
   esac
 }
-protected_text
-PROMPT="$(build_prompt)"
+# an interrupted task that is not resumed in its own CLI session gets the resume point (Last done / Next, commits, files)
+resume_section() {
+  [ "$TK_status" = interrupted ] && [ "$RESUMED" = 0 ] || return 0
+  local rp
+  rp="$(bash "$TASKS_SH" --project "$PROJECT" resume-prompt "$TASK" 2>/dev/null | head -c 8000 | tr -d '\r')"
+  [ -n "$rp" ] && printf '\n## Resume point\n%s\n' "$rp"
+}
+if [ "$MT" = 1 ]; then
+  PROMPT="$(tr -d '\r' < "$MT_PROMPT")"
+else
+  protected_text
+  PROMPT="$(build_prompt; resume_section)"
+fi
 PROMPT="$PROMPT$NL"
 
 # ---------- argv and env ----------
 pget "$TOOL" prompt; PMODE="$PV"
-V_MODEL="$MODEL"; V_CWD="$CWD"; V_PROMPT="$PROMPT"; V_PROMPT_FILE="$PROMPTF"; V_LAST_FILE="$LASTF"
+V_MODEL="$MODEL"; V_CWD="$CWD"; V_PROMPT="$PROMPT"; V_PROMPT_FILE="$PROMPTF"; V_LAST_FILE="$LASTF"; V_SESSION="$RESUME_SID"
 if [ "$PLAT" = win ] && command -v cygpath >/dev/null 2>&1; then
   V_CWD="$(cygpath -w "$CWD" 2>/dev/null || printf '%s' "$CWD")"
   V_PROMPT_FILE="$(cygpath -w "$PROMPTF" 2>/dev/null || printf '%s' "$PROMPTF")"
@@ -705,6 +772,7 @@ for tok in ${ATOKS[@]+"${ATOKS[@]}"}; do
   case "$tok" in
     "{model_args}") [ -n "$MODEL" ] && { pget "$TOOL" model; add_tokens "$PV"; } ;;
     "{cwd_args}") pget "$TOOL" cwd; add_tokens "$PV" ;;
+    "{resume_args}") [ "$RESUMED" = 1 ] && { pget "$TOOL" resume; add_tokens "$PV"; } ;;
     "{restrict_args}") pget "$TOOL" restrict; add_tokens "$PV" ;;
     "{user_args}") split_user_args "$R_ARGS"; for u in ${UARGS[@]+"${UARGS[@]}"}; do ARGV_OUT[${#ARGV_OUT[@]}]="$u"; done ;;
     *) subst "$tok"; ARGV_OUT[${#ARGV_OUT[@]}]="$SUB" ;;
@@ -765,6 +833,7 @@ if [ "$DRY" = 1 ]; then
   elif [ -n "$WORKTREE" ]; then printf 'worktree: %s (task worktree)\n' "$WORKTREE"
   else printf 'worktree: none\n'; fi
   printf 'branch: %s\ntimeout: %s\n' "${BRANCH:-(none)}" "$TIMEOUT"
+  if [ "$RESUMED" = 1 ]; then printf 'session: resume %s\n' "$RESUME_SID"; elif [ "$MT" = 0 ]; then printf 'session: new\n'; fi
   printf 'argv:\n%s\n' "$BIN"
   for tok in ${ARGV_OUT[@]+"${ARGV_OUT[@]}"}; do
     if [ "$tok" = "$PROMPT" ]; then printf '<prompt>\n'; else printf '%s\n' "${tok//$NL/\\n}"; fi
@@ -779,17 +848,17 @@ fi
 logh() { printf '[subdeck] %s\n' "$1" >> "$LOGF"; }
 STARTED="$(now_iso)"; START_S=$SECONDS
 : > "$OUTF"; : > "$LOGF"
-printf '%s' "$PROMPT" > "$PROMPTF"
+[ "$MT" = 1 ] || printf '%s' "$PROMPT" > "$PROMPTF"
 if [ "$USE_WT" = 1 ]; then
-  BASE="$(git -C "$PROJECT" rev-parse HEAD 2>/dev/null)"
+  BASE="$(git -C "$PROJECT" rev-parse "$RUN_BASE_REF" 2>/dev/null)"
   mkdir -p "${WT_PATH%/*}" 2>/dev/null
   case "$WT_ACTION" in
     create) git -C "$PROJECT" worktree prune >/dev/null 2>&1
-            git -C "$PROJECT" worktree add -q -b "subdeck/$TASK" "$WT_PATH" HEAD >> "$LOGF" 2>&1 || { lock_release; die 2 "git worktree add failed (see $LOGF)"; } ;;
+            git -C "$PROJECT" worktree add -q -b "subdeck/$TASK" "$WT_PATH" "$RUN_BASE_REF" >> "$LOGF" 2>&1 || { lock_release; die 2 "git worktree add failed (see $LOGF)"; } ;;
     branch) git -C "$PROJECT" worktree prune >/dev/null 2>&1
             git -C "$PROJECT" worktree add -q "$WT_PATH" "subdeck/$TASK" >> "$LOGF" 2>&1 || { lock_release; die 2 "git worktree add failed (see $LOGF)"; }
-            BASE="$(git -C "$PROJECT" merge-base HEAD "subdeck/$TASK" 2>/dev/null)" ;;
-    reuse)  BASE="$(git -C "$PROJECT" merge-base HEAD "subdeck/$TASK" 2>/dev/null)" ;;
+            BASE="$(git -C "$PROJECT" merge-base "$RUN_BASE_REF" "subdeck/$TASK" 2>/dev/null)" ;;
+    reuse)  BASE="$(git -C "$PROJECT" merge-base "$RUN_BASE_REF" "subdeck/$TASK" 2>/dev/null)" ;;
   esac
   if [ ${#WITEMS[@]} -gt 0 ] && [ -n "$(git -C "$PROJECT" status --porcelain -- "${WITEMS[@]}" 2>/dev/null)" ]; then
     warn "uncommitted changes in the main tree inside writable paths are not in the worktree $WT_PATH"
@@ -801,7 +870,7 @@ mkdir -p "$HOOKS_DIR" 2>/dev/null
 printf '#!/bin/sh\necho "SubDeck: git push is disabled inside a SubDeck run; the manager integrates branch subdeck/%s after the user approves." >&2\nexit 1\n' "$TASK" > "$HOOKS_DIR/pre-push"
 chmod +x "$HOOKS_DIR/pre-push" 2>/dev/null
 while IFS= read -r pl; do [ -n "$pl" ] && logh "$pl"; done <<< "$PU_NOTE"
-CHECK=skipped; is_git "$CWD" && CHECK=ok
+CHECK=skipped; [ "$MT" = 0 ] && is_git "$CWD" && CHECK=ok
 RUNBASE=""; PRE=""; TOP=""; GSNAP=""; MARKF="$F.marker"
 if [ "$CHECK" = ok ]; then
   RUNBASE="$(git -C "$CWD" rev-parse HEAD 2>/dev/null)"
@@ -821,8 +890,49 @@ write_meta() { # status cliExit exit endedAt(json) sessionId(json) violations(js
       "$(jstr "$PROJECT")" "$(jstr "$CWD")" "$(jstr "$WORKTREE")" "$(jstr "$BRANCH")" "$(jstr "$BASE")" "$(jstr "$RUNBASE")" "$$"
     printf '"startedAt":%s,"endedAt":%s,"status":%s,"cliExit":%s,"exit":%s,"experimental":%s,"sessionId":%s,' \
       "$(jstr "$STARTED")" "$4" "$(jstr "$1")" "$(jnum "$2")" "$(jnum "$3")" "$EXPERIMENTAL" "$5"
-    printf '"writableCheck":%s,"violations":%s,"commits":%s,"uncommitted":%s}\n' "$(jstr "$CHECK")" "$6" "${7:-0}" "${8:-0}"
+    printf '"writableCheck":%s,"violations":%s,"commits":%s,"uncommitted":%s,' "$(jstr "$CHECK")" "$6" "${7:-0}" "${8:-0}"
+    printf '"tokens":{"in":%s,"out":%s,"known":%s},"resumed":%s}\n' "$TOK_IN" "$TOK_OUT" "$TOK_KNOWN" "$([ "$RESUMED" = 1 ] && echo true || echo false)"
   } > "$tmp" 2>/dev/null && mv -f "$tmp" "$METAF" 2>/dev/null
+}
+TOK_IN=0; TOK_OUT=0; TOK_KNOWN=false
+# parse_usage MODE FILE -> TOK_IN TOK_OUT TOK_KNOWN (profile field usage=json:<path>; none/empty -> unknown)
+#   json:usage (claude): last "usage" object: input_tokens + cache_creation_input_tokens, output_tokens (cache reads ignored)
+#   json:turn.completed (codex): sum over turn.completed events: input_tokens - cached_input_tokens, output_tokens
+#   json:stats.models (gemini, UNVERIFIED): sum of tokens.prompt / tokens.candidates under stats.models
+parse_usage() {
+  local r
+  TOK_IN=0; TOK_OUT=0; TOK_KNOWN=false
+  case "$1" in json:usage|json:turn.completed|json:stats.models) ;; *) return 0 ;; esac
+  [ -s "$2" ] || return 0
+  r="$(LC_ALL=C awk -v mode="${1#json:}" '
+    function num(s, k,   p, t) { p = index(s, "\"" k "\""); if (!p) return -1; t = substr(s, p + length(k) + 2)
+      sub(/^[ \t\r\n]*:[ \t\r\n]*/, "", t); if (match(t, /^[0-9]+/)) return substr(t, 1, RLENGTH) + 0; return -1 }
+    function obj(s, start,   i, d, c) { d = 0
+      for (i = start; i <= length(s); i++) { c = substr(s, i, 1); if (c == "{") d++; else if (c == "}") { d--; if (d == 0) return substr(s, start, i - start + 1) } }
+      return substr(s, start) }
+    BEGIN { RS = "\001" }
+    {
+      t = $0; found = 0; ti = 0; to = 0
+      if (mode == "usage") {
+        last = ""; s = t
+        while (match(s, /"usage"[ \t\r\n]*:[ \t\r\n]*\{/)) { st = RSTART + RLENGTH - 1; last = obj(s, st); s = substr(s, st + 1) }
+        if (last != "") { a = num(last, "input_tokens"); b = num(last, "cache_creation_input_tokens"); o = num(last, "output_tokens")
+          if (a >= 0 && o >= 0) { found = 1; ti = a + (b > 0 ? b : 0); to = o } }
+      } else if (mode == "turn.completed") {
+        n = split(t, L, "\n")
+        for (i = 1; i <= n; i++) if (index(L[i], "\"turn.completed\"")) {
+          a = num(L[i], "input_tokens"); c = num(L[i], "cached_input_tokens"); o = num(L[i], "output_tokens")
+          if (a >= 0 && o >= 0) { found = 1; ti += a - (c > 0 ? c : 0); to += o } }
+      } else {
+        p = index(t, "\"stats\""); if (p) { s = substr(t, p)
+          while (match(s, /"prompt"[ \t\r\n]*:[ \t\r\n]*[0-9]+/)) { v = substr(s, RSTART, RLENGTH); sub(/.*:[ \t\r\n]*/, "", v); ti += v; found = 1; s = substr(s, RSTART + RLENGTH) }
+          s = substr(t, p)
+          while (match(s, /"candidates"[ \t\r\n]*:[ \t\r\n]*[0-9]+/)) { v = substr(s, RSTART, RLENGTH); sub(/.*:[ \t\r\n]*/, "", v); to += v; s = substr(s, RSTART + RLENGTH) } }
+      }
+      if (found) printf "%d %d", (ti < 0 ? 0 : ti), to
+    }' "$2" 2>/dev/null)"
+  [[ $r =~ ^([0-9]+)\ ([0-9]+)$ ]] || return 0
+  TOK_IN="${BASH_REMATCH[1]}"; TOK_OUT="${BASH_REMATCH[2]}"; TOK_KNOWN=true
 }
 logh "run $RUN_ID role=$ROLE class=$CLASS tool=$TOOL model=${MODEL:-default}"
 logh "cwd=$CWD branch=${BRANCH:-none} base=${BASE:-none} timeout=$TIMEOUT"
@@ -984,7 +1094,15 @@ case "$STATUS" in
   failed) if [ -n "$FINAL" ]; then ERRT=""; else ERRT=cli_error; fi ;;
   quota) ERRT=rate_limit ;; auth) ERRT=auth ;; timeout) ERRT=timeout ;; cancelled) ERRT=cancelled ;;
 esac
-if [ -z "$ERRT" ]; then
+pget "$TOOL" usage; parse_usage "$PV" "$OUTF"
+# session store: a resumed session that failed is dropped (the next run starts fresh); any parsed id is kept
+if [ -n "$SESSF" ]; then
+  if [ "$RESUMED" = 1 ] && [ "$STATUS" = failed ]; then rm -f "$SESSF" 2>/dev/null; logh "resumed session $RESUME_SID failed: dropped"
+  elif [ -n "$SESSION_ID" ]; then printf '%s\t%s\t%s\n' "$TOOL" "${MODEL:--}" "$SESSION_ID" > "$SESSF.tmp" 2>/dev/null && mv -f "$SESSF.tmp" "$SESSF" 2>/dev/null; fi
+fi
+if [ "$MT" = 1 ]; then
+  :
+elif [ -z "$ERRT" ]; then
   task_hook SubagentStop ",\"last_assistant_message\":$(jstr "$FINAL")"
 else
   task_hook StopFailure ",\"error_type\":\"$ERRT\""
@@ -1068,7 +1186,7 @@ write_meta "$STATUS" "$CLI_EXIT" "$EXIT" "$(jstr "$ENDED")" "$SJ" "$VJSON" "$COM
   printf '\n[subdeck] end status=%s cliExit=%s exit=%s commits=%s uncommitted=%s writable=%s\n' "$STATUS" "$CLI_EXIT" "$EXIT" "$COMMITS" "$UNCOMMITTED" "$CHECK"
 } >> "$LOGF"
 DUR=$(( (SECONDS - START_S) * 1000 ))
-emit_event run_end "{\"agent_id\":$(jstr "$RUN_ID"),\"agent_type\":$(jstr "$AGENT_TYPE"),\"session_id\":$(jstr "$RUN_ID"),\"task\":$(jstr "$TASK"),\"role\":$(jstr "$ROLE"),\"tool\":$(jstr "$TOOL"),\"model\":$(jstr "$MODEL"),\"status\":$(jstr "$STATUS"),\"cliExit\":$CLI_EXIT,\"exit\":$EXIT,\"durationMs\":$DUR,\"log\":$(jstr "$LOGF"),\"finalChars\":${#FINAL},\"commits\":$COMMITS,\"uncommitted\":$UNCOMMITTED,\"writableCheck\":$(jstr "$CHECK")}"
+emit_event run_end "{\"agent_id\":$(jstr "$RUN_ID"),\"agent_type\":$(jstr "$AGENT_TYPE"),\"session_id\":$(jstr "$RUN_ID"),\"task\":$(jstr "$TASK"),\"role\":$(jstr "$ROLE"),\"tool\":$(jstr "$TOOL"),\"model\":$(jstr "$MODEL"),\"status\":$(jstr "$STATUS"),\"cliExit\":$CLI_EXIT,\"exit\":$EXIT,\"durationMs\":$DUR,\"log\":$(jstr "$LOGF"),\"finalChars\":${#FINAL},\"commits\":$COMMITS,\"uncommitted\":$UNCOMMITTED,\"writableCheck\":$(jstr "$CHECK"),\"tokensIn\":$TOK_IN,\"tokensOut\":$TOK_OUT,\"tokensKnown\":$TOK_KNOWN,\"resumed\":$([ "$RESUMED" = 1 ] && echo true || echo false)}"
 lock_release
 printf 'run %s: %s (exit %s); log %s\n' "$RUN_ID" "$STATUS" "$EXIT" "$LOGF"
 exit "$EXIT"

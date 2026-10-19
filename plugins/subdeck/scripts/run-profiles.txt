@@ -2,10 +2,15 @@
 # Format: <tool>.<field>=<value>; '#' comments; CRLF tolerated; the last duplicate wins; tool "_" = defaults for all tools.
 # Token lists are split on spaces; {sp} = a literal space inside a token, {empty} = an empty argument.
 # Placeholders (values): {model} {cwd} {prompt} {prompt_file} {last_file} ({cmd}: the custom command, placeholders quoted).
-# Slots (whole tokens, expand to 0..n tokens): {model_args} = the model field (only when a model is set),
+# Slots (whole tokens, expand to 0..n tokens): {model_args} = the model field (only when a model is set), {resume_args} = the
+#   resume field (only when a stored session is resumed),
 #   {cwd_args} = the cwd field, {restrict_args} = the restrict field, {user_args} = the role's args setting.
 # Fields: bin argv prompt(stdin|arg|file) model cwd restrict env out(json:<field>|file|stdout) auth_codes auth_re quota_re
-#   auth_hint transcript status(stable|experimental) verified; "_" only: deny_args (bash patterns, compared lower-case).
+#   auth_hint transcript status(stable|experimental) verified usage resume; "_" only: deny_args (bash patterns, compared lower-case).
+# usage = where token counts are read (json:usage claude, json:turn.completed codex, json:stats.models gemini; none = unknown).
+# resume = tokens for the {resume_args} slot when run.sh resumes the CLI session of the same task+role ({session} = the id
+#   captured from the previous run's output); empty = no resume: the run starts fresh (an interrupted task then gets its
+#   resume point in the prompt instead).
 # Rules: never add a flag that auto-approves beyond what is listed here; never --no-session-persistence, --bare or
 # --ephemeral (Desk reads the transcripts; --bare skips the SubDeck guard hooks). Quota/auth exit codes are UNVERIFIED for
 # every CLI: the regexes below run on the output tail; adjust this file after the first live runs.
@@ -13,6 +18,8 @@
 _.prompt=stdin
 _.out=stdout
 _.status=stable
+_.usage=none
+_.resume=
 _.auth_codes=
 _.quota_re=rate.?limit|quota|429|usage limit|resource.?exhausted|too many requests|credits
 _.auth_re=not (logged|signed) in|log ?in required|unauthori[sz]ed|401|403|forbidden|invalid api key|authenticat|could not be validated|set an auth method
@@ -23,7 +30,7 @@ _.deny_args=*dangerously* *bypasspermissions* *yolo* *danger-full-access* -y --a
 
 # Claude Code: hooks run in -p mode, so the SubDeck guard applies. Prompts that would ask are denied.
 claude.bin=claude
-claude.argv=-p --output-format json {model_args} {restrict_args} {user_args}
+claude.argv=-p {resume_args} --output-format json {model_args} {restrict_args} {user_args}
 claude.prompt=stdin
 claude.model=--model {model}
 claude.cwd=
@@ -31,6 +38,8 @@ claude.restrict=--permission-mode acceptEdits --permission-prompts none --allowe
 claude.out=json:result
 claude.auth_hint=run `claude` once and log in, or set ANTHROPIC_API_KEY
 claude.transcript=~/.claude/projects/<cwd-slug>/<session_id>.jsonl
+claude.usage=json:usage
+claude.resume=--resume {session}
 claude.verified=2.1.292
 
 # Codex CLI: exec runs with approval policy never; stdin "-" carries the prompt; -o writes the last message.
@@ -43,6 +52,9 @@ codex.restrict=-s workspace-write
 codex.out=file
 codex.auth_hint=run `codex login`, or set CODEX_API_KEY
 codex.transcript=$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl
+codex.usage=json:turn.completed
+# codex exec resume <id> exists but its flag set after "resume" is UNVERIFIED: no resume (fresh run + resume point)
+codex.resume=
 codex.verified=0.160.1
 
 # Gemini CLI: stdin is appended to the (empty) -p prompt. Consumer logins ended 2026-06-18: API key or Vertex only.
@@ -56,6 +68,9 @@ gemini.out=json:response
 gemini.auth_codes=41
 gemini.auth_hint=set GEMINI_API_KEY or use Vertex (GOOGLE_GENAI_USE_VERTEXAI); consumer users: use the agy tool
 gemini.transcript=~/.gemini/tmp/<hash>/chats/
+gemini.usage=json:stats.models
+# gemini --resume takes a session index, not the id in the output (UNVERIFIED): no resume
+gemini.resume=
 gemini.verified=0.63.0
 
 # OpenCode: permissive by default; OPENCODE_PERMISSION denies git push and directories outside the cwd.

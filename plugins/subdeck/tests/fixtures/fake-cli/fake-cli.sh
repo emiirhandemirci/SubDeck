@@ -6,10 +6,12 @@
 #                           (sorted; names SUBDECK_* OPENCODE_* COPILOT_* GIT_CONFIG_* GIT_TERMINAL_PROMPT CLAUDE_PROJECT_DIR,
 #                           and CLAUDECODE CLAUDE_* for the session-identity strip test)
 #   FAKE_CLI_REPLY=<file>   final message: a path, or a name under replies/ (default worker-done.txt)
+#   FAKE_CLI_REPLY_<ROLE>=<file>  same, for runs of that role only (SUBDECK_ROLE, upper case, - as _), e.g. FAKE_CLI_REPLY_VERIFIER
 #   FAKE_CLI_EXIT=<n>       exit code (default 0)
 #   FAKE_CLI_STDERR=<text>  written to stderr
 #   FAKE_CLI_SLEEP=<s>      delay before any output
 #   FAKE_CLI_TOUCH=a,b      create/append these paths in cwd;  FAKE_CLI_COMMIT=1 commits them (pathspec commit)
+#                           (not for the manager role, SUBDECK_ROLE=manager: a manager turn never edits the worktree)
 #   FAKE_CLI_SH=<command>   test-only: run with bash -c in the cwd after FAKE_CLI_TOUCH (rename, push, git dir,
 #                           symlink cases); with FAKE_CLI_LOG its exit code goes to <n>.<tool>.sh-exit, its output to .sh-out
 #   FAKE_CLI_MODE=quota|auth  canned stderr, exit 1 (gemini auth: 41), no reply
@@ -47,7 +49,7 @@ fi
 
 [ -n "${FAKE_CLI_SLEEP:-}" ] && sleep "$FAKE_CLI_SLEEP"
 
-if [ -n "${FAKE_CLI_TOUCH:-}" ]; then
+if [ -n "${FAKE_CLI_TOUCH:-}" ] && [ "${SUBDECK_ROLE:-}" != manager ]; then
   IFS=, read -ra TOUCH <<< "$FAKE_CLI_TOUCH"
   for p in "${TOUCH[@]}"; do
     [ -n "$p" ] || continue
@@ -79,7 +81,8 @@ case "${FAKE_CLI_MODE:-}" in
   auth) echo 'Error: not logged in' >&2; [ "$TOOL" = gemini ] && exit 41; exit 1 ;;
 esac
 
-REPLY_FILE="${FAKE_CLI_REPLY:-worker-done.txt}"
+RV="FAKE_CLI_REPLY_$(printf "%s" "${SUBDECK_ROLE:-}" | tr "a-z-" "A-Z_")"
+REPLY_FILE="${!RV:-${FAKE_CLI_REPLY:-worker-done.txt}}"
 case "$REPLY_FILE" in */*) ;; *) REPLY_FILE="$FDIR/replies/$REPLY_FILE" ;; esac
 REPLY=""; [ -f "$REPLY_FILE" ] && REPLY="$(cat "$REPLY_FILE")"
 case "$REPLY" in *"{HEAD}"*) REPLY="${REPLY//\{HEAD\}/$(git rev-parse --short=12 HEAD 2>/dev/null)}" ;; esac
