@@ -437,6 +437,8 @@ treehash() { (cd "$ST" && find . -type f ! -name '*.log' -print0 | sort -z | xar
 H1="$(treehash)"; NOWV=$((T0 + 7200)) ap dry-run >/dev/null; check "$(treehash)" "$H1" "dry-run writes nothing (state tree unchanged)"
 pset autopilot.enabled=off
 ap status >/dev/null; check "$?" "2" "status exit 2 when not enabled"
+LB="$(events autopilot_launch)"; NOWV=$((T0 + 9000)) ap tick; has "$(cat "$APD/status.json")" '"state":"disabled"' "disabled: tick reports state disabled"
+check "$(events autopilot_launch)" "$LB" "negative control: a disabled autopilot launches nothing"
 check "$(wc -c < "$W/push.log" | tr -d ' ')" "0" "no git push ever"
 check "$("$REALGIT" -C "$P" rev-parse HEAD) $("$REALGIT" -C "$P" rev-parse --abbrev-ref HEAD) $("$REALGIT" -C "$P" status --porcelain | wc -l | tr -d ' ')" "$U_BEFORE" "user's checkout untouched after autopilot work"
 check "$("$REALGIT" -C "$P" log --oneline | wc -l | tr -d ' ')" "1" "user's branch has no autopilot commits"
