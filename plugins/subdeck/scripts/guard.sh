@@ -548,6 +548,7 @@ function ap_git(sc, d, id, k, nw,  i, x, flag, pos) {
   if (sc == "push") ap_deny("git push")
   else if (sc == "rebase" || sc == "filter-branch" || sc == "filter-repo") ap_deny("git " sc)
   else if (sc == "reset") { for (i = k; i <= nw; i++) if (W[d, id, i] ~ /^--(hard|merge)$/) ap_deny("git reset " W[d, id, i]) }
+  else if (sc == "config") { for (i = k; i <= nw; i++) if (tolower(W[d, id, i]) ~ /^alias\./) ap_deny("git config alias.* (aliases hide commands from the guard)") }
   else if (sc == "branch") {
     flag = 0; pos = 0
     for (i = k; i <= nw; i++) {
@@ -637,6 +638,7 @@ function git_seg(d, id, k, nw,  x, sc, i, j, ch, len, force, dd, npos, noop, cdi
   while (k <= nw) {
     x = W[d, id, k]
     if (x == "-C" && k < nw) { cdir = resolve(W[d, id, k + 1]); k += 2; continue }
+    if (x == "-c" && k < nw && ap_on() && tolower(W[d, id, k + 1]) ~ /^alias./) ap_deny("git -c alias.*")
     if (x ~ /^(-C|-c|--git-dir|--work-tree|--namespace|--config-env|--super-prefix)$/) { k += 2; continue }
     if (x ~ /^-/) { k++; continue }
     break

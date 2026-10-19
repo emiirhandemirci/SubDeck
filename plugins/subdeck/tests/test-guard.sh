@@ -962,11 +962,18 @@ allow	git branch
 allow	git status
 allow	git reset HEAD file.txt
 allow	git commit -m "x" -- a.txt
+deny	git config alias.p push
+deny	git config --global alias.pp "!git push"
+deny	git -c alias.x=push x
+deny	git -c user.name=a -c alias.y=reset y
+allow	git config user.name x
+allow	git -c user.name=x status
 APTABLE
 # the same commands outside an autopilot run keep their old decisions
 expect ask "git reset --hard" "normal run: reset --hard still asks"
 expect ask "git reset --merge" "normal run: reset --merge unchanged (asks on main)"
 expect allow "git branch -D feature" "normal run: branch -D unchanged"
+expect allow "git config alias.p push" "normal run: git alias unchanged"
 expect allow "bash scripts/tasks.sh answer t-1 yes" "normal run: tasks.sh answer allowed"
 got="$(bash_json "git push" | SUBDECK_AUTOPILOT=1 HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
 has "$got" '"permissionDecision":"deny".*SubDeck guard \(autopilot\)' "autopilot deny reason names the autopilot"
