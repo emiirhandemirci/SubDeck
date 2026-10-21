@@ -1056,8 +1056,19 @@ function hook_nul(  rs) {
 # sub-agents of this session that may run at once; researchers and other agent types are never counted or blocked.
 # Running = the last SubagentStart/SubagentStop event of an agent id in the project state dir events.jsonl is a Start
 # (last 3000 lines, same session_id, started within 3 hours). Any doubt (no state, no session id, unreadable) FAILS OPEN.
+function heavy_cfg(f,  l, all, r) {
+  all = ""
+  while ((getline l < f) > 0) all = all " " l
+  close(f)
+  if (match(all, /"maxHeavy"[ \t]*:[ \t]*[0-9]+/)) { r = substr(all, RSTART, RLENGTH); sub(/.*:[ \t]*/, "", r); return r }
+  return ""
+}
 function heavy_cap(t,  cap, st, sid, dir, f, cmd, line, ev, aid, ty, es, k, n, cut, dc, rs, dir2) {
-  cap = ENVIRON["SUBDECK_MAX_HEAVY"]; if (cap == "") cap = 2
+  cap = ENVIRON["SUBDECK_MAX_HEAVY"]
+  if (cap == "") cap = heavy_cfg(ENVIRON["SD_GUARD_PF"])
+  if (cap == "") cap = heavy_cfg(ENVIRON["SD_GUARD_LF"])
+  if (cap == "" && ENVIRON["HOME"] != "") cap = heavy_cfg(ENVIRON["HOME"] "/.subdeck/config.json")
+  if (cap == "") cap = 2
   if (cap !~ /^[0-9]+$/) return
   cap += 0; if (cap == 0) return
   st = V["/tool_input/subagent_type"]

@@ -1002,6 +1002,17 @@ printf 'not json at all\n{broken' > "$SDIR/events.jsonl"
 rm -f "$SDIR/events.jsonl"
 [ -z "$(hv_call worker-sonnet)" ] && ok "cap: missing state fails open" || bad "cap: missing state blocked"
 
+hv_ev SubagentStart c1 worker-sonnet
+[ -z "$(hv_call worker-sonnet)" ] && ok "cfg cap: one running, default 2 allows a second" || bad "cfg cap: default blocked"
+printf '{"maxHeavy":1}' > "$SDIR/config.json"
+has "$(hv_call worker-sonnet)" 'heavy-cap.*(limit 1|1 heavy agent already)' "cfg cap: max-heavy=1 denies the second heavy agent"
+[ -z "$(SUBDECK_MAX_HEAVY=2 hv_call worker-sonnet)" ] && ok "cfg cap: env wins over config" || bad "cfg cap: env did not win"
+printf '{"maxHeavy":0}' > "$SDIR/config.json"
+[ -z "$(hv_call worker-sonnet)" ] && ok "cfg cap: max-heavy=0 is not denied (negative control)" || bad "cfg cap: 0 denied"
+printf '{"maxHeavy":"x" broken' > "$SDIR/config.json"
+[ -z "$(hv_call worker-sonnet)" ] && ok "cfg cap: invalid config fails open to default 2" || bad "cfg cap: invalid config blocked"
+rm -f "$SDIR/config.json" "$SDIR/events.jsonl"
+
 # ---------- hooks.json matcher: the guard entry must cover the Agent and Task tools (negative control: HEAD~ version) ----------
 gm_of() { awk '/"PreToolUse"/{f=1} f && /"matcher"/{ gsub(/.*"matcher": *"|".*/, ""); print; exit }'; }
 GM_NOW="$(gm_of < "$HERE/../hooks/hooks.json")"
