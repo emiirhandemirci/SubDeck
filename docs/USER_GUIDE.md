@@ -120,6 +120,7 @@ Behind the scenes, the manager uses `tasks.sh` to keep one small file per delega
 | `tasks.sh pack <wave> --from <file> [--section <text>]... [--map <path>,...] [--decisions <file>] [--tasks <id>,...]` | Build a context pack for a wave (contract excerpt, file map, decisions, task list). Wave: lowercase letters, digits, hyphens. |
 | `tasks.sh writable <id>` or `writable --agent <agentId>` | List effective writable paths (union of `writable` and `grants`), or the live task's paths for an agent. |
 | `tasks.sh done <id>[,<id>...]` | Mark a task done (only after latest verdict is Approved). |
+| `tasks.sh new ... --verify L0\|L1\|L2 [--verify-reason <text>] --budget <tokens>` | Verification level (default L1; L2 needs a one-line reason) and an optional token budget. `tasks.sh verify-level <id>` prints the level the next verification runs at; `verify-delta <id>` prints what a re-verify must re-check. |
 
 These commands are for the manager and integrate with the hooks; they are not for agents.
 

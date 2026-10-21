@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Read scope:** task briefs carry a required `Read first:` field (3-5 concrete paths) and never say "read the whole repo". Agents read the named files, search before opening anything else, never read a whole repo or tree, and stop with `Stop: blocked` when more than about 10 extra files seem needed.
+- **Verification levels:** `tasks.sh new --verify L0|L1|L2` (default L1). L0 = the manager's narrow check only (no verifier; `done` accepts it without a verdict), L1 = a verifier on the changed paths and their tests, L2 = full verifier plus live run for security, data loss or cross-component work (needs `--verify-reason`). A fix round never runs above the previous level; `tasks.sh verify-level <id>` prints the level. One verifier per wave.
+- **Delta re-verify:** the verifier's reply ends with a machine-readable `Verified paths:` line; `tasks.sh verify --paths ... --level ...` records it, and `tasks.sh verify-delta <id>` (also appended to `resume-prompt`) lists what changed since the verified HEAD so unchanged paths stay "previously verified".
+- **Compact verifier reply:** per-claim JSON goes only to the Detail file; the reply is the verdict plus failed or uncertain claims (max 8 lines). A worker that builds something expensive reports `Artifact: <path> sha256:<hex>`; the verifier reuses it after matching the hash and rebuilds only at L2, as a sample.
+- **Token budget:** `tasks.sh new --budget <tokens>` (or `set <id> budget=<tokens>`); Desk task cards say "over the budget of ..." in plain text when the task's agents used more.
+- **Rulebook:** the manager may make a text or doc change of at most 10 lines itself and check it once; resume an agent only while its context is below about 150-200k tokens (`/subdeck:status` shows it), otherwise start fresh from `resume-prompt`.
+- **No read-budget hook:** a per-call hook on Read/Grep/Glob was measured on Windows (10 runs: about 60 ms median per call for the hook launcher alone, versus about 8 ms for a bare shell start) and is not shipped; the read limits are rules, not a hook.
+
 ## 0.9.1 - 2026-10-21
 
 - **Not verified line:** every worker, researcher and verifier report now carries `Not verified: <what was not tested, read or run> | none`, right after `Tested:` (workers) or before `Verdict:` (verifiers). The report watchdog treats a missing line like a missing `Tested:` for workers and verifiers (`report_missing`, task `blocked`); the verifier checks the listed items first. The 9-line cap is unchanged. Reports from task-linked workers and verifiers in the older format (without the line) are now flagged as missing.
