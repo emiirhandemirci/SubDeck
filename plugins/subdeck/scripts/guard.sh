@@ -1052,8 +1052,52 @@ function hook_nul(  rs) {
   else
     printf "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"%s\"}}\n", rs
 }
+# Heavy-agent cap (PreToolUse for the Agent/Task tool): SUBDECK_MAX_HEAVY (default 2, 0 = off) is the most worker/verifier
+# sub-agents of this session that may run at once; researchers and other agent types are never counted or blocked.
+# Running = the last SubagentStart/SubagentStop event of an agent id in the project state dir events.jsonl is a Start
+# (last 3000 lines, same session_id, started within 3 hours). Any doubt (no state, no session id, unreadable) FAILS OPEN.
+function heavy_cap(t,  cap, st, sid, dir, f, cmd, line, ev, aid, ty, es, k, n, cut, dc, rs, dir2) {
+  cap = ENVIRON["SUBDECK_MAX_HEAVY"]; if (cap == "") cap = 2
+  if (cap !~ /^[0-9]+$/) return
+  cap += 0; if (cap == 0) return
+  st = V["/tool_input/subagent_type"]
+  if (st !~ /(worker|verifier)/) return
+  sid = V["/session_id"]; if (sid == "" || sid ~ /[^A-Za-z0-9._:\/-]/) return
+  dir = ENVIRON["SD_GUARD_PF"]; if (dir == "" || !sub(/[\/\\][^\/\\]*$/, "", dir) || dir ~ /["`$\047]/) return
+  f = dir "/events.jsonl"
+  cut = ""; dc = "date -u -d \"3 hours ago\" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-3H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null"
+  dc | getline cut; close(dc)
+  cmd = "tail -n 3000 " sq(f) " 2>/dev/null"
+  n = 0; split("", HLAST); split("", HTYPE); split("", HTS)
+  while ((cmd | getline line) > 0) {
+    if (line !~ /"event":"Subagent(Start|Stop)"/) continue
+    ev = (line ~ /"event":"SubagentStart"/) ? "S" : "E"
+    if (!match(line, /"agent_id":"[^"]*"/)) continue
+    aid = substr(line, RSTART + 12, RLENGTH - 13); if (aid == "") continue
+    if (!match(line, /"session_id":"[^"]*"/)) continue
+    es = substr(line, RSTART + 14, RLENGTH - 15); if (es != sid) continue
+    ty = ""; if (match(line, /"agent_type":"[^"]*"/)) ty = substr(line, RSTART + 14, RLENGTH - 15)
+    if (ty != "") HTYPE[aid] = ty
+    HLAST[aid] = ev
+    if (match(line, /"ts":"[^"]*"/)) HTS[aid] = substr(line, RSTART + 6, RLENGTH - 7)
+  }
+  close(cmd)
+  for (k in HLAST) {
+    if (HLAST[k] != "S") continue
+    if (HTYPE[k] !~ /(worker|verifier)/) continue
+    if (cut != "" && HTS[k] != "" && HTS[k] < cut) continue
+    n++
+  }
+  if (n < cap) return
+  rs = "SubDeck guard (heavy-cap): " n " heavy agent" (n == 1 ? "" : "s") " already running; wait for one to finish (limit " cap ", SUBDECK_MAX_HEAVY; 0 turns it off)."
+  DECDENY = 1; LOGID = "heavy-cap"; LOGDEC = "deny"; LOGTOOL = "Agent"
+  if (ENVIRON["SUBDECK_TOOL"] == "copilot")
+    printf "{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"%s\",\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"%s\"}}\n", rs, rs
+  else
+    printf "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"%s\"}}\n", rs
+}
 function hook_decide(t,  tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp, aid) {
-  HOOKPARSE = 1; WANT = "^/(tool_name|cwd|tool_input/command|tool_input/file_path|tool_input/path)$"
+  HOOKPARSE = 1; WANT = "^/(tool_name|cwd|session_id|tool_input/command|tool_input/file_path|tool_input/path|tool_input/subagent_type)$"
   if (!jparse(t)) return
   tool = V["/tool_name"]; cmd = V["/tool_input/command"]; fp = V["/tool_input/file_path"]; cwd = V["/cwd"]
   if (tool == "") return
@@ -1074,6 +1118,7 @@ function hook_decide(t,  tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp, a
   WIN = (ENVIRON["OS"] == "Windows_NT" || cwd ~ /^[A-Za-z]:/ || PROJ ~ /^[A-Za-z]:/)
   initrules(); cfgfile(uf, "user"); if (lf != "" && lf != pf) cfgfile(lf, "project"); if (pf != "") cfgfile(pf, "project")
   if (!ENABLED) return
+  if (tool == "Agent" || tool == "Task") { heavy_cap(t); return }
   HOMEN = norm(ENVIRON["HOME"]); PROJN = norm(PROJ); CUR = norm(cwd); if (CUR == "") CUR = PROJN
   WARNS = ""; DENYID = ""; ASKID = ""; PUSHINFO = ""; split("", CB); COMMIT = 0; NCM = 0; NOPRES = 0; PPINFO = ""; pp_prepare()
   RESINFO = ""; RESLIST = ""; pr_prepare()
