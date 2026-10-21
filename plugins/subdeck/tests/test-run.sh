@@ -124,10 +124,12 @@ protect-procs: redis" "protected resources from settings.sh json"
 has "$PR" "on branch \`subdeck/$TD\`" "headless text names cwd and branch"
 has "$PR" "Stop: <done|waiting|quota|timeout|no-progress|blocked>" "worker final reply shape"
 has "$PR" "Tested: ran" "worker final reply has Tested"
+has "$PR" "Not verified: <what you did not test, read or run> | none" "worker final reply has Not verified"
 pcfg '{"roles":{}}'
 VP="$(r verifier "$TD" --dry-run 2>/dev/null | sed -n '/^prompt:$/,$p')"
 has "$VP" "none (read-only): any change is a violation" "verifier: read-only writable section"
 has "$VP" "Verdict: Approved | Needs fixes | Escalate" "verifier final reply shape"
+has "$VP" "Not verified: <what you did not check> | none" "verifier final reply has Not verified"
 has "$VP" "## Protected resources
 none" "no protected resources: none"
 has "$(r researcher "$TD" --dry-run | sed -n '/^prompt:$/,$p')" "stub researcher rulebook line" "researcher rulebook"

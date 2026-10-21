@@ -59,6 +59,10 @@ for c in worker researcher verifier; do
   grep -q "Stop:" "$f" && ok "roles/$c.md: has the Stop: report shape" || bad "roles/$c.md Stop"
 done
 grep -q 'Tested:' "$PL/scripts/roles/worker.md" && grep -q 'Verdict:' "$PL/scripts/roles/verifier.md" && ok "roles: worker Tested:, verifier Verdict:" || bad "roles report shapes"
+for c in worker researcher verifier; do
+  grep -q 'Not verified:' "$PL/scripts/roles/$c.md" && ok "roles/$c.md: has the Not verified: line" || bad "roles/$c.md misses Not verified:"
+done
+grep -q 'Not verified:' "$PL/skills-portable/orchestrator/SKILL.md" && grep -q 'Not verified:' "$PL/.github/agents/worker-sonnet.agent.md" && ok "portable copies carry the Not verified: line" || bad "portable copies miss Not verified:"
 grep -q '^## 4b\. Mapped roles' "$PL/skills/orchestrator/SKILL.md" && grep -q 'run.sh" roles' "$PL/skills-portable/orchestrator/SKILL.md" && ok "orchestrator: mapped roles section in source and portable copy" || bad "orchestrator mapped roles"
 RT="$PL/../../docs/runs.md"
 if [ -f "$RT" ]; then

@@ -1,3 +1,4 @@
 Checked the fake claims.
 Fingerprint: HEAD={HEAD} state=0
+Not verified: none
 Verdict: Approved

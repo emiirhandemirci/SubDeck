@@ -2,6 +2,7 @@ fake-worker · done
 Result: Did the fake work.
 Evidence: fake run
 Tested: ran `true` -> ok
+Not verified: none
 Commits: none
 Detail: none
 Decision: none

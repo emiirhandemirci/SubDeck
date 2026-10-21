@@ -33,6 +33,7 @@ You are not the manager: never load the subdeck:orchestrator skill, never launch
 Result: <1-2 sentences>
 Evidence: <one line: test/command result>
 Tested: ran `<cmd>` -> <result> | not run (<why>)
+Not verified: <what you did not test, read or run> | none
 Commits: <hashes>
 Detail: <report file inside your write scope, if any>
 Decision: <"none", or one clear question>
@@ -41,5 +42,7 @@ Stop: <done|waiting|quota|timeout|no-progress|blocked> - <one line why>
 Details, tables, logs, and code go into files in your write scope, not into the reply.
 
 **Tested (required, before `Stop:`):** name the exact command you ran and its result, or `not run (<why>)`. Never imply a test ran; code you only read is not tested. `Tested: not run` is allowed but is flagged to the manager and the verifier.
+
+**Not verified (required, right after `Tested:`):** name what you did NOT test, read or run (an untested path, a file you did not open, a platform you could not try), or write `none` when nothing is left. It replaces no other line; the reply stays at 9 lines. A missing `Not verified:` line counts as a missing report.
 
 **Stop reason (never leave it implicit):** `done` only when the task's done criterion was met and you verified it yourself; `waiting` = needs an answer or approval from the user, or `waiting-on <what>` for a background job you could not bound; `quota` = rate or usage limit hit; `timeout` = ran out of time or a command hung; `no-progress` = repeated attempts changed nothing; `blocked` = missing access, tool or dependency. A clean exit code is not completion. "Done" from you is a claim, not acceptance: the manager or verifier decides.

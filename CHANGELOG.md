@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Not verified line:** every worker, researcher and verifier report now carries `Not verified: <what was not tested, read or run> | none`, right after `Tested:` (workers) or before `Verdict:` (verifiers). The report watchdog treats a missing line like a missing `Tested:` for workers and verifiers (`report_missing`, task `blocked`); the verifier checks the listed items first. The 9-line cap is unchanged.
+
 ## 0.9.0 - 2026-10-21
 
 - **Autopilot (opt-in):** `autopilot.sh start|stop|status|tick|dry-run|launch|resume` works a project's task queue unattended (bash and files only). It runs a worker, then a verifier on a different model, integrates verified work into a separate `autopilot/<date>` branch and worktree (your checkout is never touched), and never pushes, merges elsewhere, rebases or resets. Limits per day and week (runs, manager turns, tokens), quiet hours, per-tool pauses on provider quota (reset time or 30 min back-off doubling to 6 h), stuck detection, three failed verifications ask you one question, a kill switch (`stop` or `~/.subdeck/autopilot.STOP`), per-task resumed CLI sessions and a daily summary. A headless manager turn follows `scripts/autopilot-prompt.md`. Enable per project with `autopilot.enabled=on`; settings under `autopilot.*`.

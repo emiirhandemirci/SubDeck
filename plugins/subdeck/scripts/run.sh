@@ -726,14 +726,14 @@ build_prompt() {
     worker)
       printf 'End with exactly this block (at most 9 lines):\n'
       printf '%s\n' '<short-name> · <done|needs-decision|failed>' 'Result: <1-2 sentences>' 'Evidence: <one line: test/command result>' \
-        'Tested: ran `<cmd>` -> <result> | not run (<why>)' 'Commits: <hashes>' 'Detail: <report file inside your write scope, if any>' \
+        'Tested: ran `<cmd>` -> <result> | not run (<why>)' 'Not verified: <what you did not test, read or run> | none' 'Commits: <hashes>' 'Detail: <report file inside your write scope, if any>' \
         'Decision: <"none", or one clear question>' 'Stop: <done|waiting|quota|timeout|no-progress|blocked> - <one line why>' ;;
     researcher)
-      printf 'Answer first, evidence after, then end with one line:\n'
-      printf '%s\n' 'Stop: <done|waiting|quota|timeout|no-progress|blocked> - <one line why>' ;;
+      printf 'Answer first, evidence after, then end with these two lines:\n'
+      printf '%s\n' 'Not verified: <what you did not read or could not confirm> | none' 'Stop: <done|waiting|quota|timeout|no-progress|blocked> - <one line why>' ;;
     verifier)
-      printf 'End with the fingerprint line and exactly one verdict line:\n'
-      printf '%s\n' 'Fingerprint: HEAD=<hash> state=<cksum>' 'Verdict: Approved | Needs fixes | Escalate' ;;
+      printf 'End with the fingerprint line, a Not verified line and exactly one verdict line:\n'
+      printf '%s\n' 'Fingerprint: HEAD=<hash> state=<cksum>' 'Not verified: <what you did not check> | none' 'Verdict: Approved | Needs fixes | Escalate' ;;
   esac
 }
 # an interrupted task that is not resumed in its own CLI session gets the resume point (Last done / Next, commits, files)

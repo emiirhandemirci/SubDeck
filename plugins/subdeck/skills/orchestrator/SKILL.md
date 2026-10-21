@@ -128,6 +128,7 @@ Agents reply in at most 9 lines:
 Result: <1-2 sentences>
 Evidence: <one line: test/command result>
 Tested: ran `<cmd>` -> <result> | not run (<why>)
+Not verified: <what was not tested, read or run> | none
 Commits: <hashes>
 Detail: <report file inside its write scope, if any>
 Decision: <"none", or one clear question>
@@ -136,7 +137,9 @@ Stop: <done|waiting|quota|timeout|no-progress|blocked> - <one line why>
 
 **Tested line (required for workers).** "Tested how?" is mandatory: the exact command run and its result, or `not run (why)`. Code that was only read is not tested. A `Tested: not run` report cannot be accepted for a behaviour change; send it back or have a verifier execute the check.
 
-**Report watchdog.** The hooks check every worker and researcher reply for the `Stop:` line (workers also `Tested:`, verifiers a `Verdict:`). A reply without it is logged as `report_missing`, the task becomes `blocked`, you get a notification and Desk shows "stopped without report". Treat it as `blocked`: ask the same agent (`SendMessage`) for the missing line and do not accept the work. `Stop: waiting-on <what>` counts as `waiting`. Turn the check off with `/subdeck:settings set report-check=off`.
+**Not verified line (required for workers and verifiers; researchers add it too).** Every report names what was NOT tested, read or run, or says `none`. Read it before accepting: each item is a gap you close with a check or hand to the verifier, and the verifier checks those items first. A report without the line is incomplete.
+
+**Report watchdog.** The hooks check every worker and researcher reply for the `Stop:` line (workers also `Tested:` and `Not verified:`, verifiers a `Verdict:` and `Not verified:`). A reply without it is logged as `report_missing`, the task becomes `blocked`, you get a notification and Desk shows "stopped without report". Treat it as `blocked`: ask the same agent (`SendMessage`) for the missing line and do not accept the work. `Stop: waiting-on <what>` counts as `waiting`. Turn the check off with `/subdeck:settings set report-check=off`.
 
 **Interrupted by a limit.** If an agent is cut off by a usage or rate limit (`StopFailure`, or `Stop: quota`), the hook sets the task to `interrupted` and writes a `## Handoff` block: the uncommitted files (limited to the task's writable paths) and a diff stat. Nothing is committed for you. The block also carries "last done / next" from the worker's latest `tasks.sh step`. Tell the user; when the limit clears read Handoff and Progress, then resume the same agent from Next (or revert those files). Do not retry blindly.
 
@@ -188,7 +191,7 @@ When the user decides something (name, approach, tradeoff, rejected option), wri
 | Stale verifier report after HEAD or files moved | Compare the fingerprint; re-verify only what changed |
 | Report without a stop reason | Section 7: `Stop:` line required; exit 0 is not completion |
 | Agent stops waiting on a background job | Section 7 watchdog: ask for the report; agents use bounded waits or `Stop: waiting-on` |
-| Done claimed without running anything | `Tested:` line required; verifier needs `executed` or `live` evidence for behaviour |
+| Done claimed without running anything | `Tested:` line required; `Not verified:` line required; verifier needs `executed` or `live` evidence for behaviour |
 | Work cut off by a usage limit, half-changes left | Read `## Handoff`, then resume or revert; never retry blindly |
 | Live port, host or process disturbed | Protected resources, lock file, leave-as-found checklist (section 4) |
 | SubDeck agent type not found after install | Tell the user once: `/reload-plugins` or restart; no silent fallback |
@@ -217,7 +220,7 @@ The agents, verifier and skills must understand these constraints:
 7. **Check quota.** Run `tasks.sh ready` before launching and heed its quota warning; do not launch if quota will be hit in the next 60 minutes.
 8. **One pack per wave.** Build a context pack per wave and point launch prompts at it instead of re-describing context (`pack <wave> --from <file>`; reference it in the prompt).
 9. **Small grant.** When a worker needs a small extra path, use `grant <id> <path> --reason <text>` instead of a blocked round trip. `link` agents started without `Task:`. Auto tasks need no verify.
-10. **Reply format.** Final reply max 9 lines (workers: plus `Tested:`; verifiers: plus `Verdict:`). A `report_too_long` event means re-instruct the agent, not re-read its reply.
+10. **Reply format.** Final reply max 9 lines (workers: plus `Tested:` and `Not verified:`; verifiers: plus `Verdict:` and `Not verified:`). A `report_too_long` event means re-instruct the agent, not re-read its reply.
 11. **Context packs.** Agents read the context pack named in the prompt first (if present), before the task description.
 12. **Writable scope.** When an agent needs a path outside writable, it ends with `Stop: blocked` naming the path; the manager grants it.
 

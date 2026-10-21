@@ -23,7 +23,15 @@ if grep -q $'\r' "${BASH_SOURCE[0]}"; then bad "test file has CRLF"; else ok "te
 for n in worker-sonnet worker-opus worker-current; do
   if grep -q '^Stop: <done|waiting|quota|timeout|no-progress|blocked>' "$A/$n.md"; then ok "$n report has Stop line"; else bad "$n lacks Stop line"; fi
 done
+for f in agents/worker-sonnet.md agents/worker-opus.md agents/worker-current.md scripts/roles/worker.md skills/orchestrator/SKILL.md; do
+  F="$HERE/../$f"
+  # the report block (first fenced block holding a "Stop:" template line) has the Not verified line right after Tested and stays within 9 lines
+  blk2="$(awk '/^```/ { n++; next } n % 2 == 1 && /^<short-name>/ { f = 1 } f && n % 2 == 1 { print } f && /^Stop:/ { exit }' "$F")"
+  if printf '%s\n' "$blk2" | grep -A1 '^Tested:' | grep -q '^Not verified: '; then ok "$f: Not verified line follows Tested"; else bad "$f: Not verified line missing after Tested"; fi
+  if [ "$(printf '%s\n' "$blk2" | grep -c .)" -le 9 ]; then ok "$f: worker report block within 9 lines"; else bad "$f: worker report block over 9 lines"; fi
+done
 for n in verifier verifier-current; do
+  if grep -q 'Not verified:' "$A/$n.md"; then ok "$n has the Not verified line"; else bad "$n lacks Not verified"; fi
   if grep -q 'negative control' "$A/$n.md"; then ok "$n has negative control rule"; else bad "$n lacks negative control"; fi
   if grep -q 'node --check' "$A/$n.md"; then ok "$n has static syntax checks"; else bad "$n lacks static checks"; fi
   if grep -q '^`Fingerprint: HEAD=' "$A/$n.md"; then ok "$n reports a fingerprint"; else bad "$n lacks fingerprint"; fi

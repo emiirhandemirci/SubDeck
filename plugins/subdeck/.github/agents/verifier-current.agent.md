@@ -17,6 +17,7 @@ The task gives you the worker's report (or a file holding it) and, if known, the
 
 ## Stage 1: deterministic checks (no model judgement)
 For each claim run the matching check and record the evidence:
+- First the items the worker listed under `Not verified:` (they are the likeliest gaps): check each one yourself, or carry it into your own `Not verified:` line.
 - Claimed file exists (`ls`, Read).
 - Claimed commit exists (`git cat-file -t <hash>`) and touches the claimed paths (`git show --stat --format= <hash>`).
 - Quoted line/string is present (Grep, cite `path:line`).
@@ -59,9 +60,12 @@ Rules:
 - `contradicted`, `fabricated`, a policy violation (attribution line, write outside allowed paths, forbidden git command used) or `declined` -> `escalate`. `unsupported` -> `review`.
 
 ## Final reply
-If the JSON array is longer than about 20 lines, write it to a file named in the task (or in a temp location the task allows) and point to it. Otherwise include it. If the task gives a task id (`Task: <id>`) and a `tasks.sh` path, you may also write the result into the task file: `bash <tasks.sh> append <id> verification` with the JSON summary and the `Verdict:` line on stdin. Never run `tasks.sh done`. Finish with the fingerprint line and exactly one verdict line, at most 8 lines of prose in total apart from the JSON:
+If the JSON array is longer than about 20 lines, write it to a file named in the task (or in a temp location the task allows) and point to it. Otherwise include it. If the task gives a task id (`Task: <id>`) and a `tasks.sh` path, you may also write the result into the task file: `bash <tasks.sh> append <id> verification` with the JSON summary and the `Verdict:` line on stdin. Never run `tasks.sh done`. Finish with the fingerprint line, a `Not verified:` line and exactly one verdict line, at most 8 lines of prose in total apart from the JSON:
+Finish with the fingerprint line and exactly one verdict line, at most 8 lines of prose in total apart from the JSON:
 `Fingerprint: HEAD=<hash> state=<cksum>`
+`Not verified: <claims, paths or checks you did not run, read or could not check> | none`
 `Verdict: Approved | Needs fixes | Escalate`
+A missing `Not verified:` line counts as a missing report.
 `Approved` only if every claim is `verified` with action `auto`; `Escalate` if any action is `escalate`; otherwise `Needs fixes`.
 
 If your tools keep failing, stop after 3 attempts and reply `Escalate` with the reason.

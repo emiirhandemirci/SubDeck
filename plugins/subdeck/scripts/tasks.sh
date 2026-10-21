@@ -1447,7 +1447,8 @@ agent_class() {
 }
 # shape_check CLASS TEXT -> MISSING (space separated names), STOPW (last Stop word, lower case), VERDICT
 shape_check() {
-  local class="$1" line have_stop=0 have_tested=0 have_verdict=0
+  local class="$1" line have_stop=0 have_tested=0 have_verdict=0 have_nv=0
+  local re_nv='^[[:space:]>*_`#-]*Not[[:space:]]+verified[*_`]*:[*_`]*[[:space:]]*[^[:space:]*_`]'
   local re_stop='^[[:space:]>*_`#-]*Stop[*_`]*:[*_`]*[[:space:]]*([A-Za-z][A-Za-z-]*)(.*)'
   local re_tested='^[[:space:]>*_`#-]*Tested[*_`]*:[*_`]*[[:space:]]*(ran|not run)([^A-Za-z]|$)'
   local re_verdict='^[[:space:]>*_`#-]*Verdict[*_`]*:[*_`]*[[:space:]]*(Approved|Needs fixes|Escalate)'
@@ -1458,13 +1459,15 @@ shape_check() {
     if [[ $line =~ $re_stop ]]; then have_stop=1; STOPW="${BASH_REMATCH[1]}"; STOPREST="${BASH_REMATCH[2]}"; fi
     if [[ $line =~ $re_decision ]]; then DECISION="${BASH_REMATCH[1]}"; fi
     if [[ $line =~ $re_tested ]]; then have_tested=1; fi
+    if [[ $line =~ $re_nv ]]; then have_nv=1; fi
     if [[ $line =~ $re_verdict ]]; then have_verdict=1; VERDICT="${BASH_REMATCH[1]}"; fi
   done <<< "$2"
   sd_lower "$STOPW"; STOPW="$SD_LOWER"
   case "$class" in
-    verifier) [ "$have_verdict" = 1 ] || MISSING="Verdict" ;;
+    verifier) [ "$have_verdict" = 1 ] || MISSING="Verdict"; [ "$have_nv" = 1 ] || MISSING="$MISSING${MISSING:+ }NotVerified" ;;
     researcher) [ "$have_stop" = 1 ] || MISSING="Stop" ;;
-    *) [ "$have_stop" = 1 ] || MISSING="Stop"; [ "$have_tested" = 1 ] || MISSING="$MISSING${MISSING:+ }Tested" ;;
+    *) [ "$have_stop" = 1 ] || MISSING="Stop"; [ "$have_tested" = 1 ] || MISSING="$MISSING${MISSING:+ }Tested"
+       [ "$have_nv" = 1 ] || MISSING="$MISSING${MISSING:+ }NotVerified" ;;
   esac
 }
 # decision_question -> DECQ (not DQ: that is jesc's quote character): the question a reply hands to the user ("" when it asks nothing). Reads DECISION, STOPW, STOPREST

@@ -36,7 +36,7 @@ fire() {
   printf '{"hook_event_name":"%s","session_id":"%s","transcript_path":"%s","cwd":"%s","agent_id":"%s","agent_type":"%s"%s%s}' \
     "$ev" "$SID" "$TP" "$P" "$aid" "$at" "${msg:+,\"last_assistant_message\":\"$msg\"}" "${extra:+,$extra}" | bash "$LE" "$ev"
 }
-OKMSG='Did it.\nTested: ran `npm test` -> 12 passed\nStop: done'
+OKMSG='Did it.\nTested: ran `npm test` -> 12 passed\nNot verified: none\nStop: done'
 events() { local n; n="$(grep -c "\"event\":\"$1\"" "$ST/events.jsonl" 2>/dev/null)"; echo "${n:-0}"; }
 lastevent() { grep "\"event\":\"$1\"" "$ST/events.jsonl" | tail -n 1; }
 notified() { local i=0; while [ ! -s "$W/notify.out" ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i+1)); done; cat "$W/notify.out" 2>/dev/null; }
@@ -78,7 +78,7 @@ check "$(t show $T3 | grep -c 'final reply')" "1" "a repeated stop of the same a
 stopcase() { # word expected-status
   local id; id="$(newtask)"
   fire SubagentStart "w$1" worker-sonnet "" "\"prompt\":\"Task: $id\""
-  fire SubagentStop "w$1" worker-sonnet "x\nTested: not run (no env)\nStop: $1"
+  fire SubagentStop "w$1" worker-sonnet "x\nTested: not run (no env)\nNot verified: none\nStop: $1"
   check "$(field $id status)" "$2" "Stop: $1 -> $2"
 }
 stopcase waiting needs-user; stopcase timeout blocked; stopcase no-progress blocked; stopcase blocked blocked
@@ -90,7 +90,7 @@ T5="$(newtask)"
 echo changed > "$P/f.txt"; echo more > "$P/new.txt"; echo unrelated > "$P/other.txt"
 fire SubagentStart q1 worker-sonnet "" "\"prompt\":\"Task: $T5\""
 reset_notify
-fire SubagentStop q1 worker-sonnet 'Out of quota.\nTested: not run (quota)\nStop: quota'
+fire SubagentStop q1 worker-sonnet 'Out of quota.\nTested: not run (quota)\nNot verified: none\nStop: quota'
 check "$(field $T5 status)" "interrupted" "Stop: quota -> interrupted"
 BODY="$(t show $T5)"
 has "$BODY" "interrupted (quota)" "handoff header"
@@ -110,23 +110,43 @@ check "$(printf '%s\n' "$BODY" | grep -c '^## ')" "6" "no stray ## heading from 
 T6="$(newtask)"
 fire SubagentStart m1 worker-sonnet "" "\"prompt\":\"Task: $T6\""
 reset_notify
-fire SubagentStop m1 worker-sonnet 'All good.\nStop: done'
+fire SubagentStop m1 worker-sonnet 'All good.\nNot verified: none\nStop: done'
 check "$(field $T6 status)" "blocked" "Tested line missing -> blocked"
 check "$(lastevent report_missing | sed 's/.*"payload"://')" "{\"agent_id\":\"m1\",\"agent_type\":\"worker-sonnet\",\"session_id\":\"$SID\",\"transcript_path\":\"$W/sessions/$SID/subagents/agent-m1.jsonl\",\"task\":\"$T6\",\"missing\":[\"Tested\"]}}" "report_missing event with task and missing list"
 has "$(notified)" "agent worker-sonnet stopped without a report" "notify: stopped without a report"
 T6b="$(newtask)"
 fire SubagentStart m2 worker-sonnet "" "\"prompt\":\"Task: $T6b\""
 fire SubagentStop m2 worker-sonnet 'nothing useful'
-has "$(lastevent report_missing)" '"missing":["Stop","Tested"]' "both lines missing listed"
+has "$(lastevent report_missing)" '"missing":["Stop","Tested","NotVerified"]' "all three lines missing listed"
 check "$(field $T6b status)" "blocked" "no lines -> blocked"
 # fallback to the Report text when the payload has no message
 T6c="$(newtask)"
 fire SubagentStart m3 worker-sonnet "" "\"prompt\":\"Task: $T6c\""
-printf 'Tested: not run (x)\nStop: done\n' | t append "$T6c" report
+printf 'Tested: not run (x)\nNot verified: none\nStop: done\n' | t append "$T6c" report
 N0="$(events report_missing)"
 fire SubagentStop m3 worker-sonnet ""
 check "$(field $T6c status)" "review" "empty message falls back to the task's Report text"
 check "$(events report_missing)" "$N0" "no report_missing with a good Report fallback"
+# Not verified: only that line missing (negative control), empty value, and tolerant forms
+nvcase() { # name expected-status expected-missing-or-empty message
+  local id; id="$(newtask)"
+  fire SubagentStart "$1" worker-sonnet "" "\"prompt\":\"Task: $id\""
+  N0="$(events report_missing)"
+  fire SubagentStop "$1" worker-sonnet "$4"
+  check "$(field $id status)" "$2" "Not verified case $1: status"
+  if [ -n "$3" ]; then
+    check "$(events report_missing)" "$((N0 + 1))" "Not verified case $1: report_missing logged"
+    has "$(lastevent report_missing)" "\"missing\":$3" "Not verified case $1: missing list"
+  else
+    check "$(events report_missing)" "$N0" "Not verified case $1: no report_missing"
+  fi
+}
+nvcase nv1 blocked '["NotVerified"]' 'ok.\nTested: ran `t` -> 1 passed\nStop: done'
+nvcase nv2 blocked '["NotVerified"]' 'ok.\nTested: ran `t` -> 1 passed\nNot verified:\nStop: done'
+nvcase nv3 review '' 'ok.\nTested: ran `t` -> 1 passed\nNot verified: none\nStop: done'
+nvcase nv4 review '' 'ok.\nTested: ran `t` -> 1 passed\nNot verified: the Windows path, not run here\nStop: done'
+nvcase nv5 review '' 'ok.\r\n- **Tested:** ran `t` -> 1\r\n  **Not verified:** none\r\n> **Stop:** done'
+nvcase nv6 review '' 'ok.\nTested: ran `t` -> 1 passed\n`Not verified`: none\nStop: done'
 
 # ---- 7. StopFailure ----
 T7="$(newtask)"
@@ -168,7 +188,7 @@ T9="$(newtask)"; t set "$T9" status=review
 printf '{"type":"user","message":{"content":"Task: %s"}}\n' "$T9" > "$W/sessions/$SID/subagents/agent-v1.jsonl"
 fire SubagentStart v1 verifier "" "\"prompt\":\"Task: $T9\""
 check "$(field $T9 status)" "review" "verifier start does not change the status"
-fire SubagentStop v1 verifier 'Checked.\nVerdict: Approved'
+fire SubagentStop v1 verifier 'Checked.\nNot verified: none\nVerdict: Approved'
 check "$(field $T9 status)" "review" "verifier stop does not change the status"
 R="$(t show $T9 | awk '/^## Verification$/{f=1;next} /^## /{f=0} f')"
 has "$R" "Verdict: Approved" "verdict appended to Verification"
@@ -178,7 +198,10 @@ N0="$(events report_missing)"
 fire SubagentStop v2 verifier 'looks fine' "\"prompt\":\"Task: $T9b\""
 check "$(field $T9b status)" "in-progress" "verifier without verdict leaves the status"
 check "$(events report_missing)" "$((N0 + 1))" "verifier without Verdict logs report_missing"
-has "$(lastevent report_missing)" '"missing":["Verdict"]' "missing Verdict named"
+has "$(lastevent report_missing)" '"missing":["Verdict","NotVerified"]' "missing Verdict named"
+fire SubagentStop v3 verifier 'Checked.\nVerdict: Approved' "\"prompt\":\"Task: $T9b\""
+check "$(events report_missing)" "$((N0 + 2))" "verifier with Verdict but no Not verified logs report_missing"
+has "$(lastevent report_missing)" '"missing":["NotVerified"]' "verifier: only Not verified named"
 
 # ---- 10. done tasks and unknown tasks ----
 T10="$(newtask)"; t set "$T10" status=in-progress; printf 'Verdict: Approved\n' | t append "$T10" verification; t done "$T10"
@@ -253,7 +276,7 @@ check "$(field $T13 status)" "interrupted" "worker-run StopFailure -> interrupte
 has "$B13" "?? wt-only.txt" "Handoff git status taken from SUBDECK_TASK_GIT"
 has "$B13" "interrupted (timeout)" "error type timeout"
 T13b="$(newtask)"; t set "$T13b" status=review
-printf '{"hook_event_name":"SubagentStop","session_id":"v","agent_id":"v1","agent_type":"verifier-run","cwd":"%s","prompt":"Task: %s","last_assistant_message":"ok\\nVerdict: Approved"}' "$P" "$T13b" | bash "$TS" --project "$P" hook SubagentStop
+printf '{"hook_event_name":"SubagentStop","session_id":"v","agent_id":"v1","agent_type":"verifier-run","cwd":"%s","prompt":"Task: %s","last_assistant_message":"ok\\nNot verified: none\\nVerdict: Approved"}' "$P" "$T13b" | bash "$TS" --project "$P" hook SubagentStop
 check "$(field $T13b status)" "review" "verifier-run never changes status"
 has "$(t show $T13b)" "verifier reply (verifier-run v1)" "verifier-run verdict appended to Verification"
 T13c="$(newtask)"
@@ -263,7 +286,7 @@ check "$(field $T13c status)" "review" "researcher-run report shape is Stop only
 # ---- 14. caps ----
 T14="$(newtask)"; fire SubagentStart c1 worker-sonnet "" "\"prompt\":\"Task: $T14\""
 LONG="$(printf 'x%.0s' $(seq 1 6000))"
-fire SubagentStop c1 worker-sonnet "$LONG\nTested: ran x\nStop: done"
+fire SubagentStop c1 worker-sonnet "$LONG\nTested: ran x\nNot verified: none\nStop: done"
 CAP="$(t show $T14 | awk '/^## Report$/{f=1;next} /^## /{f=0} f' | tr -d '\n' | wc -c | tr -d ' ')"
 [ "$CAP" -gt 3900 ] && [ "$CAP" -lt 4100 ] && ok "final reply capped at 4000 chars ($CAP incl. header)" || bad "final reply cap ($CAP)"
 T14b="$(newtask --writable "")"; fire SubagentStart c2 worker-sonnet "" "\"prompt\":\"Task: $T14b\""
@@ -343,7 +366,7 @@ check "$(field "$(auto_of nr1)" status)" "blocked" "auto task without a report -
 # report length
 L0="$(events report_too_long)"
 LONG9='l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nStop: done'
-LONG10='l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nTested: ran true -> ok\nStop: done'
+LONG10='l1\nl2\nl3\nl4\nl5\nl6\nl7\nTested: ran true -> ok\nNot verified: none\nStop: done'
 fire SubagentStop rl1 worker-sonnet "$LONG9"
 check "$(events report_too_long)" "$L0" "9 lines: no report_too_long"
 fire SubagentStop rl2 worker-sonnet "\\n\\n$LONG10\\n\\n"
@@ -357,7 +380,7 @@ check "$(field "$(auto_of rl2)" status)" "review" "a long report changes no stat
 # quota
 grep -v '"event":"quota_recent"' "$ST/events.jsonl" > "$ST/events.tmp"; mv "$ST/events.tmp" "$ST/events.jsonl"
 Q0="$(events quota_recent)"; reset_notify
-fire SubagentStop qq1 worker-sonnet 'hit the wall\nStop: quota - resets 3pm (UTC)\nTested: not run (quota)'
+fire SubagentStop qq1 worker-sonnet 'hit the wall\nStop: quota - resets 3pm (UTC)\nTested: not run (quota)\nNot verified: none'
 check "$(events quota_recent)" "$((Q0 + 1))" "Stop: quota logs quota_recent"
 has "$(lastevent quota_recent)" '"source":"hook","tool":"claude","reset":"3pm (UTC)","resetAt":null' "quota_recent: raw reset text"
 check "$(field "$(auto_of qq1)" status)" "interrupted" "Stop: quota interrupts the task (0.7)"
@@ -388,7 +411,7 @@ hbtask() { # agent-id : creates a task + transcript; sets HID
 hbtool() { printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"SubagentHandback","input":{"message":"%s"}}]}}\n' "$2" >> "$HBT/agent-$1.jsonl"; }
 hbstub() { printf '{"type":"assistant","message":{"content":[{"type":"text","text":"Report delivered."}]}}\n' >> "$HBT/agent-$1.jsonl"; }
 M0="$(events report_missing)"
-hbtask hb1; T_HB1="$HID"; hbtool hb1 'x · done\nResult: ok\nTested: ran `t` -> 1 passed\nStop: done - ok'; hbstub hb1
+hbtask hb1; T_HB1="$HID"; hbtool hb1 'x · done\nResult: ok\nTested: ran `t` -> 1 passed\nNot verified: none\nStop: done - ok'; hbstub hb1
 fire SubagentStop hb1 worker-sonnet "Report delivered."
 check "$(field $T_HB1 status)" "review" "hand-back report counts as the report (stub final message)"
 check "$(events report_missing)" "$M0" "hand-back report: no report_missing"
@@ -399,10 +422,10 @@ check "$(events report_missing)" "$((M0 + 1))" "stub final message without any h
 hbtask hb3; T_HB3="$HID"; hbtool hb3 'only prose, no Stop line'; hbstub hb3
 fire SubagentStop hb3 worker-sonnet "Report delivered."
 check "$(events report_missing)" "$((M0 + 2))" "hand-back without Stop/Tested still reports missing"
-hbtask hb4; T_HB4="$HID"; hbtool hb4 'old\nTested: ran `t` -> 1\nStop: blocked - old'; printf '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n' >> "$HBT/agent-hb4.jsonl"
+hbtask hb4; T_HB4="$HID"; hbtool hb4 'old\nTested: ran `t` -> 1\nNot verified: none\nStop: blocked - old'; printf '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n' >> "$HBT/agent-hb4.jsonl"
 fire SubagentStop hb4 worker-sonnet "$OKMSG"
 check "$(field $T_HB4 status)" "review" "a well-formed final message wins over an older hand-back"
-hbtask hb5; T_HB5="$HID"; hbtool hb5 '- **Result:** ok\r\n  **Tested:** ran `t` -> 1 passed\r\n> **Stop:** done - ok'; hbstub hb5
+hbtask hb5; T_HB5="$HID"; hbtool hb5 '- **Result:** ok\r\n  **Tested:** ran `t` -> 1 passed\r\n  **Not verified:** none\r\n> **Stop:** done - ok'; hbstub hb5
 fire SubagentStop hb5 worker-sonnet "Report delivered."
 check "$(field $T_HB5 status)" "review" "hand-back with markdown bullets, bold labels and CRLF is accepted"
 
@@ -431,20 +454,20 @@ fire StopFailure zr3 worker-sonnet "" '"error_type":"overloaded"'
 has "$(t show $R3 --section handoff)" "last done: (none recorded)" "handoff: step without --done"
 # the same agent resumes and finishes with a report: out of interrupted
 reset_notify
-fire SubagentStop zr1 worker-sonnet 'Finished the rest.\nTested: ran `npm test` -> 12 passed\nStop: done'
+fire SubagentStop zr1 worker-sonnet 'Finished the rest.\nTested: ran `npm test` -> 12 passed\nNot verified: none\nStop: done'
 check "$(field $R1 status)" "review" "resumed agent with a report leaves interrupted (-> review)"
 check "$(t show $R1 | grep -c 'final reply')" "1" "resumed agent: report recorded once"
 # negative controls: an error stop or a malformed reply of the interrupted agent changes nothing
 fire SubagentStop zr2 worker-sonnet 'API Error: rate limited'
 check "$(field $R2 status)" "interrupted" "interrupted agent, malformed final message: stays interrupted"
-fire SubagentStop zr2 worker-sonnet 'Out of quota again.\nTested: not run (quota)\nStop: quota'
+fire SubagentStop zr2 worker-sonnet 'Out of quota again.\nTested: not run (quota)\nNot verified: none\nStop: quota'
 check "$(field $R2 status)" "interrupted" "interrupted agent, Stop: quota: stays interrupted"
 check "$(t show $R2 --section handoff | grep -c 'interrupted (')" "1" "interrupted agent, Stop: quota: no second handoff block"
 # a different agent finishing on an interrupted task is a fresh run (existing behaviour)
-fire SubagentStop zrnew worker-sonnet 'Took over.\nTested: ran `x` -> ok\nStop: done'
+fire SubagentStop zrnew worker-sonnet 'Took over.\nTested: ran `x` -> ok\nNot verified: none\nStop: done'
 check "$(field $R2 status)" "interrupted" "an unrelated agent without the task id does not touch it"
 # a repeated Stop of a finished agent still changes nothing
-fire SubagentStop zr1 worker-sonnet 'Finished the rest.\nTested: ran `npm test` -> 12 passed\nStop: done'
+fire SubagentStop zr1 worker-sonnet 'Finished the rest.\nTested: ran `npm test` -> 12 passed\nNot verified: none\nStop: done'
 check "$(t show $R1 | grep -c 'final reply')" "1" "repeated stop of the resumed agent changes nothing"
 # resume through a Start hook
 fire SubagentStart zr3 worker-sonnet "" "\"prompt\":\"Task: $R3\""
@@ -454,7 +477,7 @@ check "$(field $R3 status)" "in-progress" "Start of the interrupted agent -> in-
 reset_notify
 M9="$(events report_missing)"
 N1="$(newtask)"; fire SubagentStart zn1 worker-sonnet "" "\"prompt\":\"Task: $N1\""
-fire SubagentStop zn1 worker-sonnet 'Two options.\nTested: not run (design only)\nDecision: Use Postgres or SQLite?\nStop: done'
+fire SubagentStop zn1 worker-sonnet 'Two options.\nTested: not run (design only)\nNot verified: none\nDecision: Use Postgres or SQLite?\nStop: done'
 check "$(field $N1 status)" "needs-user" "Decision other than none -> needs-user"
 check "$(field $N1 question)" "Use Postgres or SQLite?" "question = the Decision text"
 has "$(t show $N1 --section question)" "asked (agent, from in-progress)" "asked block names the agent"
@@ -463,7 +486,7 @@ has "$(lastevent needs_user)" '"question":"Use Postgres or SQLite?"' "needs_user
 has "$(notified)" "needs your decision" "notify: task needs your decision"
 check "$(events report_missing)" "$M9" "no report_missing for it"
 # the agent's own Stop is ignored while it waits; hooks do not move a needs-user task
-fire SubagentStop zn1 worker-sonnet 'x\nTested: not run (x)\nStop: done'
+fire SubagentStop zn1 worker-sonnet 'x\nTested: not run (x)\nNot verified: none\nStop: done'
 check "$(field $N1 status)" "needs-user" "needs-user ignores a later Stop"
 fire SubagentStart zn1 worker-sonnet "" "\"prompt\":\"Task: $N1\""
 check "$(field $N1 status)" "needs-user" "needs-user ignores a Start"
@@ -473,37 +496,37 @@ t answer "$N1" "SQLite"
 check "$(field $N1 status)" "open" "answer -> open"
 fire SubagentStart zn1 worker-sonnet "" "\"prompt\":\"Task: $N1\""
 check "$(field $N1 status)" "in-progress" "the Start hook of the resumed agent moves it to in-progress"
-fire SubagentStop zn1 worker-sonnet 'Went with SQLite.\nTested: ran `t` -> ok\nDecision: none\nStop: done'
+fire SubagentStop zn1 worker-sonnet 'Went with SQLite.\nTested: ran `t` -> ok\nNot verified: none\nDecision: none\nStop: done'
 check "$(field $N1 status)" "review" "the resumed agent finishes after the answer (Decision: none)"
 # Decision: none (any case, with punctuation) does not ask
 di=0
 for d in none None. "NONE - nothing needed" "n/a" "**none**"; do
   di=$((di+1)); X="$(newtask)"; fire SubagentStart "zdd$di" worker-sonnet "" "\"prompt\":\"Task: $X\""
-  fire SubagentStop "zdd$di" worker-sonnet "ok.\nTested: not run (x)\nDecision: $d\nStop: done"
+  fire SubagentStop "zdd$di" worker-sonnet "ok.\nTested: not run (x)\nNot verified: none\nDecision: $d\nStop: done"
   check "$(field $X status)" "review" "Decision: $d -> no question"
 done
 # Stop: waiting with a reason and no Decision line
 W1="$(newtask)"; fire SubagentStart zw1 worker-sonnet "" "\"prompt\":\"Task: $W1\""
-fire SubagentStop zw1 worker-sonnet 'Need a token.\nTested: not run (blocked)\nStop: waiting - need the staging API token'
+fire SubagentStop zw1 worker-sonnet 'Need a token.\nTested: not run (blocked)\nNot verified: none\nStop: waiting - need the staging API token'
 check "$(field $W1 status)" "needs-user" "Stop: waiting -> needs-user"
 check "$(field $W1 question)" "need the staging API token" "question = the reason after the Stop word"
 W2="$(newtask)"; fire SubagentStart zw2 worker-sonnet "" "\"prompt\":\"Task: $W2\""
-fire SubagentStop zw2 worker-sonnet 'x\nTested: not run (x)\nStop: waiting'
+fire SubagentStop zw2 worker-sonnet 'x\nTested: not run (x)\nNot verified: none\nStop: waiting'
 has "$(field $W2 question)" "waiting for a decision" "Stop: waiting alone -> generic question"
 # Stop: blocked and timeout are not questions
 W3="$(newtask)"; fire SubagentStart zw3 worker-sonnet "" "\"prompt\":\"Task: $W3\""
-fire SubagentStop zw3 worker-sonnet 'x\nTested: not run (x)\nDecision: none\nStop: blocked'
+fire SubagentStop zw3 worker-sonnet 'x\nTested: not run (x)\nNot verified: none\nDecision: none\nStop: blocked'
 check "$(field $W3 status)" "blocked" "Stop: blocked with Decision: none stays blocked"
 # a quota stop with a Decision is still an interruption
 W4="$(newtask)"; fire SubagentStart zw4 worker-sonnet "" "\"prompt\":\"Task: $W4\""
-fire SubagentStop zw4 worker-sonnet 'x\nTested: not run (quota)\nDecision: continue later?\nStop: quota'
+fire SubagentStop zw4 worker-sonnet 'x\nTested: not run (quota)\nNot verified: none\nDecision: continue later?\nStop: quota'
 check "$(field $W4 status)" "interrupted" "Stop: quota wins over a Decision"
 # researcher replies work the same; verifier replies never ask
 W5="$(newtask)"; fire SubagentStart zw5 researcher "" "\"prompt\":\"Task: $W5\""
 fire SubagentStop zw5 researcher 'Findings.\nDecision: Which source to trust?\nStop: done'
 check "$(field $W5 status)" "needs-user" "researcher Decision -> needs-user"
 W6="$(newtask)"; t set "$W6" status=review
-fire SubagentStop zv1 verifier 'Looks fine.\nVerdict: Approved\nDecision: ship it?' "\"prompt\":\"Task: $W6\""
+fire SubagentStop zv1 verifier 'Looks fine.\nNot verified: none\nVerdict: Approved\nDecision: ship it?' "\"prompt\":\"Task: $W6\""
 check "$(field $W6 status)" "review" "a verifier reply never parks a task as needs-user"
 
 # ---- quota reset parsing: common message formats ----

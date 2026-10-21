@@ -54,7 +54,7 @@ TP2="$T/taskproj"; mkdir -p "$TP2"
 TID="$(bash "$PL/scripts/tasks.sh" --project "$TP2" new "multi-tool job")"
 printf '{"hook_event_name":"SubagentStart","session_id":"s9","cwd":"%s","agent_id":"c1","agent_name":"worker-sonnet","prompt":"Task: %s"}' "$TP2" "$TID" | SUBDECK_TOOL=copilot bash "$PL/scripts/log-event.sh" SubagentStart
 [ "$(bash "$PL/scripts/tasks.sh" --project "$TP2" show "$TID" | sed -n 's/^status: //p')" = in-progress ]; chk "Copilot-style SubagentStart (agent_name, cwd only) moves the task to in-progress" $?
-printf '{"hook_event_name":"SubagentStop","session_id":"s9","cwd":"%s","agent_id":"c1","agent_name":"worker-sonnet","last_assistant_message":"ok\\nTested: not run (x)\\nStop: done"}' "$TP2" | SUBDECK_TOOL=codex bash "$PL/scripts/log-event.sh" SubagentStop
+printf '{"hook_event_name":"SubagentStop","session_id":"s9","cwd":"%s","agent_id":"c1","agent_name":"worker-sonnet","last_assistant_message":"ok\\nTested: not run (x)\\nNot verified: none\\nStop: done"}' "$TP2" | SUBDECK_TOOL=codex bash "$PL/scripts/log-event.sh" SubagentStop
 [ "$(bash "$PL/scripts/tasks.sh" --project "$TP2" show "$TID" | sed -n 's/^status: //p')" = review ]; chk "Codex-style SubagentStop moves the task to review" $?
 
 # ---------- guard payload normalisation ----------

@@ -199,7 +199,7 @@ meta() {
     protect-hosts) MG=resources; MT=list; MD="hosts agents must not contact without approval, e.g. staging.example" ;;
     protect-procs) MG=resources; MT=list; MD="process names agents must not stop or look up without approval, e.g. redis" ;;
     tasks.dir)    MG=tasks; MT=string; MD="task file directory, relative to the project or absolute; empty = the state dir" ;;
-    report-check) MG=tasks; MT=bool; MO="on off"; MD="flag sub-agents that stop without a report (Stop:/Tested: lines)" ;;
+    report-check) MG=tasks; MT=bool; MO="on off"; MD="flag sub-agents that stop without a report (Stop:/Tested:/Not verified: lines)" ;;
     auto-bind)    MG=tasks; MT=bool; MO="on off"; MD="create a task automatically for worker and researcher agents started without one" ;;
     context)      MG=context; MT=int; MD="context window in tokens for models whose size is unknown; 0 = auto" ;;
     statusline)   MG=statusline; MT=bool; MO="on off"; MD="agent counts in the Claude Code status line (read-only here; the skill edits settings.json)" ;;

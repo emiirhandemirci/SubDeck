@@ -29,7 +29,7 @@ Delete this line and the placeholder list at the end once filled in.
 - Write long task texts to a file first and point the agent at it.
 - Protected paths (agents must not touch): {{PROTECTED_PATHS}}
 - Every delegated job gets a task file (`tasks.sh new`); the prompt carries `Task: <id>`. Only the manager runs `tasks.sh done`, after a verifier `Approved`.
-- Agents report in at most 9 lines (including a `Tested:` line); details go to files.
+- Agents report in at most 9 lines (including `Tested:` and `Not verified:` lines); details go to files.
 - Every report ends with a stop reason (done|waiting|quota|timeout|no-progress|blocked); a worker's "done" is never acceptance: the verifier shows the check can fail, runs syntax checks on touched files, and stamps its report with HEAD + a state fingerprint (stale if either changed).
 
 ## Git flow
