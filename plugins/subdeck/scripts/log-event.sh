@@ -49,6 +49,34 @@ TS_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 AGENT_TYPE="$(field agent_type)"
 [ -n "$AGENT_TYPE" ] || AGENT_TYPE="$(field agent_name)"   # Copilot names the sub-agent agent_name
 LINE="$(printf '{"ts":"%s","event":"%s","agent_id":"%s","agent_type":"%s","transcript_path":"%s","session_id":"%s","payload":%s}' "$TS_NOW" "$EVENT" "$(field agent_id)" "$AGENT_TYPE" "$(field transcript_path)" "$(field session_id)" "$COMPACT")"
+# handoff record for tasks.sh resume-prompt: <state>/handoff/<agent_id>.txt, newest report wins. Pure bash (no forks
+# besides the file write), skipped when the payload has no agent_id or no final message.
+write_handoff() {
+  [ "$EVENT" = SubagentStop ] || return 0
+  local re_id='"agent_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9._-]+)"'
+  local re_msg='"last_assistant_message"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
+  [[ $COMPACT =~ $re_id ]] || return 0
+  local aid="${BASH_REMATCH[1]}"
+  [[ $COMPACT =~ $re_msg ]] || return 0
+  local msg="${BASH_REMATCH[1]}" first="" res="" stp="" com="" det="" l
+  msg="${msg//\\n/$'\n'}"; msg="${msg//\\\"/\"}"; msg="${msg//\\\\/\\}"
+  while IFS= read -r l; do
+    l="${l%$'\r'}"
+    [ -n "$first" ] || { [ -n "${l//[[:space:]]/}" ] && first="${l:0:200}"; }
+    case "$l" in
+      Result:*) res="${l:0:300}" ;;
+      Stop:*) stp="${l:0:200}" ;;
+      Commits:*) com="${l:0:200}" ;;
+      Detail:*) det="${l:0:200}" ;;
+    esac
+  done <<< "$msg"
+  [ -d "$DIR/handoff" ] || mkdir -p "$DIR/handoff" 2>/dev/null || return 0
+  printf 'Handoff from agent %s (%s), %s\nHeadline: %s\n%s\n%s\n%s\n%s\n' "$aid" "${AGENT_TYPE:-agent}" "$TS_NOW" "$first" \
+    "${stp:-Stop: (none reported)}" "${res:-Result: (none reported)}" "${com:-Commits: (none reported)}" "${det:-Detail: none}" \
+    > "$DIR/handoff/$aid.txt" 2>/dev/null
+  return 0
+}
+
 HAVE_LOCK=0
 release() { [ "$HAVE_LOCK" = 1 ] && rm -rf "$LOCK" 2>/dev/null; HAVE_LOCK=0; }
 trap 'release' EXIT
@@ -98,6 +126,7 @@ while :; do
     else
       log_err "fallback write failed for $EVENT; event dropped"
     fi
+    write_handoff
     dispatch_tasks
     exit 0
   fi
@@ -106,5 +135,6 @@ done
 
 printf '%s\n' "$LINE" >> "$DIR/events.jsonl" 2>/dev/null || log_err "append failed for $EVENT"
 release
+write_handoff
 dispatch_tasks
 exit 0
