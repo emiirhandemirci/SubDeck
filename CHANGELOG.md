@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 - 2026-10-21
 
 - **Autopilot (opt-in):** `autopilot.sh start|stop|status|tick|dry-run|launch|resume` works a project's task queue unattended (bash and files only). It runs a worker, then a verifier on a different model, integrates verified work into a separate `autopilot/<date>` branch and worktree (your checkout is never touched), and never pushes, merges elsewhere, rebases or resets. Limits per day and week (runs, manager turns, tokens), quiet hours, per-tool pauses on provider quota (reset time or 30 min back-off doubling to 6 h), stuck detection, three failed verifications ask you one question, a kill switch (`stop` or `~/.subdeck/autopilot.STOP`), per-task resumed CLI sessions and a daily summary. A headless manager turn follows `scripts/autopilot-prompt.md`. Enable per project with `autopilot.enabled=on`; settings under `autopilot.*`.
 - **Loop detection:** when a sub-agent runs the same failing command a third time within its last ten calls, it gets a note to stop retrying and end with `Stop: no-progress`. Repeats that succeed never trigger it. Turn off with `/subdeck:settings set loop-detect=off`.
 - **Stable prompt prefixes:** the rulebook now tells the manager to batch independent tool calls and to keep the first lines of every brief free of dates and ids, so cached request prefixes keep matching.
+- **Guard in autopilot mode:** the guard denies history rewrites (reset, rebase, force operations, git aliases) and pushes during autopilot runs.
+- **Desk autopilot settings:** the Desk Settings tab has an Autopilot section for the autopilot settings.
 - **Desk cache share:** the token chip tooltip and the detail pane show, per agent and session, the cache share of input tokens, the request count and the largest single request (for example "Cache 82 % · 38 requests · largest 65k"), read from Claude Code transcripts on demand.
 
 ## 0.8.3 - 2026-10-14
