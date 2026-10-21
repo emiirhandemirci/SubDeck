@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.9.1 - 2026-10-21
 
-- **Not verified line:** every worker, researcher and verifier report now carries `Not verified: <what was not tested, read or run> | none`, right after `Tested:` (workers) or before `Verdict:` (verifiers). The report watchdog treats a missing line like a missing `Tested:` for workers and verifiers (`report_missing`, task `blocked`); the verifier checks the listed items first. The 9-line cap is unchanged.
+- **Not verified line:** every worker, researcher and verifier report now carries `Not verified: <what was not tested, read or run> | none`, right after `Tested:` (workers) or before `Verdict:` (verifiers). The report watchdog treats a missing line like a missing `Tested:` for workers and verifiers (`report_missing`, task `blocked`); the verifier checks the listed items first. The 9-line cap is unchanged. Reports from task-linked workers and verifiers in the older format (without the line) are now flagged as missing.
 
 ## 0.9.0 - 2026-10-21
 
