@@ -1071,9 +1071,9 @@ function heavy_cap(t,  cap, st, sid, dir, f, cmd, line, ev, aid, ty, es, k, n, c
   if (cap == "") cap = 2
   if (cap !~ /^[0-9]+$/) return
   cap += 0; if (cap == 0) return
-  st = V["/tool_input/subagent_type"]
+  st = HV_ST
   if (st !~ /(worker|verifier)/) return
-  sid = V["/session_id"]; if (sid == "" || sid ~ /[^A-Za-z0-9._:\/-]/) return
+  sid = HV_SID; if (sid == "" || sid ~ /[^A-Za-z0-9._:\/-]/) return
   dir = ENVIRON["SD_GUARD_PF"]; if (dir == "" || !sub(/[\/\\][^\/\\]*$/, "", dir) || dir ~ /["`$\047]/) return
   f = dir "/events.jsonl"
   cut = ""; dc = "date -u -d \"3 hours ago\" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-3H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null"
@@ -1127,6 +1127,7 @@ function hook_decide(t,  tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp, a
   if (pf == "") pf = ENVIRON["SD_GUARD_PF"]; if (lf == "") lf = ENVIRON["SD_GUARD_LF"]
   if (pf == "" && PROJ != "") pf = PROJ "/.subdeck/config.json"
   WIN = (ENVIRON["OS"] == "Windows_NT" || cwd ~ /^[A-Za-z]:/ || PROJ ~ /^[A-Za-z]:/)
+  HV_ST = V["/tool_input/subagent_type"]; HV_SID = V["/session_id"]
   initrules(); cfgfile(uf, "user"); if (lf != "" && lf != pf) cfgfile(lf, "project"); if (pf != "") cfgfile(pf, "project")
   if (!ENABLED) return
   if (tool == "Agent" || tool == "Task") { heavy_cap(t); return }
