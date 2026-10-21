@@ -422,6 +422,50 @@ validate_launch() { # role task -> 0 ok, else VREASON
 }
 
 # ---------- kill switch ----------
+# ---------- PID registry: <state>/pids.tsv = "pid<TAB>startKey<TAB>name<TAB>task<TAB>owner<TAB>epoch" ----------
+# Every child SubDeck starts is recorded; stop/exit paths signal ONLY a registered pid that is still alive AND whose
+# start key (process start time) still matches, so a recycled pid or a foreign process is never touched. Never by name.
+PIDREG="$STATE/pids.tsv"
+reg_key() { # pid -> RKEY (process start time as an opaque string; empty when unknown)
+  local s=""
+  RKEY=""
+  [[ $1 =~ ^[0-9]+$ ]] || return 0
+  if [ -r "/proc/$1/stat" ]; then s="$(sed 's/^.*) //' "/proc/$1/stat" 2>/dev/null | awk '{print $20}')"; fi
+  [ -n "$s" ] || s="$(ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | head -n 1)"
+  RKEY="$s"
+}
+reg_add() { # pid name task owner (a pid whose start key cannot be read is not registered, so it is never killed)
+  # a child that execs right after the fork changes its start time (Windows): take the key once two reads agree
+  local prev="" n=0
+  while [ $n -lt 10 ]; do reg_key "$1"; [ -n "$RKEY" ] && [ "$RKEY" = "$prev" ] && break; prev="$RKEY"; n=$((n + 1)); sleep 0.1; done
+  [ -n "$RKEY" ] || return 0
+  mkdir -p "${PIDREG%/*}" 2>/dev/null
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$RKEY" "${2//[$'\t\n']/_}" "${3:--}" "${4//[$'\t\n']/_}" "$(date +%s)" >> "$PIDREG" 2>/dev/null
+}
+reg_kill() { # owner-glob [signal] -> signals live, key-matching rows of that owner; rewrites the file without dead/killed rows
+  local pid key name task owner ep keep="" sig="${2:-TERM}"
+  [ -f "$PIDREG" ] || return 0
+  while IFS=$'\t' read -r pid key name task owner ep; do
+    [ -n "$pid" ] || continue
+    kill -0 "$pid" 2>/dev/null || continue
+    reg_key "$pid"; [ "$RKEY" = "$key" ] || continue
+    # shellcheck disable=SC2254
+    case "$owner" in $1) kill "-$sig" "$pid" 2>/dev/null; continue ;; esac
+    keep="$keep$pid"$'\t'"$key"$'\t'"$name"$'\t'"$task"$'\t'"$owner"$'\t'"$ep"$'\n'
+  done < "$PIDREG"
+  printf '%s' "$keep" > "$PIDREG.tmp" 2>/dev/null && mv -f "$PIDREG.tmp" "$PIDREG" 2>/dev/null
+  return 0
+}
+reg_list() { # prints "pid name task owner" of live, key-matching rows
+  local pid key name task owner ep
+  [ -f "$PIDREG" ] || return 0
+  while IFS=$'\t' read -r pid key name task owner ep; do
+    [ -n "$pid" ] || continue
+    kill -0 "$pid" 2>/dev/null || continue
+    reg_key "$pid"; [ "$RKEY" = "$key" ] || continue
+    printf '%s %s %s %s\n' "$pid" "$name" "$task" "$owner"
+  done < "$PIDREG"
+}
 killed() { [ -f "$AP/STOP" ] || [ -f "$GSTOP" ]; }
 
 # =====================================================================================================================
@@ -632,6 +676,15 @@ dispatch() {
     case "$QUEUE_DRY" in *" $id$NL"*) continue ;; esac
     is_active "$id" && continue
     [ "${sk:-0}" -ge 3 ] || [ "${nf:-0}" -ge 3 ] && continue
+    # usage-limit runs never strike: the tool is paused until reset + backoff and the task resumes in its own session;
+    # at most 3 such resumes per task per day (the 4th limit run of the day parks the task until tomorrow)
+    if [ -f "$AP/ledger.tsv" ] && [ "$(awk -F"$TAB" -v d="${NOW_ISO%%T*}" -v t="$id" '$4 == t && $8 == "quota" && index($1, d) == 1 { n++ } END { print n + 0 }' "$AP/ledger.tsv" 2>/dev/null)" -ge 4 ]; then
+      if [ "$DRY" != 1 ] && ! grep -qxF "${NOW_ISO%%T*} $id" "$AP/qcap.txt" 2>/dev/null; then
+        printf '%s %s\n' "${NOW_ISO%%T*}" "$id" >> "$AP/qcap.txt" 2>/dev/null
+        ev autopilot_quota_cap "\"task\":$(jstr "$id"),\"resumes\":3,\"action\":\"parked until tomorrow\""
+      fi
+      continue
+    fi
     r=""
     case "$st" in
       open) case "$NL$READY$NL" in *"$NL$id$NL"*) r=worker ;; esac ;;
@@ -673,6 +726,7 @@ launch_queue() {
       set -m
       nohup env SUBDECK_AUTOPILOT=1 SUBDECK_AUTOPILOT_LAUNCH=1 SUBDECK_RUN_BASE="${S_branch:-HEAD}" bash "$RUN_SH" --project "$PROJECT" "$role" "$id" >> "$AP/launch.log" 2>&1 < /dev/null &
       pid=$!
+      reg_add "$pid" run.sh "$id" ap-run
       set +m
       rm -f "$f"
       fappend "$AP/launched.tsv" "$pid$TAB$(date +%s)$TAB$id$TAB$role"
@@ -772,6 +826,7 @@ manager_turn() {
   set -m
   nohup env SUBDECK_AUTOPILOT=1 SUBDECK_PROJECT="$PROJECT" SUBDECK_RUN_BASE="$S_branch" bash "$RUN_SH" --project "$PROJECT" manager-turn --prompt-file "$pf" --cwd "$APWT" --out-dir "$AP/turns" >> "$AP/launch.log" 2>&1 < /dev/null &
   local pid=$!
+  reg_add "$pid" run.sh manager-turn ap-run
   set +m
   fappend "$AP/launched.tsv" "$pid$TAB$(date +%s)$TAB-$TAB""manager"
   S_lastTurnStart="$NOW"; ACTIVE_TURN=1
@@ -1040,6 +1095,7 @@ cmd_start() {
   set -m
   nohup bash "$SELF" --project "$PROJECT" _loop >> "$AP/loop.log" 2>&1 < /dev/null &
   local pid=$!
+  reg_add "$pid" autopilot.sh loop ap-loop
   set +m
   printf '%s %s\n' "$pid" "$NOW" > "$AP/loop.pid"
   ev_quiet autopilot_state "\"state\":\"running\",\"reasons\":[],\"branch\":$(jstr "$S_branch")"
@@ -1049,13 +1105,8 @@ cmd_stop() {
   local rid kind task role tool pid sa f
   mkdir -p "$AP" 2>/dev/null
   printf '%s stop\n' "$NOW_ISO" > "$AP/STOP"
-  loop_alive && kill -TERM "$LOOP_PID" 2>/dev/null
-  if [ "$OPT_NOW" = 1 ]; then
-    launched_load; metas_load; active_load
-    while IFS="$SEP" read -r rid kind task role tool pid sa f; do
-      [[ $pid =~ ^[0-9]+$ ]] && own_pid "$pid" && kill -TERM "$pid" 2>/dev/null
-    done <<< "$ACTIVE"
-  fi
+  reg_kill ap-loop   # registry only: alive + start time matches (never by name)
+  if [ "$OPT_NOW" = 1 ]; then reg_kill ap-run; fi
   state_load
   ev_quiet autopilot_state "\"state\":\"stopped\",\"reasons\":[],\"branch\":$(jstr "$S_branch")"
   printf 'autopilot stopped%s\n' "$( [ "$OPT_NOW" = 1 ] && printf ' (active runs cancelled)')"
@@ -1072,6 +1123,8 @@ cmd_status() {
     printf 'autopilot: %s%s\n' "$STATE_NAME" "${REASONS:+ ($REASONS)}"
     printf 'branch: %s\n' "${S_branch:-none}"
     loop_alive && printf 'loop: pid %s, next tick in about %s s\n' "$LOOP_PID" "$C_TICK" || printf 'loop: not running\n'
+    local rl; rl="$(reg_list)"
+    if [ -n "$rl" ]; then printf 'processes (registry, alive): pid name task owner\n'; while IFS= read -r line; do printf '  %s\n' "$line"; done <<< "$rl"; else printf 'processes: none\n'; fi
     printf 'active: %s run(s)%s\n' "$ACTIVE_TASKS" "$( [ "$ACTIVE_TURN" -gt 0 ] && printf ', manager turn')"
     printf 'queue: %s\n' "$(ls "$AP/queue" 2>/dev/null | grep -c .)"
     printf 'budget today: runs %s/%s, turns %s/%s, tokens %s/%s\n' "$B_RUNSD" "$C_MAXRUNS" "$B_TURNSD" "$C_MAXTURNS" "$B_TOKD" "$( [ "$C_TOKD" = 0 ] && echo unlimited || echo "$C_TOKD")"

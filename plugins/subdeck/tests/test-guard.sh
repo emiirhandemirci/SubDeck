@@ -979,6 +979,29 @@ got="$(bash_json "git push" | SUBDECK_AUTOPILOT=1 HOME="$H" CLAUDE_PROJECT_DIR="
 has "$got" '"permissionDecision":"deny".*SubDeck guard \(autopilot\)' "autopilot deny reason names the autopilot"
 SUBDECK_AUTOPILOT=1 SUBDECK_GUARD=0 expect allow "git push" "SUBDECK_GUARD=0 still disables the guard"
 
+
+# ---------- heavy-agent cap (Agent/Task tool; SUBDECK_MAX_HEAVY, default 2, 0 = off; fails open) ----------
+SDIR="$( . "$HERE/../scripts/lib-paths.sh"; HOME="$H"; sd_state_dir "$P"; printf '%s' "$SD_STATE" )"; mkdir -p "$SDIR"
+hv_ev() { printf '{"ts":"%s","event":"%s","agent_id":"%s","agent_type":"%s","transcript_path":"","session_id":"%s","payload":{}}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" "${4:-s9}" >> "$SDIR/events.jsonl"; }
+hv_call() { printf '{"session_id":"s9","cwd":"%s","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"subagent_type":"%s","prompt":"p"}}' "$(esc "$P")" "${2:-Agent}" "$1" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G"; }
+hv_ev SubagentStart h1 worker-sonnet; hv_ev SubagentStart h2 verifier
+has "$(hv_call worker-sonnet)" 'heavy-cap.*2 heavy agents already running' "cap: third worker denied while two run"
+has "$(hv_call subdeck:verifier Task)" 'permissionDecision":"deny"' "cap: Task tool and verifier type counted too"
+[ -z "$(hv_call researcher)" ] && ok "cap: researcher never blocked" || bad "cap: researcher blocked"
+[ -z "$(hv_call Explore)" ] && ok "cap: Explore never blocked" || bad "cap: Explore blocked"
+[ -z "$(SUBDECK_MAX_HEAVY=0 hv_call worker-sonnet)" ] && ok "cap: SUBDECK_MAX_HEAVY=0 turns it off" || bad "cap: 0 did not turn it off"
+has "$(SUBDECK_MAX_HEAVY=1 hv_call worker-sonnet)" 'limit 1' "cap: SUBDECK_MAX_HEAVY=1 lowers the cap"
+hv_ev SubagentStop h1 worker-sonnet
+[ -z "$(hv_call worker-sonnet)" ] && ok "cap: allowed again after one stops" || bad "cap: still denied after a stop"
+hv_ev SubagentStart h3 worker-sonnet other-session
+[ -z "$(hv_call worker-sonnet)" ] && ok "cap: agents of another session are not counted" || bad "cap: counted another session"
+hv_ev SubagentStart h4 worker-sonnet
+has "$(hv_call worker-sonnet)" 'heavy-cap' "cap: denied again with two running"
+printf 'not json at all\n{broken' > "$SDIR/events.jsonl"
+[ -z "$(hv_call worker-sonnet)" ] && ok "cap: garbage state fails open" || bad "cap: garbage state blocked"
+rm -f "$SDIR/events.jsonl"
+[ -z "$(hv_call worker-sonnet)" ] && ok "cap: missing state fails open" || bad "cap: missing state blocked"
+
 rm -rf "$H" "$P"
 echo "$PASS passed, $FAIL failed"
 [ $FAIL -eq 0 ]

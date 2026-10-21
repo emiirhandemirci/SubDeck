@@ -453,6 +453,51 @@ check "$("$REALGIT" -C "$P" rev-parse HEAD) $("$REALGIT" -C "$P" rev-parse --abb
 check "$("$REALGIT" -C "$P" log --oneline | wc -l | tr -d ' ')" "1" "user's branch has no autopilot commits"
 fi
 
+if want cap; then
+# ---------- 13b. usage-limit resumes (max 3 per task per day) and the PID registry ----------
+mkproj p30; pset autopilot.enabled=on
+QC="$(t new "qcap" --writable src --done-when d)"
+mkdir -p "$APD"
+for n in 1 2 3; do printf '2025-10-09T01:0%s:00Z\trun-%s\ttask\t%s\tworker\tcodex\t-\tquota\t7\t0\t0\ttrue\n' "$n" "$n" "$QC" >> "$APD/ledger.tsv"; done
+NOWV=$T0 ap tick; waitruns
+[ "$(events autopilot_launch)" -ge 1 ] && ok "3 limit runs today: the task is still resumed (3rd resume)" || bad "no launch after 3 limit runs"
+mkproj p31; pset autopilot.enabled=on
+QC="$(t new "qcap2" --writable src --done-when d)"
+mkdir -p "$APD"
+for n in 1 2 3 4; do printf '2025-10-09T01:0%s:00Z\trun-%s\ttask\t%s\tworker\tcodex\t-\tquota\t7\t0\t0\ttrue\n' "$n" "$n" "$QC" >> "$APD/ledger.tsv"; done
+NOWV=$T0 ap tick; waitruns
+check "$(events autopilot_launch)" "0" "4th limit run of the day: no more resumes today"
+has "$(lastevent autopilot_quota_cap)" 'parked until tomorrow' "quota cap event emitted"
+check "$(field "$QC" strikes)" "" "quota cap never strikes"
+NOWV=$((T0 + 86400)) ap tick; waitruns
+[ "$(events autopilot_launch)" -ge 1 ] && ok "next day: the task resumes again" || bad "no launch the next day"
+
+# PID registry: stop --now signals only registered, alive, start-time-matching pids
+mkproj p32; pset autopilot.enabled=on
+rkey() { if [ -r "/proc/$1/stat" ]; then sed 's/^.*) //' "/proc/$1/stat" | awk '{print $20}'; else ps -o lstart= -p "$1" 2>/dev/null | tr -s ' '; fi; }
+bash -c 'exec sleep 120' & D1=$!
+bash -c 'exec sleep 120' & D2=$!
+bash -c 'exec sleep 120' & D3=$!
+sleep 1; K1="$(rkey $D1)"
+if [ -z "$K1" ]; then ok "no start key readable on this platform: registry kill test skipped"; kill $D1 $D2 $D3 2>/dev/null
+else
+  mkdir -p "$ST"
+  printf '%s\t%s\tsleep\t-\tap-run\t1\n' "$D1" "$K1" > "$ST/pids.tsv"
+  printf '%s\t%s\tsleep\t-\tap-run\t1\n' "$D2" "wrong-start-time" >> "$ST/pids.tsv"
+  ap stop --now >/dev/null 2>&1
+  w=0; while kill -0 $D1 2>/dev/null && [ $w -lt 25 ]; do read -t 0.2 _ < /dev/zero 2>/dev/null || :; w=$((w+1)); done
+  kill -0 $D1 2>/dev/null && bad "registered matching pid was not stopped" || ok "stop --now: registered pid with matching start time stopped"
+  kill -0 $D2 2>/dev/null && ok "registered pid with a different start time left alone" || bad "start-time mismatch pid was killed"
+  kill -0 $D3 2>/dev/null && ok "unregistered pid left alone" || bad "unregistered pid was killed"
+  kill $D2 $D3 2>/dev/null
+  bash -c 'exec sleep 120' & D4=$!
+  sleep 1
+  printf '%s\t%s\tsleep\ttask9\tap-run\t1\n' "$D4" "$(rkey $D4)" > "$ST/pids.tsv"
+  has "$(ap status 2>/dev/null)" "$D4 sleep task9 ap-run" "status lists registered live pids"
+  kill $D4 2>/dev/null
+fi
+fi
+
 if want start2; then
 # ---------- 14. bash 3.2 rules ----------
 for pat in 'wait -n' '\$\{[A-Za-z_]+,,\}' '\$\{[A-Za-z_]+\^\^\}' 'declare -A' 'local -A' 'mapfile' 'readarray' 'EPOCHSECONDS' 'local -n' 'declare -n' '[^-]timeout [0-9]' '\|&' '&>>'; do

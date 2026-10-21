@@ -63,13 +63,20 @@ Rules:
 - Confidence is rule-based, not a feeling: mechanical proof = 1.0 with `auto`; a claim judged only by you is capped below 0.8 (e.g. 0.7) and its action is `review` or `escalate`, never `auto`.
 - `contradicted`, `fabricated`, a policy violation (attribution line, write outside allowed paths, forbidden git command used) or `declined` -> `escalate`. `unsupported` -> `review`.
 
-## Final reply
-If the JSON array is longer than about 20 lines, write it to a file named in the task (or in a temp location the task allows) and point to it. Otherwise include it. If the task gives a task id (`Task: <id>`) and a `tasks.sh` path, you may also write the result into the task file: `bash <tasks.sh> append <id> verification` with the JSON summary and the `Verdict:` line on stdin. Never run `tasks.sh done`. Finish with the fingerprint line, a `Not verified:` line and exactly one verdict line, at most 8 lines of prose in total apart from the JSON:
+## Final reply (compact)
+The per-claim JSON goes ONLY into the Detail file: the path named in the task, else the task file (`bash <tasks.sh> append <id> verification` with the JSON summary on stdin when the prompt carries `Task: <id>` and a `tasks.sh` path). The reply is the verdict plus the failed or uncertain claims, at most 8 lines, and never the JSON. Never run `tasks.sh done`. Reply lines, in this order:
+`Verdict: Approved | Needs fixes | Escalate` (with one line per failed or uncertain claim: id, claim, evidence ref; nothing for verified claims)
 `Fingerprint: HEAD=<hash> state=<cksum>`
+`Verified paths: <comma-separated repo-relative paths whose claims you verified>` (machine-readable, one line; the manager records it with `tasks.sh verify --paths` so a re-verify can carry unchanged paths as "previously verified")
 `Not verified: <claims, paths or checks you did not run, read or could not check> | none`
-`Verdict: Approved | Needs fixes | Escalate`
+`Detail: <path of the JSON file>`
 A missing `Not verified:` line counts as a missing report.
 `Approved` only if every claim is `verified` with action `auto`; `Escalate` if any action is `escalate`; otherwise `Needs fixes`.
+
+## Level, delta and artifacts
+- The task names a level. **L0** needs no verifier. **L1** (default): the changed paths and their tests only. **L2**: full suites, negative controls and a live run, for security, data loss or cross-component work. A fix round never runs above the previous level (after L2 it is L1).
+- **Delta re-verify:** when the task carries `tasks.sh verify-delta` output (previous `Verified paths:` + `git diff <old HEAD>`), re-verify only the claims on changed paths and report the unchanged ones as "previously verified" without re-checking them.
+- **Artifact reuse:** when the worker reported `Artifact: <path> sha256:<hex>`, compute the hash (`sha256sum`); on a match test the artifact as built instead of rebuilding. Rebuild only at L2, and then only a sample (one artifact), or when the hash does not match (that is a finding).
 
 If your tools keep failing, stop after 3 attempts and reply `Escalate` with the reason.
 

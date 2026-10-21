@@ -673,12 +673,57 @@ else RUNDIR="$STATE/runs/$TASK"; BUSYMSG="a run of $TASK is already active"; fi
 LOCK="$RUNDIR/.lock"
 lock_state check || refuse 4 busy "$BUSYMSG ($LOCK)"
 
+# ---------- PID registry: <state>/pids.tsv = "pid<TAB>startKey<TAB>name<TAB>task<TAB>owner<TAB>epoch" ----------
+# Every child SubDeck starts is recorded; stop/exit paths signal ONLY a registered pid that is still alive AND whose
+# start key (process start time) still matches, so a recycled pid or a foreign process is never touched. Never by name.
+PIDREG="$STATE/pids.tsv"
+reg_key() { # pid -> RKEY (process start time as an opaque string; empty when unknown)
+  local s=""
+  RKEY=""
+  [[ $1 =~ ^[0-9]+$ ]] || return 0
+  if [ -r "/proc/$1/stat" ]; then s="$(sed 's/^.*) //' "/proc/$1/stat" 2>/dev/null | awk '{print $20}')"; fi
+  [ -n "$s" ] || s="$(ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | head -n 1)"
+  RKEY="$s"
+}
+reg_add() { # pid name task owner (a pid whose start key cannot be read is not registered, so it is never killed)
+  # a child that execs right after the fork changes its start time (Windows): take the key once two reads agree
+  local prev="" n=0
+  while [ $n -lt 10 ]; do reg_key "$1"; [ -n "$RKEY" ] && [ "$RKEY" = "$prev" ] && break; prev="$RKEY"; n=$((n + 1)); sleep 0.1; done
+  [ -n "$RKEY" ] || return 0
+  mkdir -p "${PIDREG%/*}" 2>/dev/null
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$RKEY" "${2//[$'\t\n']/_}" "${3:--}" "${4//[$'\t\n']/_}" "$(date +%s)" >> "$PIDREG" 2>/dev/null
+}
+reg_kill() { # owner-glob [signal] -> signals live, key-matching rows of that owner; rewrites the file without dead/killed rows
+  local pid key name task owner ep keep="" sig="${2:-TERM}"
+  [ -f "$PIDREG" ] || return 0
+  while IFS=$'\t' read -r pid key name task owner ep; do
+    [ -n "$pid" ] || continue
+    kill -0 "$pid" 2>/dev/null || continue
+    reg_key "$pid"; [ "$RKEY" = "$key" ] || continue
+    # shellcheck disable=SC2254
+    case "$owner" in $1) kill "-$sig" "$pid" 2>/dev/null; continue ;; esac
+    keep="$keep$pid"$'\t'"$key"$'\t'"$name"$'\t'"$task"$'\t'"$owner"$'\t'"$ep"$'\n'
+  done < "$PIDREG"
+  printf '%s' "$keep" > "$PIDREG.tmp" 2>/dev/null && mv -f "$PIDREG.tmp" "$PIDREG" 2>/dev/null
+  return 0
+}
+reg_list() { # prints "pid name task owner" of live, key-matching rows
+  local pid key name task owner ep
+  [ -f "$PIDREG" ] || return 0
+  while IFS=$'\t' read -r pid key name task owner ep; do
+    [ -n "$pid" ] || continue
+    kill -0 "$pid" 2>/dev/null || continue
+    reg_key "$pid"; [ "$RKEY" = "$key" ] || continue
+    printf '%s %s %s %s\n' "$pid" "$name" "$task" "$owner"
+  done < "$PIDREG"
+}
+
 # run files
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 if [ "$DRY" = 0 ]; then
   mkdir -p "$RUNDIR" 2>/dev/null || die 2 "cannot create $RUNDIR"
   lock_take || refuse 4 busy "$BUSYMSG ($LOCK)"
-  trap 'lock_release' EXIT
+  trap 'reg_kill "run:$RUN_ID"; lock_release' EXIT
   while [ -e "$RUNDIR/$TS.json" ]; do sleep 1; TS="$(date -u +%Y%m%dT%H%M%SZ)"; done
 fi
 if [ "$MT" = 1 ]; then RUN_ID="turn-$TS"; else RUN_ID="run-$TASK-$TS"; fi
@@ -998,6 +1043,7 @@ set -m
   exec "$BIN" ${ARGV_OUT[@]+"${ARGV_OUT[@]}"} < "$STDIN_SRC" > "$OUTF" 2>> "$LOGF"
 ) &
 CPID=$!
+reg_add "$CPID" "${BIN##*/}" "$TASK" "run:$RUN_ID"
 set +m
 write_meta running "" "" null null '[]' 0 0
 

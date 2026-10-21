@@ -60,4 +60,20 @@ NC="$(mktemp)"; grep -vF 'Read scope' "$HERE/../agents/worker-sonnet.md" > "$NC"
 if grep -qF '14. **Read scope:**' "$NC"; then bad "read-scope negative control did not fail"; else ok "read-scope check fails without the rule (negative control)"; fi
 rm -f "$NC"
 if grep -qF 'Read first: <3-5 concrete paths' "$O" && grep -qF 'verification tiers' "$O" && grep -qF 'Small** (one file' "$O"; then ok "orchestrator has Read first and the verification tiers"; else bad "orchestrator lacks Read first or tiers"; fi
+# 149 items 4-8: verification levels, delta, compact verifier reply, artifact reuse, small-edit and resume rules
+for f in agents/verifier.md agents/verifier-current.md scripts/roles/verifier.md; do
+  F="$HERE/../$f"
+  if grep -qF '^Verified paths:' "$F" || grep -qF '`Verified paths: ' "$F"; then ok "$f asks for the Verified paths line"; else bad "$f lacks the Verified paths line"; fi
+  if grep -qF 'goes ONLY into the Detail file' "$F" && grep -qF 'at most 8 lines' "$F"; then ok "$f has the compact reply rule"; else bad "$f lacks the compact reply rule"; fi
+  if grep -qF 'previously verified' "$F" && grep -qF 'sha256sum' "$F"; then ok "$f has delta and artifact reuse"; else bad "$f lacks delta or artifact reuse"; fi
+done
+for f in agents/worker-sonnet.md agents/worker-opus.md agents/worker-current.md scripts/roles/worker.md; do
+  if grep -qF 'Artifact: <path> sha256:<hex>' "$HERE/../$f"; then ok "$f has the artifact rule"; else bad "$f lacks the artifact rule"; fi
+done
+NC="$(mktemp)"; grep -vF 'Artifact:' "$HERE/../agents/worker-sonnet.md" > "$NC"
+if grep -qF 'Artifact: <path> sha256:<hex>' "$NC"; then bad "artifact negative control did not fail"; else ok "artifact check fails without the rule (negative control)"; fi
+rm -f "$NC"
+for pat in 'small-edit rule' 'at most 10 lines' 'Verification levels' '\*\*L0\*\*' 'verify-reason' 'never higher than the previous level' 'verify-delta' 'Artifact reuse' '150-200k'; do
+  if grep -q -- "$pat" "$O"; then ok "orchestrator mentions: $pat"; else bad "orchestrator lacks: $pat"; fi
+done
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" -eq 0 ]
