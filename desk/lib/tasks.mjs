@@ -166,6 +166,7 @@ export function parseTask(text, id, { archived = false, file = null } = {}) {
     role: fm.role || '', tool: fm.tool || '', model: fm.model || '', branch: fm.branch || '', worktree: fm.worktree || '', run: fm.run || '', created: fm.created || '', updated: fm.updated || '',
     auto: fm.auto === 'true', pack: /^[a-z0-9][a-z0-9-]{0,39}$/.test(fm.pack || '') ? fm.pack : '', grants: parseList(fm.grants), covers: parseList(fm.covers),
     verdict: latestVerdict(sections.verification),
+    verify: /^L[012]$/.test(fm.verify || '') ? fm.verify : 'L1', budget: /^[1-9][0-9]{0,11}$/.test(fm.budget || '') ? Number(fm.budget) : null,
     question: (fm.question || '').slice(0, 300), lastStep: parseProgress(sections.progress), checkpoints: parseCheckpoints(sections.progress),
     archived, invalid, file,
   };

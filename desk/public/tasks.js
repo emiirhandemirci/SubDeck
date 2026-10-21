@@ -116,7 +116,12 @@ export function initTasks({ $, el, store, getJSON, relativeTime, openSession, sh
       const x = el('div', 'tcard-extra muted');
       if (t.wave) { const w = el('span', 'tag wavechip', `wave ${t.wave}`); w.title = t.covers.length ? `Verified together with ${t.covers.join(', ')}` : `Context pack ${t.pack}`; x.append(w); }
       if (t.grants.length) { const g = el('span', 'tag grantchip', `+${t.grants.length} grant${t.grants.length === 1 ? '' : 's'}`); g.title = `Granted paths: ${t.grants.join(', ')}`; x.append(g); }
-      if (Number.isFinite(t.tokens)) { const k = el('span', null, `${formatTokens(t.tokens)} tokens`); k.title = 'Cumulative tokens of the agents that worked on this task'; x.append(k); }
+      if (Number.isFinite(t.tokens)) {
+        const over = Number.isFinite(t.budget) && t.tokens > t.budget;
+        const k = el('span', over ? 'budget-over' : null, over ? `${formatTokens(t.tokens)} tokens, over the budget of ${formatTokens(t.budget)}` : `${formatTokens(t.tokens)} tokens`);
+        k.title = Number.isFinite(t.budget) ? `Cumulative tokens of the agents that worked on this task; budget ${formatTokens(t.budget)}` : 'Cumulative tokens of the agents that worked on this task';
+        x.append(k);
+      }
       c.append(x);
     }
     if (t.grants.length) c.append(el('div', 'tcard-paths mono muted', `grants: ${t.grants.join(', ')}`));
