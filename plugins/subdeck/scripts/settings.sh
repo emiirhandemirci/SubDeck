@@ -21,6 +21,7 @@
 #       commit-pathspec|commit-scope=warn|off               -> guard.sh (guard.rules.<id>; warn-only rules)
 #       roles.<role>.tool|model|args|cmd|timeout=<v>        -> config member "roles" (written here; per role the whole object of one scope wins)
 #       loop-detect=on|off                                  -> config key loopDetect (written here; read by checkpoint.sh)
+#       max-heavy=<n>, 0 = off (default 2)                  -> config key maxHeavy (written here; guard.sh heavy cap, env SUBDECK_MAX_HEAVY wins)
 #       autopilot.enabled|branch|max-parallel|max-runs-day|max-turns-day|stuck-minutes|tick-seconds|manager-gap|
 #         digest-hour|quiet-hours, autopilot.budget.tokens-day|tokens-week|runs-week -> config member "autopilot"
 #         (camelCase members, budget nested; per key project wins; autopilot.enabled only with --project)
@@ -209,6 +210,7 @@ meta() {
     roles.*.cmd)     MG=roles; MT=string; MD="command for tool custom; must contain {prompt_file}" ;;
     roles.*.timeout) MG=roles; MT=int; MD="seconds before the run is stopped, 60-86400 (default 1800)" ;;
     loop-detect)  MG=tasks; MT=bool; MO="on off"; MD="warn a sub-agent that repeats the same failing call 3 times to stop retrying" ;;
+    max-heavy)    MG=tasks; MT=int; MD="most worker/verifier agents running at once (researchers not counted); 0 = no limit, default 2" ;;
     autopilot.enabled)        MG=autopilot; MT=bool; MO="on off"; MD="run the task queue unattended for this project (per project only)" ;;
     autopilot.branch)         MG=autopilot; MT=string; MD="branch the autopilot integrates verified work into; empty = autopilot/<date of first start>" ;;
     autopilot.max-parallel)   MG=autopilot; MT=int; MD="task runs at the same time, 1-8" ;;
@@ -305,6 +307,7 @@ END {
   if (sv("tasks/reportCheck", "true false")) out("report-check", (EV == "true") ? "on" : "off", ES); else out("report-check", "on", "default")
   if (sv("tasks/autoBind", "true false")) out("auto-bind", (EV == "true") ? "on" : "off", ES); else out("auto-bind", "on", "default")
   if (sv("loopDetect", "true false")) out("loop-detect", (EV == "true") ? "on" : "off", ES); else out("loop-detect", "on", "default")
+  if (sv("maxHeavy") && EV ~ /^[0-9]+$/ && length(EV) <= 3) { x = EV; sub(/^0+/, "", x); if (x == "") x = "0"; out("max-heavy", x, ES) } else out("max-heavy", 2, "default")
   roles_out()
   autopilot_out()
 }
@@ -580,7 +583,7 @@ case "$CMD" in
     [ ${#PAIRS[@]} -gt 0 ] || die "set needs key=value pairs, e.g. set notify=on worker=opus"
     RULES=" $STATIC_RULES push "; RE_MODEL="^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$"; RE_NUM="^[0-9]{1,9}$"
     MP=(); GP=(); NV=""; NE=""; GE=""; SL=""; PUSH=""; PB=""; PBSET=0; PRSET=0; PR=""; UP=""; CX=""
-    TDOP=keep; TD=""; RCOP=keep; RC=""; ABOP=keep; AB=""; RES=(); ROLELIST=" "; APF=""; APB=""; LD=""
+    TDOP=keep; TD=""; RCOP=keep; RC=""; ABOP=keep; AB=""; RES=(); ROLELIST=" "; APF=""; APB=""; LD=""; MH=""
     apset() { case " $APF " in *" $1 "*) ;; *) APF="$APF $1" ;; esac; printf -v "APV_$1" '%s' "$2"; }
     apbset() { case " $APB " in *" $1 "*) ;; *) APB="$APB $1" ;; esac; printf -v "APBV_$1" '%s' "$2"; }
     apnum() { # key value lo hi -> AN (normalised number) or die
@@ -671,6 +674,8 @@ case "$CMD" in
           rid="${rn//-/_}"
           case "$ROLELIST" in *" $rn "*) ;; *) ROLELIST="$ROLELIST$rn " ;; esac
           printf -v "RF_${rid}_$fld" '%s' "$v"; printf -v "RS_${rid}_$fld" '%s' 1 ;;
+        max-heavy)
+          { [[ $v =~ ^[0-9]{1,3}$ ]] && [ $((10#$v)) -le 100 ]; } || die "max-heavy must be a number 0-100, 0 = off (got '$v')"; MH=$((10#$v)) ;;
         loop-detect)
           case "$lv" in on|true) LD=true ;; off|false) LD=false ;; *) die "loop-detect must be on or off (got '$v')" ;; esac ;;
         autopilot.enabled)
@@ -744,7 +749,7 @@ case "$CMD" in
       printf -v "RJ_$rid" '%s' "{$body}"
     done
     # a corrupt target file must not leave a half-applied set
-    if { [ -n "$CX" ] || [ $TDOP != keep ] || [ $RCOP != keep ] || [ $ABOP != keep ] || [ -n "$APF$APB$LD" ]; } && ! ctx_members "$TARGET" >/dev/null; then die "$TARGET is not a valid JSON object; left untouched"; fi
+    if { [ -n "$CX" ] || [ $TDOP != keep ] || [ $RCOP != keep ] || [ $ABOP != keep ] || [ -n "$APF$APB$LD$MH" ]; } && ! ctx_members "$TARGET" >/dev/null; then die "$TARGET is not a valid JSON object; left untouched"; fi
     OUT=""; ERRLINE=""; SNAP=""; SNAPSET=0
     if [ -f "$TARGET" ]; then IFS= read -r -d "" SNAP < "$TARGET"; SNAPSET=1; fi   # restored if any routed write fails
     route() { # run a routed command, keep its first output line, remember the first error
@@ -774,6 +779,9 @@ case "$CMD" in
     if [ -z "$ERRLINE" ] && [ -n "$APF$APB" ]; then
       if l="$(ap_write "$TARGET")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
     fi
+    if [ -z "$ERRLINE" ] && [ -n "$MH" ]; then
+      if l="$(member_write "$TARGET" maxHeavy "$MH")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
+    fi
     if [ -z "$ERRLINE" ] && [ -n "$LD" ]; then
       if l="$(member_write "$TARGET" loopDetect "$LD")"; then OUT="${OUT}wrote $TARGET"$'\n'; else ERRLINE="${l%%$'\n'*}"; fi
     fi
@@ -797,6 +805,7 @@ case "$CMD" in
     member_write "$TARGET" roles remove >/dev/null
     member_write "$TARGET" autopilot remove >/dev/null
     member_write "$TARGET" loopDetect remove >/dev/null
+    member_write "$TARGET" maxHeavy remove >/dev/null
     echo; show ;;
 esac
 exit 0

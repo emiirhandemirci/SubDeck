@@ -459,6 +459,25 @@ c="$(cat "$PS/config.json" 2>/dev/null)"
 hasnt "$c" 'autopilot|loopDetect' "reset removes autopilot and loopDetect"
 rm -f "$CFG"; rm -rf "${SS:?}"/*
 
+# ---- max-heavy (maxHeavy) ----
+out="$(run)"
+has "$out" '^ +max-heavy +2 *$' "max-heavy default 2"
+run set max-heavy=0 --project >/dev/null 2>&1; rc=$?
+[ $rc -eq 0 ] && ok "set max-heavy=0 exits 0" || bad "set max-heavy=0 exit $rc"
+c="$(cat "$PS/config.json" 2>/dev/null)"
+has "$c" '"maxHeavy":0' "max-heavy written as maxHeavy"
+j="$(run json --project)"
+has "$j" '"key":"max-heavy","value":0,"source":"project"' "json: max-heavy 0 from project"
+run set max-heavy=5 --project >/dev/null 2>&1
+has "$(run json --project)" '"key":"max-heavy","value":5' "max-heavy=5 round trip"
+for bad in max-heavy=-1 max-heavy=abc max-heavy=101 max-heavy=; do
+  run set "$bad" --project >/dev/null 2>&1; rc=$?
+  [ $rc -eq 2 ] && ok "refused: $bad" || bad "accepted: $bad (exit $rc)"
+done
+run reset --project >/dev/null 2>&1
+hasnt "$(cat "$PS/config.json" 2>/dev/null)" 'maxHeavy' "reset removes maxHeavy"
+rm -f "$CFG"; rm -rf "${SS:?}"/*
+
 # ---- skill file ----
 [ -f "$SK" ] && grep -q '^disable-model-invocation: true' "$SK" && ok "skill is user-only" || bad "skill frontmatter"
 grep -q '\${[A-Za-z_]*:-' "$SK" && bad "skill uses \${VAR:-default}" || ok "skill avoids \${VAR:-default}"

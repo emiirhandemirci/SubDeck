@@ -475,6 +475,15 @@ has "$DT" "Verified paths that changed" "verify-delta lists the changed verified
 case "$DT" in *"  a.js"*"previously verified"*"  b.js"*) ok "verify-delta: a.js changed, b.js carried as previously verified" ;; *) bad "verify-delta split wrong: $DT" ;; esac
 has "$(t resume-prompt "$VD")" "Delta re-verify for $VD" "resume-prompt appends the delta when Verified paths exist"
 has "$(t verify-delta "$V0")" "No previous verification" "verify-delta without a previous verification says full run"
+# ---- resume-prompt shows the latest agent handoff (150) ----
+HT="$(t new "handoff task")"; t set "$HT" agent=hand-ag >/dev/null
+hv_out="$(t resume-prompt "$HT")"
+case "$hv_out" in *"Last agent handoff"*) bad "no handoff record: output unchanged" ;; *) ok "no handoff record: output unchanged" ;; esac
+mkdir -p "$ST/handoff"; printf 'Stop: done\nResult: finished the thing\nCommits: abc1234\n' > "$ST/handoff/hand-ag.txt"
+hv_out="$(t resume-prompt "$HT")"
+has "$hv_out" "Last agent handoff:" "resume-prompt: handoff heading"
+has "$hv_out" "Result: finished the thing" "resume-prompt: handoff record text"
+case "$hv_out" in *"Last agent handoff"*"Continue from Next"*) ok "resume-prompt: handoff before the Continue line" ;; *) bad "resume-prompt: handoff order" ;; esac
 echo
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

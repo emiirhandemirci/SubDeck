@@ -241,6 +241,8 @@ The agents, verifier and skills must understand these constraints:
 10. **Reply format.** Final reply max 9 lines (workers: plus `Tested:` and `Not verified:`; verifiers: plus `Verdict:` and `Not verified:`). A `report_too_long` event means re-instruct the agent, not re-read its reply.
 11. **Context packs.** Agents read the context pack named in the prompt first (if present), before the task description.
 12. **Writable scope.** When an agent needs a path outside writable, it ends with `Stop: blocked` naming the path; the manager grants it.
+13. **Findings ledger.** Record a finding you cite with `ledger.sh add <file>:<line> "<finding>"` and run `ledger.sh check` before trusting an old one; stale entries are marked, not silently reused.
+14. **Heavy cap.** At most `SUBDECK_MAX_HEAVY` (default 2, 0 = off) worker/verifier agents run at once; researchers are not counted. When the guard refuses a launch, wait for one to finish instead of retrying.
 
 ## 12b. Autopilot (opt-in)
 

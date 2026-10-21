@@ -1002,6 +1002,16 @@ printf 'not json at all\n{broken' > "$SDIR/events.jsonl"
 rm -f "$SDIR/events.jsonl"
 [ -z "$(hv_call worker-sonnet)" ] && ok "cap: missing state fails open" || bad "cap: missing state blocked"
 
+# ---------- hooks.json matcher: the guard entry must cover the Agent and Task tools (negative control: HEAD~ version) ----------
+gm_of() { awk '/"PreToolUse"/{f=1} f && /"matcher"/{ gsub(/.*"matcher": *"|".*/, ""); print; exit }'; }
+GM_NOW="$(gm_of < "$HERE/../hooks/hooks.json")"
+GM_OLD="Bash|PowerShell|Write|Edit|MultiEdit"
+for tool in Agent Task Bash; do
+  [[ $tool =~ ^($GM_NOW)$ ]] && ok "matcher now fires the guard for $tool" || bad "matcher misses $tool ($GM_NOW)"
+done
+[[ Agent =~ ^($GM_OLD)$ ]] && bad "control: old matcher matched Agent" || ok "control: old matcher did not fire for Agent"
+[[ Task =~ ^($GM_OLD)$ ]] && bad "control: old matcher matched Task" || ok "control: old matcher did not fire for Task"
+
 rm -rf "$H" "$P"
 echo "$PASS passed, $FAIL failed"
 [ $FAIL -eq 0 ]

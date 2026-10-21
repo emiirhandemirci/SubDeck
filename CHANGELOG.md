@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Knowledge ledger and handoff:** `ledger.sh add|check|list|prune` keeps findings (`file:line`) with a hash of the cited lines, so stale ones are detected; every SubagentStop writes a handoff record and `tasks.sh resume-prompt` shows the task's latest one.
+- **Heavy-agent cap:** at most `SUBDECK_MAX_HEAVY` (default 2, 0 = off) worker/verifier agents run at once, checked by the guard on the Agent/Task tool (researchers not counted, fails open); new setting `max-heavy` (config `maxHeavy`).
+- **Quota auto-resume:** a limit-hit autopilot run never strikes; the tool pauses until reset+backoff and the task resumes in its own session, max 3 times per task per day.
+- **PID registry:** SubDeck records every process it starts in `pids.tsv` and stops only those (alive and start time matching), never by name; `autopilot.sh status` lists them.
 - **Read scope:** task briefs carry a required `Read first:` field (3-5 concrete paths) and never say "read the whole repo". Agents read the named files, search before opening anything else, never read a whole repo or tree, and stop with `Stop: blocked` when more than about 10 extra files seem needed.
 - **Verification levels:** `tasks.sh new --verify L0|L1|L2` (default L1). L0 = the manager's narrow check only (no verifier; `done` accepts it without a verdict), L1 = a verifier on the changed paths and their tests, L2 = full verifier plus live run for security, data loss or cross-component work (needs `--verify-reason`). A fix round never runs above the previous level; `tasks.sh verify-level <id>` prints the level. One verifier per wave.
 - **Delta re-verify:** the verifier's reply ends with a machine-readable `Verified paths:` line; `tasks.sh verify --paths ... --level ...` records it, and `tasks.sh verify-delta <id>` (also appended to `resume-prompt`) lists what changed since the verified HEAD so unchanged paths stay "previously verified".

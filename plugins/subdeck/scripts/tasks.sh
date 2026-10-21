@@ -954,7 +954,7 @@ cmd_resume_prompt() {
   cp_open_task "$id"
   cp_entries "$T_BODY"
   last_step "$T_BODY"
-  local ix ts kind hash text agent files dirty rev reverted="" done_c="" rev_c="" lastdirty="" hf
+  local ix ts kind hash text agent files dirty rev reverted="" done_c="" rev_c="" lastdirty="" hf hv
   while IFS="$US" read -r ix ts kind hash text agent files dirty rev; do
     [ -n "$ix" ] || continue
     [ "$kind" = rewind ] && reverted="$reverted $rev"
@@ -981,6 +981,10 @@ cmd_resume_prompt() {
   elif [ -n "$lastdirty" ]; then printf ' (at the last commit): %s\n' "$lastdirty"
   else printf ': none recorded\n'; fi
   printf '\nTranscript: %s\n' "${T_transcript:-(none recorded)}"
+  if [ -n "$T_agent" ] && [ -f "$HERE/ledger.sh" ]; then
+    hv="$(. "$HERE/ledger.sh" 2>/dev/null; ld_handoff "$STATE" "$T_agent")"
+    [ -n "$hv" ] && printf '\nLast agent handoff:\n%s\n' "$hv"
+  fi
   printf '\nContinue from Next. Do not redo finished work. Commit your own paths only.\n'
   vblock_field "$T_BODY" "Verified paths"
   if [ -n "$VBF" ]; then printf '\n'; verify_delta_text || true; fi

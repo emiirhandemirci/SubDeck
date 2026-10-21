@@ -332,6 +332,12 @@ SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds a
 
 **Tested and evidence kinds.** The worker's `Tested: ran \`<cmd>\` -> <result> | not run (why)` line says how a claim was checked. The verifier first runs `scripts/verify-checks.sh --base <commit> --report <file>` (empty test files, a dropped test count, claimed commands missing from the transcript, a missing `Tested:` line) and types each piece of evidence `read`, `executed` or `live`. Claims about runtime behaviour need `executed` or `live`; otherwise they are `unsupported` and escalate.
 
+**Knowledge ledger and handoff record.** `ledger.sh add <file>:<line> "<finding>"` records a finding with a hash of the cited line +-2. Before trusting an old finding run `ledger.sh check`; entries whose lines changed are marked stale (`ledger.sh list`), and `ledger.sh prune --stale` removes them. Only hashes are stored, never file contents. Every SubagentStop also leaves a short handoff record (Stop line, result, commits, detail path) in the state folder; `tasks.sh resume-prompt <id>` shows the latest one for the task's agent under "Last agent handoff".
+
+**Heavy-agent cap.** At most `SUBDECK_MAX_HEAVY` (default 2, 0 = off) worker/verifier agents run at once; researchers are not counted. Set it with `/subdeck:settings set max-heavy=<n>` (config key `maxHeavy`); the environment variable wins. The guard checks the Agent/Task tool before a heavy agent starts and fails open when it cannot tell.
+
+**Quota auto-resume and process registry.** A limit-hit autopilot run never strikes: the tool pauses until reset+backoff and the task resumes in its own session, max 3 times per task per day. SubDeck records every process it starts in `pids.tsv` and stops only those (alive and start time matching), never by name; `autopilot.sh status` lists them.
+
 **Protected resources.** For live things agents must not disturb:
 
 ```
