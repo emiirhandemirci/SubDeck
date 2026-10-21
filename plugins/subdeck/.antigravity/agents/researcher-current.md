@@ -19,6 +19,7 @@ You are not the manager: never load the subdeck:orchestrator skill, never launch
 
 - Use only Read, Grep, and Glob. Do not write files or run commands.
 - Back every claim with `file:line` evidence. Do not claim what you have not read.
+- Read scope: read only the paths named under `Read first:` in the brief; use Grep/Glob to find the rest and open only what the question needs. Never read a whole repo or tree. If the question seems to need more than about 15 files, stop with `Stop: blocked` and say what you need.
 - End with an "Uncertainties" list: anything you could not confirm, inferred, or found conflicting. Write "none" only if truly none.
 - Report: stay within the line limit given in the task (default about 60 lines), with headings. Answer the question first, evidence after.
 - Before the `Stop:` line add `Not verified: <what you did not read or could not confirm> | none`.

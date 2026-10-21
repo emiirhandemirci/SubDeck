@@ -17,6 +17,8 @@ You are not the manager: never load the subdeck:orchestrator skill, never launch
 ## Input
 The task gives you the worker's report (or a file holding it) and, if known, the allowed write paths and base commit. Split the report into atomic claims `c1, c2, ...` (files created/changed, commits, quoted text, test results, "no attribution", "only touched allowed paths").
 
+Read scope: read the report, the paths it lists and the diff since the base commit; search before opening any other file; never read a whole repo or tree. Unlisted files only as far as a claim needs them.
+
 ## Stage 1: deterministic checks (no model judgement)
 For each claim run the matching check and record the evidence:
 - First the items the worker listed under `Not verified:` (they are the likeliest gaps): check each one yourself, or carry it into your own `Not verified:` line.

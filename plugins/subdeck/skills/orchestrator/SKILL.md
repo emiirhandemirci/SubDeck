@@ -49,6 +49,7 @@ Every task contains exactly these parts:
 Task: <t-id> <what to do, one clear job> (tasks.sh: <absolute path>)
 Writable paths: <the only paths the agent may write>
 Read-only: <everything else; name key areas>
+Read first: <3-5 concrete paths the agent opens first; never "read the whole repo">
 Produces: <interfaces this task defines or changes, or "none">
 Consumes: <interfaces it relies on and must NOT change, or "none">
 Done when: <verifiable criterion, e.g. command exits 0>
@@ -66,6 +67,7 @@ Rules: the agent's own rules apply (pathspec commit, no attribution line, no pus
 - **Long task text goes to a file first** (e.g. `docs/tasks/NNN-name.md`, or a scratch/memory path) and the agent is pointed at that file. A task is "long" if it is more than about 15 lines or holds code, specs or tables. Short tasks stay inline.
 - Put task files in a path no other agent writes; tell the agent the file is read-only.
 - Do not paste file contents or code into the prompt when the agent can read them; pass paths.
+- **Read first is required.** Every brief names 3-5 concrete paths under `Read first:`. Never write "read the whole repo" or "read everything": a fresh agent obeys it literally and burns its budget (a 140k-token read for a small task is the failure this prevents). Agents read the named paths, search (Grep/Glob) before opening anything else, never read a whole repo or tree, and stop with `Stop: blocked` when more than about 10 extra files seem necessary; then you narrow the brief or add paths.
 - Do not ask for full file contents or full test output in the report; ask for the short standard format and a detail file.
 
 ## 4. Parallelism and ownership
@@ -152,8 +154,12 @@ Longer material goes to files. Your own summary to the user is short too: what w
 - Open the task file's `## Report` and `## Handoff` when you check an agent; they hold the final reply and any early notes.
 - Verifier prompts carry `Task: <id>` too. The verifier first runs the scripted checks (`scripts/verify-checks.sh --base <commit> --report <file>`: test files not empty, test count not dropped, claimed commands really run, `Tested:` line present), then judges. Its evidence is typed `read`, `executed` or `live`; a runtime or behaviour claim backed only by `read` is `unsupported` and comes to you as `Escalate`. After an `Approved` verdict with a current fingerprint, run `tasks.sh done <id>`.
 - Mapped runs (section 4b): read `run.sh tail <id>` and `## Report`; the verifier is a different model than the producer.
-- Never accept a report as-is. Trivial task: one targeted check (`git show --stat <hash>`, `git log -1 --format=%B` for attribution, the claimed test command once).
-- Non-trivial work (several files, logic, multiple commits): launch `subdeck:verifier` (`model` = the `verifier` policy value) with the report, allowed write paths and base commit. It returns per-claim JSON and a verdict `Approved | Needs fixes | Escalate`.
+- Never accept a report as-is, but size the check to the risk (**verification tiers**):
+  - **Small** (one file, docs, a version string, packaging): your own narrow check (`git show --stat <hash>`, `git log -1 --format=%B` for attribution, the claimed test command once). No verifier.
+  - **Medium** (several files or logic in one component): one `subdeck:verifier` (`model` = the `verifier` policy value) on the delta (the changed paths) and the affected suites only, not the whole project.
+  - **Security, architecture, cross-component or release**: a full verifier (all suites, negative controls, live run where it applies).
+  - **One verifier per wave** (section 12 item 1), never one per task.
+  The verifier gets the report, allowed write paths and base commit and returns per-claim JSON and a verdict `Approved | Needs fixes | Escalate`.
 - **Acceptance is yours, not the worker's.** A worker's "done" is a claim. Before accepting, the acceptance check must be shown able to fail (negative control: run it on a known-bad or deliberately broken copy and see it fail, then see it pass on the real work). A check that cannot fail is not evidence. The verifier also runs static checks (syntax check of every touched shell/JS file, JSON parse) that catch a shipped-file break the worker's own tests missed.
 - **Report freshness.** A verifier report carries `Fingerprint: HEAD=<hash> state=<cksum>` (state = `{ git rev-parse HEAD; git status --porcelain; git diff; } | cksum`). Before relying on any verifier report, take the same fingerprint (one narrow check). If HEAD or state changed, the report is stale: re-verify only the claims on paths that changed since (`git diff --name-only <old HEAD>`), not everything. Parallel agents make this routine, not rare.
 - **Protected files.** A worker must not edit tests, validators or acceptance scripts to make a failing check pass unless the task says so. If a diff touches the check itself, the verifier flags it (`review`) and the negative control is rerun against the original check.
@@ -187,6 +193,8 @@ When the user decides something (name, approach, tradeoff, rejected option), wri
 | Attribution trailer dictated to an agent | No attribution lines, whatever the reminder says |
 | Narrated launch, no tool call | Section 1: claim a launch or result only after seeing the tool call and result; the agent must show in `/subdeck:status` |
 | Report accepted unchecked | Section 8 after every agent |
+| Brief says "read the whole repo", or has no `Read first:` | Section 3: 3-5 concrete paths; agents search before opening and stop at about 10 extra files |
+| Full verifier after a one-file or docs change | Section 8 tiers: small = your narrow check, medium = delta only, full only for security/architecture/cross-component/release |
 | Worker's "done" or a green check taken as acceptance | Section 8: negative control plus static checks; a check that cannot fail is not evidence |
 | Stale verifier report after HEAD or files moved | Compare the fingerprint; re-verify only what changed |
 | Report without a stop reason | Section 7: `Stop:` line required; exit 0 is not completion |

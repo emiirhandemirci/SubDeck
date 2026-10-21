@@ -48,4 +48,16 @@ O="$HERE/../skills/orchestrator/SKILL.md"
 for pat in 'Contract first' 'Produces: ' 'Consumes: ' 'Integration verification' 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' 'approval of X is not approval of Y' 'Report freshness' 'Stop reason' 'negative control'; do
   if grep -q "$pat" "$O"; then ok "orchestrator mentions: $pat"; else bad "orchestrator lacks: $pat"; fi
 done
+# 149: read scope rules (workers rule 14, researchers, verifiers), Read first in the template, verification tiers
+for f in agents/worker-sonnet.md agents/worker-opus.md agents/worker-current.md scripts/roles/worker.md; do
+  if grep -qF '14. **Read scope:**' "$HERE/../$f" && grep -qF 'Never read a whole repo or tree' "$HERE/../$f" && grep -qF 'more than about 10 files' "$HERE/../$f"; then ok "$f has the read-scope rule"; else bad "$f lacks the read-scope rule"; fi
+done
+for f in agents/researcher.md agents/researcher-current.md scripts/roles/researcher.md agents/verifier.md agents/verifier-current.md scripts/roles/verifier.md; do
+  if grep -qF 'Never read a whole repo or tree' "$HERE/../$f" || grep -qF 'never read a whole repo or tree' "$HERE/../$f"; then ok "$f has the read-scope rule"; else bad "$f lacks the read-scope rule"; fi
+done
+# negative control: the check must fail on a copy without the rule
+NC="$(mktemp)"; grep -vF 'Read scope' "$HERE/../agents/worker-sonnet.md" > "$NC"
+if grep -qF '14. **Read scope:**' "$NC"; then bad "read-scope negative control did not fail"; else ok "read-scope check fails without the rule (negative control)"; fi
+rm -f "$NC"
+if grep -qF 'Read first: <3-5 concrete paths' "$O" && grep -qF 'verification tiers' "$O" && grep -qF 'Small** (one file' "$O"; then ok "orchestrator has Read first and the verification tiers"; else bad "orchestrator lacks Read first or tiers"; fi
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" -eq 0 ]

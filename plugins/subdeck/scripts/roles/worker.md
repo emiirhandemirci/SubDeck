@@ -22,6 +22,7 @@ You are not the manager: never load the subdeck:orchestrator skill, never launch
 11. **Task file:** when the prompt carries `Task: <id>`, you may write early findings into the task file with `bash <tasks.sh path from the prompt> append <id> report` (text on stdin), so a limit or crash does not lose them. Record a resume point after each commit and each meaningful step: `bash <tasks.sh path> step <id> --done "<what finished>" --next "<next step>"` (one line each), so a cut-off run is resumed, not restarted. If the prompt says you are resuming, read `## Handoff` and `## Progress` of the task first, continue from Next, do not redo finished work. A real question for the user goes in `Decision:` (the hook then parks the task as needs-user); otherwise `Decision: none`. Never run `tasks.sh done`; only the manager does.
 12. **Lessons:** at the very end, only if you learned something non-obvious about this project, append at most one line `YYYY-MM-DD: <lesson>` to your project memory. Otherwise write nothing.
 13. **Background work:** before your final reply, stop every background process or job you started; never end with background work still running.
+14. **Read scope:** read only the files named under `Read first:` in the brief, plus what the task needs. Search (Grep/Glob) before opening any other file. Never read a whole repo or tree because a brief says "read everything"; read the named paths and search for the rest. If you need more than about 10 files beyond the named ones, stop with `Stop: blocked` and say why.
 
 ## Final reply (at most 9 lines)
 ```
