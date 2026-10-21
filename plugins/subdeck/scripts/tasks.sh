@@ -3,9 +3,12 @@
 # Bash 3.2+, bash + awk + sed + cksum (+ git for the handoff note). No jq/node.
 #
 # Usage: tasks.sh [--project <dir>] <command> ...
-#   new "<title>" [--owner T] [--writable a,b] [--blocked-by t-x,t-y] [--task <text>|--task-file <f>] [--done-when <text>] [--pack <wave>]   -> id
+#   new "<title>" [--owner T] [--writable a,b] [--blocked-by t-x,t-y] [--task <text>|--task-file <f>] [--done-when <text>] [--pack <wave>] [--verify L0|L1|L2] [--verify-reason <text>] [--budget <tokens>]   -> id
+#                              --verify: verification level (default L1; L0 = manager's narrow check only, L1 = verifier on changed paths + their
+#                              tests, L2 = full verifier + live run; L2 needs --verify-reason, one line); --budget: token budget (Desk marks an overrun)
 #   set <id> key=value ...     keys: title owner agent session transcript blocked-by writable status (not done, not needs-user) strikes
-#                              role tool model branch worktree run (headless runs, written by run.sh), pack
+#                              role tool model branch worktree run (headless runs, written by run.sh), pack, verify (L2 also needs verify-reason=),
+#                              verify-reason, budget (tokens; empty clears)
 #   append <id> <task|done-when|report|verification|handoff> [--label <text>]
 #                              text on stdin, added as a "### <time> note" block (or "### <time> <label>")
 #   step <id> [--done "<what finished>"] [--next "<next step>"]   resume point: appends a timestamped block to "## Progress"
@@ -21,8 +24,13 @@
 #                              the same runId twice is a no-op; prints the strike count (autopilot: stuck, orphan, failed runs)
 #   interrupt <id> --reason <word> [--run <runId>]   in-progress/blocked -> interrupted with a Handoff note (other status: exit 3)
 #   link <id> <agentId> [--session <sid>] [--transcript <abs>]   bind an agent to a task; archives that agent's auto task
-#   verify <id>[,<id>...] --verdict Approved|Needs-fixes|Escalate --by <agentId> [--fingerprint <fp>]   (or --covers <ids>)
-#                              one Verification block per task, covers = all ids of the call
+#   verify <id>[,<id>...] --verdict Approved|Needs-fixes|Escalate --by <agentId> [--fingerprint <fp>] [--level L0|L1|L2] [--paths a,b]   (or --covers <ids>)
+#                              one Verification block per task, covers = all ids of the call; --paths records the machine-readable
+#                              "Verified paths:" line that verify-delta uses; --level records the level that was run
+#   verify-level <id>          the level the next verification of the task runs at: the task's level (default L1); a fix round (after a
+#                              Needs fixes verdict) never runs higher than the previous level, and after L2 it is L1
+#   verify-delta <id>          text for a delta re-verify: previous verdict and fingerprint, Verified paths, what changed since that HEAD
+#                              (git diff --name-only), the paths to carry as "previously verified"; also appended to resume-prompt
 #   grant <id> <path>[,<path>...] --reason <text>   extend the task's writable paths (grants); relative, no ..
 #   pack <wave> --from <file> [--section <text>]... [--map <path>,..] [--decisions <file>] [--tasks <id>,..]   -> pack path
 #   writable <id> | writable --agent <agentId> [--with-id]   effective writable (writable + grants), one path per line
@@ -217,7 +225,7 @@ load_task() {
   local line state=0 key val
   T_id=""; T_title=""; T_status=""; T_owner=""; T_agent=""; T_session=""; T_transcript=""
   T_blocked_by=""; T_writable=""; T_created=""; T_updated=""; T_EXTRA=""; T_BODY=""; T_INVALID=0
-  T_role=""; T_tool=""; T_model=""; T_branch=""; T_worktree=""; T_run=""; T_auto=""; T_pack=""; T_grants=""; T_covers=""; T_question=""; T_strikes=""
+  T_role=""; T_tool=""; T_model=""; T_branch=""; T_worktree=""; T_run=""; T_auto=""; T_pack=""; T_grants=""; T_covers=""; T_question=""; T_strikes=""; T_verify=""; T_vreason=""; T_budget=""
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     if [ "$state" = 0 ]; then
@@ -235,6 +243,9 @@ load_task() {
           auto) [ "$val" = true ] && T_auto=true ;;
           pack) T_pack="$val" ;;
           strikes) [[ $val =~ ^[0-9]{1,6}$ ]] && T_strikes=$((10#$val)) ;;
+          verify) [[ $val =~ ^L[012]$ ]] && T_verify="$val" ;;
+          verify-reason) T_vreason="$val" ;;
+          budget) [[ $val =~ ^[0-9]{1,12}$ ]] && T_budget=$((10#$val)) ;;
           id|title|status|owner|agent|session|transcript|created|updated|role|tool|model|branch|worktree|run|question) printf -v "T_$key" '%s' "$val" ;;
           *) T_EXTRA="$T_EXTRA$key: $val$NL" ;;
         esac
@@ -275,6 +286,9 @@ write_task() {
     if [ -n "$T_strikes" ] && [ "$T_strikes" != 0 ]; then printf 'strikes: %s\n' "$T_strikes"; fi
     if [ "$T_auto" = true ]; then printf 'auto: true\n'; fi
     if [ -n "$T_pack" ]; then printf 'pack: %s\n' "$T_pack"; fi
+    if [ -n "$T_verify" ]; then printf 'verify: %s\n' "$T_verify"; fi
+    if [ -n "$T_vreason" ]; then printf 'verify-reason: %s\n' "$T_vreason"; fi
+    if [ -n "$T_budget" ] && [ "$T_budget" != 0 ]; then printf 'budget: %s\n' "$T_budget"; fi
     if [ -n "$T_grants" ]; then join_list "$T_grants"; printf 'grants: [%s]\n' "$JOINED"; fi
     if [ -n "$T_covers" ]; then join_list "$T_covers"; printf 'covers: [%s]\n' "$JOINED"; fi
     printf 'created: %s\n' "$T_created"
@@ -419,7 +433,7 @@ collect() {
       load_task "$f" || continue
       local title="${T_title//$TAB/ }"
       latest_verdict "$T_BODY"
-      rows="$rows$T_updated$US$b$US$T_status$US$T_owner$US$T_agent$US$T_session$US$T_transcript$US$T_blocked_by$US$T_writable$US$T_created$US$arch$US$T_INVALID$US$f$US$T_role$US$T_tool$US$T_model$US$T_branch$US$T_worktree$US$T_run$US$T_auto$US$T_pack$US$T_grants$US$T_covers$US$LV$US$T_question$US${T_strikes:-0}$US$LV_NF$US$title$NL"
+      rows="$rows$T_updated$US$b$US$T_status$US$T_owner$US$T_agent$US$T_session$US$T_transcript$US$T_blocked_by$US$T_writable$US$T_created$US$arch$US$T_INVALID$US$f$US$T_role$US$T_tool$US$T_model$US$T_branch$US$T_worktree$US$T_run$US$T_auto$US$T_pack$US$T_grants$US$T_covers$US$LV$US$T_question$US${T_strikes:-0}$US$LV_NF$US$T_verify$US${T_budget:-0}$US$title$NL"
     done
   done
   if [ -n "$rows" ]; then ROWS="$(printf '%s' "$rows" | sort -t "$US" -k1,1r -k2,2)"; else ROWS=""; fi
@@ -432,12 +446,12 @@ json_list() { # comma list -> JL ["a","b"]
 }
 JSON_TAIL=""
 print_rows() { # mode (0 terse, 1 json, 2 tsv), reads ROWS
-  local upd id st ow ag se tr bl wr cr arch inv file rl tl ml br wt rn au pk gr cv vd qs sk nf title first=1 s
+  local upd id st ow ag se tr bl wr cr arch inv file rl tl ml br wt rn au pk gr cv vd qs sk nf vf bg title first=1 s
   if [ "$1" = 1 ]; then
     jesc "$DIR"; printf '{"version":1,"dir":"%s","tasks":[' "$JESC"
   fi
   [ -n "$ROWS" ] || { [ "$1" = 1 ] && printf ']%s}\n' "$JSON_TAIL"; return 0; }
-  while IFS="$US" read -r upd id st ow ag se tr bl wr cr arch inv file rl tl ml br wt rn au pk gr cv vd qs sk nf title; do
+  while IFS="$US" read -r upd id st ow ag se tr bl wr cr arch inv file rl tl ml br wt rn au pk gr cv vd qs sk nf vf bg title; do
     if [ "$1" = 1 ]; then
       [ "$first" = 1 ] || printf ','
       first=0
@@ -468,6 +482,8 @@ print_rows() { # mode (0 terse, 1 json, 2 tsv), reads ROWS
       jesc "$vd"; printf '"verdict":"%s",' "$JESC"
       jesc "$qs"; printf '"question":"%s",' "$JESC"
       printf '"strikes":%s,"needsFixes":%s,' "${sk:-0}" "${nf:-0}"
+      printf '"verify":"%s",' "${vf:-L1}"
+      if [ "${bg:-0}" != 0 ]; then printf '"budget":%s,' "$bg"; else printf '"budget":null,'; fi
       jesc "$file"; printf '"file":"%s"}' "$JESC"
     elif [ "$1" = 2 ]; then
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$st" "$ow" "$ag" "$upd" "$title"
@@ -487,13 +503,16 @@ need_lock() {
   lock_acquire || die 4 "task lock busy ($DIR/.lock); try again"
 }
 cmd_new() {
-  local title="" owner="" writable="" blocked="" task="" done_when="" have_task=0 a pack=""
+  local title="" owner="" writable="" blocked="" task="" done_when="" have_task=0 a pack="" nverify="" nvreason="" nbudget=""
   while [ ${#ARGV[@]} -gt 0 ]; do
     a="${ARGV[0]}"
     case "$a" in
-      --owner|--writable|--blocked-by|--task|--task-file|--done-when|--pack)
+      --owner|--writable|--blocked-by|--task|--task-file|--done-when|--pack|--verify|--verify-reason|--budget)
         [ ${#ARGV[@]} -ge 2 ] || die 2 "$a needs a value"
         case "$a" in
+          --verify) nverify="${ARGV[1]}"; [[ $nverify =~ ^L[012]$ ]] || die 2 "--verify needs L0, L1 or L2" ;;
+          --verify-reason) nvreason="${ARGV[1]}" ;;
+          --budget) nbudget="${ARGV[1]}"; [[ $nbudget =~ ^[1-9][0-9]{0,11}$ ]] || die 2 "--budget needs a whole number of tokens (> 0)" ;;
           --owner) owner="${ARGV[1]}" ;;
           --writable) writable="${ARGV[1]}" ;;
           --blocked-by) blocked="${ARGV[1]}" ;;
@@ -508,8 +527,14 @@ cmd_new() {
     esac
   done
   sanitize_title "$title"; title="$TITLE_OUT"
-  [ -n "$title" ] || die 2 'usage: new "<title>" [--owner T] [--writable a,b] [--blocked-by t-x,t-y] [--task <text>|--task-file <f>] [--done-when <text>] [--pack <wave>]'
+  [ -n "$title" ] || die 2 'usage: new "<title>" [--owner T] [--writable a,b] [--blocked-by t-x,t-y] [--task <text>|--task-file <f>] [--done-when <text>] [--pack <wave>] [--verify L0|L1|L2 [--verify-reason <text>]] [--budget <tokens>]'
   has_nl "$owner" && die 2 "owner must be one line"
+  if [ "$nverify" = L2 ]; then
+    has_nl "$nvreason" && die 2 "--verify-reason must be one line"
+    trim "$nvreason"; nvreason="$TRIMMED"
+    [ -n "$nvreason" ] || die 2 "--verify L2 needs --verify-reason <one line> (why the full verifier and live run are worth it)"
+    [ "${#nvreason}" -le 200 ] || die 2 "--verify-reason too long (max 200)"
+  else nvreason=""; fi
   has_nl "$writable" && die 2 "writable must be one line"
   has_nl "$blocked" && die 2 "blocked-by must be one line"
   parse_list "$writable"; writable="$LIST_OUT"; valid_list "$writable" || die 2 "writable items may not contain [ or ]"
@@ -518,7 +543,7 @@ cmd_new() {
   new_id "$title" || { lock_release; die 2 "could not generate a free id"; }
   local cand="$NEWID"
   T_id="$cand"; T_title="$title"; T_status=open; T_owner="$owner"; T_agent=""; T_session=""; T_transcript=""; T_question=""; T_strikes=""
-  T_blocked_by="$blocked"; T_writable="$writable"; T_pack="$pack"; now_iso_to T_created; T_updated="$T_created"; T_EXTRA=""
+  T_blocked_by="$blocked"; T_writable="$writable"; T_pack="$pack"; T_verify="$nverify"; T_vreason="$nvreason"; T_budget="$nbudget"; now_iso_to T_created; T_updated="$T_created"; T_EXTRA=""
   T_BODY="## Task$NL"
   if [ "$have_task" = 1 ]; then T_BODY="$T_BODY$(printf '%s' "$task" | clean_text)$NL"; fi
   T_BODY="$T_BODY${NL}## Done when$NL"
@@ -535,7 +560,7 @@ cmd_set() {
   ARGV=("${ARGV[@]:1}")
   [ ${#ARGV[@]} -gt 0 ] || die 2 "usage: set <id> key=value ..."
   local S_title="" S_owner="" S_agent="" S_session="" S_transcript="" S_blocked_by="" S_writable="" S_status=""
-  local S_role="" S_tool="" S_model="" S_branch="" S_worktree="" S_run="" S_pack="" S_strikes=""
+  local S_role="" S_tool="" S_model="" S_branch="" S_worktree="" S_run="" S_pack="" S_strikes="" S_verify="" S_vreason="" S_budget=""
   local HAS=" "
   for pair in "${ARGV[@]}"; do
     case "$pair" in *=*) ;; *) die 2 "expected key=value, got '$pair'" ;; esac
@@ -555,7 +580,10 @@ cmd_set() {
         status_ok "$v" || die 2 "invalid status '$v' (open in-progress blocked interrupted review)"
         S_status="$v" ;;
       strikes) trim "$v"; [[ $TRIMMED =~ ^[0-9]{1,6}$ ]] || die 2 "strikes must be a whole number"; S_strikes=$((10#$TRIMMED)) ;;
-      *) die 2 "cannot set '$k' (keys: title owner agent session transcript blocked-by writable status role tool model branch worktree run pack strikes)" ;;
+      verify) trim "$v"; [[ $TRIMMED =~ ^L[012]$ ]] || die 2 "verify must be L0, L1 or L2"; S_verify="$TRIMMED" ;;
+      verify-reason) has_nl "$v" && die 2 "verify-reason must be one line"; trim "$v"; [ "${#TRIMMED}" -le 200 ] || die 2 "verify-reason too long (max 200)"; S_vreason="$TRIMMED" ;;
+      budget) trim "$v"; if [ -z "$TRIMMED" ]; then S_budget=0; else [[ $TRIMMED =~ ^[1-9][0-9]{0,11}$ ]] || die 2 "budget must be a whole number of tokens (empty clears)"; S_budget="$TRIMMED"; fi ;;
+      *) die 2 "cannot set '$k' (keys: title owner agent session transcript blocked-by writable status role tool model branch worktree run pack strikes verify verify-reason budget)" ;;
     esac
     HAS="$HAS$k "
   done
@@ -584,6 +612,13 @@ cmd_set() {
   case "$HAS" in *" run "*) T_run="$S_run" ;; esac
   case "$HAS" in *" pack "*) T_pack="$S_pack" ;; esac
   case "$HAS" in *" strikes "*) T_strikes="$S_strikes" ;; esac
+  case "$HAS" in *" verify "*) T_verify="$S_verify" ;; esac
+  case "$HAS" in *" verify-reason "*) T_vreason="$S_vreason" ;; esac
+  case "$HAS" in *" budget "*) if [ "$S_budget" = 0 ]; then T_budget=""; else T_budget="$S_budget"; fi ;; esac
+  case "$HAS" in *" verify "*)
+    if [ "$T_verify" = L2 ] && [ -z "$T_vreason" ]; then lock_release; die 2 "verify=L2 needs a one-line verify-reason= (why the full verifier and live run are worth it)"; fi
+    if [ "$T_verify" != L2 ]; then T_vreason=""; fi ;;
+  esac
   T_id="$id"
   write_task "$FOUND" || { lock_release; die 2 "could not write $FOUND"; }
   local ag="$T_agent" se="$T_session" nw="$T_status"
@@ -635,7 +670,8 @@ cmd_done() {
     fi
     if [ "$force" = 0 ] && [ "$T_auto" != true ]; then
       latest_verdict "$T_BODY"
-      if [ "$LV" != Approved ]; then
+      # L0 (the manager's narrow check only): no verifier ran, so no verdict is needed; a verdict that exists still has to be Approved
+      if [ "$LV" != Approved ] && ! { [ "$T_verify" = L0 ] && [ -z "$LV" ]; }; then
         lock_release; die 3 "refused: latest verdict of $id is '${LV:-none}', not Approved (use --force to override)"
       fi
     fi
@@ -842,6 +878,68 @@ cp_handoff_files() {
     inl && /^    / && n < 50 { n++; f[n] = substr($0, 5) }
     END { for (i = 1; i <= n; i++) print f[i] }'
 }
+# vblock_field BODY KEY -> VBF: the value of KEY (Level, Fingerprint, Verified paths) in the LAST Verification block that has one
+vblock_field() {
+  VBF="$(get_section "$1" "## Verification" | awk -v k="$2" '
+    /^###[ \t]/ { v = "" ; next }
+    index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^[ \t]+/, "", v); sub(/\r$/, "", v); if (v != "") last = v }
+    END { print last }')"
+}
+# cmd_verify_level ID : the level the next verification runs at
+cmd_verify_level() {
+  local id="${ARGV[0]:-}" base prev
+  [ -n "$id" ] || die 2 "usage: verify-level <id>"
+  cp_open_task "$id"
+  base="${T_verify:-L1}"
+  latest_verdict "$T_BODY"
+  if [ "$LV" = "Needs fixes" ]; then
+    # fix round: never higher than the previous level; after L2 it is L1
+    vblock_field "$T_BODY" Level; prev="${VBF:-$base}"
+    [ "$prev" = L2 ] && prev=L1
+    case "$base$prev" in
+      L0*|*L0) base=L0 ;;
+      *) base=L1 ;;
+    esac
+  fi
+  printf '%s\n' "$base"
+}
+# verify_delta_text : prints the delta re-verify text for the loaded task (T_*); returns 1 when there is no previous verification with a fingerprint
+verify_delta_text() {
+  local fp old paths dir="$PROJECT" changed p keep="" chg="" verdict
+  vblock_field "$T_BODY" Fingerprint; fp="$VBF"
+  vblock_field "$T_BODY" "Verified paths"; paths="$VBF"
+  [[ $fp =~ HEAD=([0-9a-f]{4,40}) ]] || return 1
+  old="${BASH_REMATCH[1]}"
+  latest_verdict "$T_BODY"; verdict="$LV"
+  [ -n "$T_worktree" ] && [ -d "$T_worktree" ] && dir="$T_worktree"
+  changed="$({ git -C "$dir" diff --name-only "$old" 2>/dev/null; git -C "$dir" ls-files --others --exclude-standard 2>/dev/null; } | sort -u)"
+  printf 'Delta re-verify for %s (previous verdict: %s, fingerprint: %s)\n' "$T_id" "${verdict:-none}" "$fp"
+  printf 'Diff since the verified HEAD: git -C "%s" diff %s\n' "$dir" "$old"
+  printf 'Changed since then:\n'
+  if [ -n "$changed" ]; then printf '%s\n' "$changed" | sed 's/^/  /'; else printf '  (nothing)\n'; fi
+  if [ -n "$paths" ]; then
+    local arr
+    IFS=, read -ra arr <<< "$paths"
+    for p in "${arr[@]}"; do
+      trim "$p"; p="$TRIMMED"; [ -n "$p" ] || continue
+      if printf '%s\n' "$changed" | grep -qxF -- "$p"; then chg="$chg  $p$NL"; else keep="$keep  $p$NL"; fi
+    done
+    printf 'Verified paths that changed (re-verify these and their tests only):\n'
+    if [ -n "$chg" ]; then printf '%s' "$chg"; else printf '  (none)\n'; fi
+    printf 'Unchanged verified paths (carry them as "previously verified", do not re-check):\n'
+    if [ -n "$keep" ]; then printf '%s' "$keep"; else printf '  (none)\n'; fi
+  else
+    printf 'No "Verified paths:" line was recorded: re-verify the changed paths and the claims that touch them.\n'
+  fi
+  return 0
+}
+cmd_verify_delta() {
+  local id="${ARGV[0]:-}"
+  [ -n "$id" ] || die 2 "usage: verify-delta <id>"
+  cp_open_task "$id"
+  verify_delta_text || { printf 'No previous verification with a fingerprint for %s: run the verification in full at level %s.\n' "$id" "${T_verify:-L1}"; }
+  return 0
+}
 cmd_resume_prompt() {
   local id="" a
   while [ ${#ARGV[@]} -gt 0 ]; do
@@ -884,6 +982,8 @@ cmd_resume_prompt() {
   else printf ': none recorded\n'; fi
   printf '\nTranscript: %s\n' "${T_transcript:-(none recorded)}"
   printf '\nContinue from Next. Do not redo finished work. Commit your own paths only.\n'
+  vblock_field "$T_BODY" "Verified paths"
+  if [ -n "$VBF" ]; then printf '\n'; verify_delta_text || true; fi
   return 0
 }
 cmd_rewind() {
@@ -1172,13 +1272,15 @@ cmd_link() {
   return 0
 }
 cmd_verify() {
-  local ids="" verdict="" by="" fp="-" a V
+  local ids="" verdict="" by="" fp="-" a V vlevel="" vpaths=""
   while [ ${#ARGV[@]} -gt 0 ]; do
     a="${ARGV[0]}"
     case "$a" in
-      --covers|--verdict|--by|--fingerprint)
+      --covers|--verdict|--by|--fingerprint|--level|--paths)
         [ ${#ARGV[@]} -ge 2 ] || die 2 "$a needs a value"
         case "$a" in
+          --level) vlevel="${ARGV[1]}"; [[ $vlevel =~ ^L[012]$ ]] || die 2 "--level needs L0, L1 or L2" ;;
+          --paths) vpaths="${ARGV[1]}"; has_nl "$vpaths" && die 2 "--paths must be one line"; parse_list "$vpaths"; vpaths="$LIST_OUT"; valid_list "$vpaths" || die 2 "--paths items may not contain [ or ]" ;;
           --covers) ids="$ids${ids:+,}${ARGV[1]}" ;;
           --verdict) verdict="${ARGV[1]}" ;;
           --by) by="${ARGV[1]}" ;;
@@ -1214,7 +1316,10 @@ cmd_verify() {
   for id in "${list[@]}"; do
     find_file "$id"; load_task "$FOUND"
     T_id="$id"; T_covers="$covc"
-    append_block "## Verification" "### $(now_iso) verify ($by)${NL}Verdict: $V${NL}Fingerprint: $fp${NL}Covers: $cov"
+    local vx=""
+    [ -n "$vlevel" ] && vx="${NL}Level: $vlevel"
+    if [ -n "$vpaths" ]; then join_list "$vpaths"; vx="$vx${NL}Verified paths: ${JOINED}"; fi
+    append_block "## Verification" "### $(now_iso) verify ($by)${NL}Verdict: $V${NL}Fingerprint: $fp${NL}Covers: $cov$vx"
     write_task "$FOUND" || { lock_release; die 2 "could not write $FOUND"; }
   done
   lock_release
@@ -1915,7 +2020,7 @@ hook_main() {
 # ---------- dispatch ----------
 run_cli() {
   case "$CMD" in
-    "") die 2 "usage: tasks.sh [--project <dir>] <new|set|append|step|history|resume-prompt|rewind|ask|answer|strike|interrupt|link|verify|grant|pack|writable|done|list|ready|show|dir|hook> ..." ;;
+    "") die 2 "usage: tasks.sh [--project <dir>] <new|set|append|step|history|resume-prompt|rewind|ask|answer|strike|interrupt|link|verify|verify-level|verify-delta|grant|pack|writable|done|list|ready|show|dir|hook> ..." ;;
   esac
   resolve_dir
   case "$CMD" in
@@ -1924,6 +2029,8 @@ run_cli() {
     append) cmd_append ;;
     link) cmd_link ;;
     verify) cmd_verify ;;
+    verify-level) cmd_verify_level ;;
+    verify-delta) cmd_verify_delta ;;
     grant) cmd_grant ;;
     pack) cmd_pack ;;
     writable) cmd_writable ;;

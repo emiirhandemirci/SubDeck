@@ -146,7 +146,7 @@ t set "$A" status=open
 printf 'Verdict: Approved\n' | t append "$A" verification; t done "$A"
 check "$(t ready --tsv | cut -f1 | tr '\n' ' ')" "$B " "ready: archived blocker counts as done"
 JS="$(t list --json)"
-check "$(printf '%s' "$JS" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(j.version+" "+j.tasks.length+" "+j.dir.endsWith("/tasks")+" "+Object.keys(j.tasks[0]).join(","))')" "1 2 true id,title,status,owner,agent,session,transcript,blockedBy,writable,role,tool,model,branch,worktree,run,created,updated,archived,invalid,auto,pack,grants,covers,verdict,question,strikes,needsFixes,file" "list --json shape"
+check "$(printf '%s' "$JS" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(j.version+" "+j.tasks.length+" "+j.dir.endsWith("/tasks")+" "+Object.keys(j.tasks[0]).join(","))')" "1 2 true id,title,status,owner,agent,session,transcript,blockedBy,writable,role,tool,model,branch,worktree,run,created,updated,archived,invalid,auto,pack,grants,covers,verdict,question,strikes,needsFixes,verify,budget,file" "list --json shape"
 check "$(t ready --json | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(j.tasks.map(x=>x.id).join())')" "$B" "ready --json"
 check "$(t list --all --json | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(j.tasks.filter(x=>x.archived).length)')" "1" "list --all --json marks archived"
 rm -rf "$W/empty"; check "$(SUBDECK_TASKS_DIR="$W/empty" t list --json)" "{\"version\":1,\"dir\":\"$W/empty\",\"tasks\":[]}" "empty dir -> empty tasks array"
@@ -445,6 +445,36 @@ t ask "$S2" --by autopilot "Q1?"; t set "$S2" status=open 2>/dev/null; check "$?
 t done "$S2" 2>/dev/null; check "$?" "3" "done on a needs-user task: exit 3"
 SUBDECK_AUTOPILOT=1 t answer "$S2" "x" 2>/dev/null; check "$?" "3" "answer refused under SUBDECK_AUTOPILOT=1"
 SUBDECK_AUTOPILOT=1 t rewind "$S2" "#1" --apply 2>/dev/null; check "$?" "3" "rewind --apply refused under SUBDECK_AUTOPILOT=1"
+
+# ---- 149: verify level, budget, verify-level, verify-delta ----
+V0="$(t new "lvl default")"
+check "$(t verify-level "$V0")" "L1" "verify-level defaults to L1"
+t new "no reason" --verify L2 >/dev/null 2>&1; check "$?" "2" "new --verify L2 without a reason is refused"
+t new "bad level" --verify L3 >/dev/null 2>&1; check "$?" "2" "new --verify L3 is refused"
+t new "bad budget" --budget abc >/dev/null 2>&1; check "$?" "2" "new --budget abc is refused"
+V2="$(t new "lvl two" --verify L2 --verify-reason "touches auth" --budget 5000)"
+check "$(t verify-level "$V2")" "L2" "L2 task runs at L2"
+has "$(t list --json)" '"verify":"L2","budget":5000' "list --json carries verify and budget"
+has "$(t list --json)" '"verify":"L1","budget":null' "list --json defaults: L1, null budget"
+t set "$V0" verify=L2 >/dev/null 2>&1; check "$?" "2" "set verify=L2 without verify-reason= is refused"
+t set "$V0" verify=L2 verify-reason="data loss risk"; check "$(t verify-level "$V0")" "L2" "set verify=L2 with a reason"
+t set "$V0" budget=1200; has "$(t show "$V0")" "budget: 1200" "set budget"
+t set "$V0" budget=; case "$(t show "$V0")" in *"budget:"*) bad "empty budget clears" ;; *) ok "empty budget clears" ;; esac
+t verify "$V2" --verdict Needs-fixes --by ag1 --level L2 --fingerprint "HEAD=abc1234 state=9" --paths src/a.js,src/b.js
+check "$(t verify-level "$V2")" "L1" "fix round after L2 runs at L1"
+VL0="$(t new "lvl zero" --verify L0)"
+t done "$VL0" >/dev/null 2>&1; check "$?" "0" "L0 task can be done without a verifier verdict"
+t done "$V0" >/dev/null 2>&1; check "$?" "3" "L1/L2 task still needs an Approved verdict (negative control)"
+DG="$P/dg"; mkdir -p "$DG"; ( cd "$DG" && git init -q && git config user.email t@t && git config user.name t && echo a > a.js && echo b > b.js && git add . && git commit -qm one ) >/dev/null 2>&1
+DH="$(git -C "$DG" rev-parse --short HEAD)"
+VD="$(t new "delta")"; t set "$VD" worktree="$DG"
+t verify "$VD" --verdict Approved --by ag2 --level L1 --fingerprint "HEAD=$DH state=1" --paths a.js,b.js
+( cd "$DG" && echo more >> a.js && git commit -qam two ) >/dev/null 2>&1
+DT="$(t verify-delta "$VD")"
+has "$DT" "Verified paths that changed" "verify-delta lists the changed verified paths"
+case "$DT" in *"  a.js"*"previously verified"*"  b.js"*) ok "verify-delta: a.js changed, b.js carried as previously verified" ;; *) bad "verify-delta split wrong: $DT" ;; esac
+has "$(t resume-prompt "$VD")" "Delta re-verify for $VD" "resume-prompt appends the delta when Verified paths exist"
+has "$(t verify-delta "$V0")" "No previous verification" "verify-delta without a previous verification says full run"
 echo
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
