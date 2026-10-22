@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.2 - 2026-10-22
+
 - **Knowledge ledger and handoff:** `ledger.sh add|check|list|prune` keeps findings (`file:line`) with a hash of the cited lines, so stale ones are detected; every SubagentStop writes a handoff record and `tasks.sh resume-prompt` shows the task's latest one.
 - **Heavy-agent cap:** at most `SUBDECK_MAX_HEAVY` (default 2, 0 = off) worker/verifier agents run at once, checked by the guard on the Agent/Task tool (researchers not counted, fails open); new setting `max-heavy` (config `maxHeavy`).
 - **Quota auto-resume:** a limit-hit autopilot run never strikes; the tool pauses until reset+backoff and the task resumes in its own session, max 3 times per task per day.
