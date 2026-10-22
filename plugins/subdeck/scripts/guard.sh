@@ -248,6 +248,9 @@ function danger_target(t,  p) {
 
 # ---------- shell tokenizer: words per segment, split on ; & | newline ( ) $( ` ----------
 function newseg() { NSEG++; CS = NSEG; NW = 0 }
+# kill-by-name linkage: segments joined by a pipe or by a command substitution share a group (union-find)
+function kfind(x) { while ((x in KPAR) && KPAR[x] != x) x = KPAR[x]; return x }
+function kunion(a, b) { a = kfind(a); b = kfind(b); if (a != b) KPAR[b] = a }
 function endseg(d) { if (NW > 0 || RN[d, CS] > 0) { WC[d, CS] = NW; NSG[d]++; SEGS[d, NSG[d]] = CS } newseg() }
 function flush(d) {
   if (HASW || WD != "") {
@@ -259,11 +262,11 @@ function flush(d) {
 }
 function push(t, d) {
   SP++; ST[SP] = t
-  if (t == "c" || t == "b") { SVC[SP] = CS; SVN[SP] = NW; SVW[SP] = WD; SVP[SP] = PD; PD = 0; WD = ""; HASW = 0; newseg() }
+  if (t == "c" || t == "b") { SVF[SP] = NSEG + 1; SVC[SP] = CS; SVN[SP] = NW; SVW[SP] = WD; SVP[SP] = PD; PD = 0; WD = ""; HASW = 0; newseg() }
 }
-function pop(d,  t) {
+function pop(d,  t, kk) {
   t = ST[SP]
-  if (t == "c" || t == "b") { flush(d); endseg(d); CS = SVC[SP]; NW = SVN[SP]; WD = SVW[SP] "$()"; HASW = 1; PD = SVP[SP] }
+  if (t == "c" || t == "b") { flush(d); endseg(d); for (kk = SVF[SP]; kk <= NSEG; kk++) kunion(SVC[SP], kk); CS = SVC[SP]; NW = SVN[SP]; WD = SVW[SP] "$()"; HASW = 1; PD = SVP[SP] }
   SP--
 }
 function skiphd(cmd, i, n,  k, e, line) {
@@ -279,7 +282,7 @@ function skiphd(cmd, i, n,  k, e, line) {
   HDN = 0
   return i
 }
-function tokenize(cmd, d,  n, i, c, nx, m) {
+function tokenize(cmd, d,  n, i, c, nx, m, kp) {
   n = length(cmd); SP = 0; WD = ""; HASW = 0; HDN = 0; HDNEXT = 0; SKIPNEXT = 0; SKIPOUT = 0; PD = 0; NSG[d] = 0
   newseg()
   for (i = 1; i <= n; i++) {
@@ -318,7 +321,8 @@ function tokenize(cmd, d,  n, i, c, nx, m) {
       flush(d); endseg(d); continue
     }
     if (c == ";" || c == "&" || c == "|" || c == "\n") {
-      flush(d); endseg(d)
+      kp = CS; flush(d); endseg(d)
+      if (c == "|" && substr(cmd, i - 1, 1) != "|" && substr(cmd, i + 1, 1) != "|") kunion(kp, CS)
       if (c == "\n" && HDN > 0) i = skiphd(cmd, i, n)
       continue
     }
@@ -790,7 +794,7 @@ function secret_path(p,  b) {
 # ---------- protected resources (ports, hosts, processes from guard.protectPorts/Hosts/Procs) ----------
 function pr_prepare() {
   PRON = (MODE["protected-resources"] != "off" && NPORT + NHOST + NPROC > 0)
-  KBNON = (MODE["kill-by-name"] != "off" && MODE["kill-by-name"] != "allow"); KBNHIT = 0; KBNPG = 0; KBNKILL = 0; KBNM = ""
+  KBNON = (MODE["kill-by-name"] != "off" && MODE["kill-by-name"] != "allow"); KBNHIT = 0; KBNM = ""; KBNID = 0; split("", KBNPGS); split("", KBNKS); split("", KPAR)
   NPFX = split("localhost: 127.0.0.1: 0.0.0.0: [::1]: [::]:", PFX, " ")
 }
 function pr_hit(what, list) { if (RESINFO == "") { RESINFO = what; RESLIST = list }; hit("protected-resources") }
@@ -843,10 +847,15 @@ function pr_words(d, id, nw,  i) {
     if (NHOST && pr_host_word(W[d, id, i])) return
   }
 }
+function kbn_linked(  s, g, mark) {
+  for (s in KBNPGS) mark[kfind(s)] = 1
+  for (s in KBNKS) if (kfind(s) in mark) return 1
+  return 0
+}
 function pr_proc(x,  j) {
   x = tolower(x); sub(/.*[\/\\]/, "", x); sub(/\.exe$/, "", x)
   # kill-by-name: KBNM is "hit" for commands that kill by name and "pg" for lookups (pgrep, pidof, Get-Process)
-  if (KBNM == "hit") KBNHIT = 1; else if (KBNM == "pg" || KBNM == "gp") KBNPG = 1
+  if (KBNM == "hit") KBNHIT = 1; else if (KBNM == "pg" || KBNM == "gp") KBNPGS[KBNID] = 1
   if (KBNM == "gp") return 0
   for (j = 1; j <= NPROC; j++) if (x == PROCL[j]) { pr_hit("process " PROCL[j], "Procs"); return 1 }
   return 0
@@ -881,8 +890,8 @@ function pr_cmd(cmd, d, id, k, nw,  i, x, n, v, a, na, j, t, kill) {
     }
   }
   if (!NPROC && !KBNON) return
-  KBNM = ""
-  if (cmd == "kill" || cmd == "taskkill" || cmd ~ /^(stop-process|spps)$/) KBNKILL = 1
+  KBNM = ""; KBNID = id
+  if (cmd == "kill" || cmd == "taskkill" || cmd ~ /^(stop-process|spps)$/) KBNKS[id] = 1
   if (cmd ~ /^(get-process|gps)$/ || (PSM && cmd == "ps")) {
     KBNM = "gp"
     for (i = k; i <= nw; i++) {
@@ -1160,7 +1169,7 @@ function hook_decide(t,  tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp, a
     # PowerShell: backtick is the escape character (no command substitution), backslash is a plain path separator
     PSM = (tool == "PowerShell")
     analyze(cmd, 0)
-    if (KBNHIT || (KBNPG && KBNKILL)) {
+    if (KBNHIT || kbn_linked()) {
       id = MODE["kill-by-name"]
       if (id == "auto") id = (ap_on() || match(t, /"agent_id"[ \t]*:[ \t]*"[^"]+"/)) ? "deny" : "ask"
       if (id == "deny" && DENYID == "") DENYID = "kill-by-name"; else if (id == "ask" && ASKID == "") ASKID = "kill-by-name"

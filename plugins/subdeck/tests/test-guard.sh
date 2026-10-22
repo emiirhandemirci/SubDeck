@@ -1031,6 +1031,10 @@ Bash	sudo pkill nginx
 Bash	kill $(pgrep chrome)
 Bash	kill -9 $(pidof chrome)
 Bash	pgrep chrome | xargs kill
+Bash	pgrep chrome | head -1 | xargs kill
+Bash	kill `pidof chrome`
+Bash	kill -9 $(pgrep -f chrome | head -1)
+Bash	echo $(pgrep chrome) | xargs kill
 Bash	echo hi && pkill chrome
 PowerShell	Stop-Process -Name chrome
 PowerShell	Stop-Process -Name chrome -Force
@@ -1049,6 +1053,11 @@ Bash	kill $PID
 Bash	kill %1
 Bash	pgrep chrome
 Bash	pidof chrome
+Bash	pgrep chrome; kill 123
+Bash	pgrep chrome && kill 123
+Bash	pidof chrome || kill 123
+Bash	pgrep chrome | grep 1; kill 123
+PowerShell	Get-Process chrome; Stop-Process -Id 4242
 Bash	ps aux | grep chrome
 Bash	taskkill /PID 1234 /F
 Bash	taskkill /F /PID 1234
@@ -1075,6 +1084,8 @@ unset TOOL
 out="$(printf '{"session_id":"s","cwd":"%s","agent_id":"agKB","tool_name":"Bash","tool_input":{"command":"pkill chrome"}}' "$(esc "$P")" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
 has "$out" 'SubDeck guard \(kill-by-name\).*Kill by PID a process you started yourself.*never by name' "kill-by-name message"
 has "$out" 'To change this rule: /subdeck:settings set kill-by-name=deny\|ask\|allow' "kill-by-name message names the setting"
+[ "$(kb_main $'pgrep chrome
+kill 123')" = allow ] && ok "kill-by-name: lookup and kill on separate lines are not linked" || bad "kill-by-name newline-separated lookup and kill"
 # modes
 for m in allow off; do
   cfg "$UC" "{\"guard\":{\"rules\":{\"kill-by-name\":\"$m\"}}}"
