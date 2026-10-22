@@ -35,7 +35,10 @@ dispatch_tasks() {
   case "$EVENT" in SubagentStart|SubagentStop|StopFailure) ;; *) return 0 ;; esac
   [ "${SUBDECK_TASKS:-}" = 0 ] && return 0
   [ -f "$HERE/tasks.sh" ] || return 0
-  printf '%s' "$PAYLOAD" | bash "$HERE/tasks.sh" --project "$PROJECT" hook "$EVENT" >/dev/null 2>&1
+  # the hook may answer with one stop-block (decision JSON on stdout, e.g. an over-long report); pass it through
+  local out
+  out="$(printf '%s' "$PAYLOAD" | bash "$HERE/tasks.sh" --project "$PROJECT" hook "$EVENT" 2>/dev/null)"
+  case "$out" in '{"decision":"block"'*) printf '%s\n' "$out" ;; esac
   return 0
 }
 log_err() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$DIR/hook-errors.log" 2>/dev/null; }

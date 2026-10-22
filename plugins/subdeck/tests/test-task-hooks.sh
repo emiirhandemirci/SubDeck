@@ -363,20 +363,57 @@ fire SubagentStart nr1 worker-sonnet ""; fire SubagentStop nr1 worker-sonnet 'fi
 check "$(events report_missing)" "$((R0 + 1))" "auto task without a report: report_missing"
 has "$(lastevent report_missing)" "\"task\":\"$(auto_of nr1)\"" "report_missing names the auto task"
 check "$(field "$(auto_of nr1)" status)" "blocked" "auto task without a report -> blocked"
-# report length
+# report length: a report over 9 lines is blocked ONCE per agent (SubagentStop decision block), then passes with the event
 L0="$(events report_too_long)"
 LONG9='l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nStop: done'
 LONG10='l1\nl2\nl3\nl4\nl5\nl6\nl7\nTested: ran true -> ok\nNot verified: none\nStop: done'
-fire SubagentStop rl1 worker-sonnet "$LONG9"
+LONGK='a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk'
+BO="$(fire SubagentStop rl1 worker-sonnet "$LONG9")"
 check "$(events report_too_long)" "$L0" "9 lines: no report_too_long"
-fire SubagentStop rl2 worker-sonnet "\\n\\n$LONG10\\n\\n"
-check "$(events report_too_long)" "$((L0 + 1))" "10 lines (blank edges trimmed): report_too_long"
+check "$BO" "" "9 lines: no block"
+BO="$(fire SubagentStop rl2 worker-sonnet "\n\n$LONG10\n\n")"
+has "$BO" '{"decision":"block"' "10 lines (blank edges trimmed): the first stop is blocked once"
+has "$BO" "limit is 9" "block reason names the limit"
+check "$(events report_too_long)" "$L0" "a blocked stop logs no report_too_long yet"
+check "$(auto_of rl2)" "" "a blocked stop changes nothing (the agent is not bound to a task yet)"
+BO="$(fire SubagentStop rl2 worker-sonnet "\n\n$LONG10\n\n")"
+check "$BO" "" "second over-long report of the same agent passes with no block (never loops)"
+check "$(events report_too_long)" "$((L0 + 1))" "second over-long report: report_too_long event"
 has "$(lastevent report_too_long)" '"lines":10,"limit":9' "report_too_long carries lines and limit"
 has "$(lastevent report_too_long)" "\"task\":\"$(auto_of rl2)\"" "report_too_long names the task"
-fire SubagentStop rl3 Explore 'a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk'
+check "$(field "$(auto_of rl2)" status)" "review" "a long report changes no status"
+BO="$(fire SubagentStop rl3 Explore "$LONGK" '"stop_hook_active":true')"
+check "$BO" "" "stop_hook_active: never blocked"
 has "$(lastevent report_too_long)" '"agent_id":"rl3"' "report_too_long also for agents without a task"
 has "$(lastevent report_too_long)" '"task":null' "report_too_long: task null when not tracked"
-check "$(field "$(auto_of rl2)" status)" "review" "a long report changes no status"
+BO="$(fire SubagentStop rl7 verifier "$LONGK")"
+has "$BO" '{"decision":"block"' "an over-long verifier reply is blocked once too"
+printf '{"tasks":{"reportCheck":false}}' > "$ST/config.json"
+BO="$(fire SubagentStop rl6 Explore "$LONGK")"
+check "$BO" "" "report-check off: no block"
+rm -f "$ST/config.json"
+
+# ---- dead agent: stopped without any message records the dirty paths ----
+DT="$(newtask)"
+fire SubagentStart dd1 worker-sonnet "" "\"prompt\":\"Task: $DT\""
+echo edit >> "$P/f.txt"; echo n > "$P/new.txt"
+DR0="$(events report_missing)"
+fire SubagentStop dd1 worker-sonnet ""
+check "$(events report_missing)" "$((DR0 + 1))" "dead agent: report_missing"
+has "$(lastevent report_missing)" '"dirty":2,"paths":"f.txt, new.txt"' "dead agent: dirty paths in the event"
+has "$(lastevent report_missing)" 'resume it with SendMessage; its edits are uncommitted' "dead agent: resume hint in the event"
+has "$(t show $DT --section handoff)" "stopped without report" "dead agent: Handoff block in the task"
+has "$(t show $DT --section handoff)" "    new.txt" "dead agent: Handoff lists the path"
+has "$(cat "$ST/handoff/dd1.txt")" "its edits are uncommitted" "dead agent: handoff record written"
+has "$(t resume-prompt $DT)" "Last agent handoff:" "dead agent: resume-prompt shows the record"
+# negative control: an agent with a message (just missing lines) records no dirty paths
+DT2="$(newtask)"; fire SubagentStart dd2 worker-sonnet "" "\"prompt\":\"Task: $DT2\""
+fire SubagentStop dd2 worker-sonnet 'finished, bye'
+hasnt "$(lastevent report_missing)" '"dirty"' "message without Stop line: no dirty paths (not a dead agent)"
+# 10 timing runs of the git call
+s0=$(date +%s%N 2>/dev/null); for i in 1 2 3 4 5 6 7 8 9 10; do git -C "$P" status --porcelain -- f.txt new.txt >/dev/null; done; s1=$(date +%s%N 2>/dev/null)
+echo "info: git status --porcelain x10 = $(( (s1 - s0) / 1000000 )) ms total"
+git -C "$P" checkout -q -- f.txt 2>/dev/null; rm -f "$P/new.txt"
 # quota
 grep -v '"event":"quota_recent"' "$ST/events.jsonl" > "$ST/events.tmp"; mv "$ST/events.tmp" "$ST/events.jsonl"
 Q0="$(events quota_recent)"; reset_notify

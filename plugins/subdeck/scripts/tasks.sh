@@ -18,6 +18,7 @@
 #   resume-prompt <id>         the text to resume an interrupted agent with: Last done / Next, commits already done, uncommitted files, transcript
 #   rewind <id> <#N|hash> [--apply]   (--apply refused under SUBDECK_AUTOPILOT=1) dry by default: lists the commits after that checkpoint and the git revert commands; --apply (clean tree
 #                              required) creates the revert commits; never resets, rewrites history or pushes
+#   worktree <id> [--remove]   git worktree add -b subdeck/<id> <state>/worktrees/<id> HEAD (the current HEAD); prints the path; --remove only when clean (branch kept)
 #   ask <id> [--by manager|autopilot|user|agent] <text|->   park the task as needs-user with a question (key question, "## Question")
 #   answer <id> <text|-> [--status s]   record the answer; status back to what it was before the ask (in-progress becomes open: the Start hook moves it on when the agent is resumed)
 #   strike <id> --reason <word> [--run <runId>]   one failed attempt: strikes+1 and a Report block "strike <n> (<reason> <runId>)";
@@ -990,6 +991,35 @@ cmd_resume_prompt() {
   if [ -n "$VBF" ]; then printf '\n'; verify_delta_text || true; fi
   return 0
 }
+cmd_worktree() {
+  local id="" rm=0 a wt br g="$PROJECT" st
+  while [ ${#ARGV[@]} -gt 0 ]; do
+    a="${ARGV[0]}"
+    case "$a" in
+      --remove) rm=1 ;;
+      -*) die 2 "unknown option $a" ;;
+      *) [ -z "$id" ] || die 2 "unexpected argument '$a'"; id="$a" ;;
+    esac
+    ARGV=("${ARGV[@]:1}")
+  done
+  [ -n "$id" ] || die 2 "usage: worktree <id> [--remove]"
+  is_id "$id" || die 2 "invalid task id: $id"
+  find_file "$id" || die 1 "task not found: $id"
+  git -C "$g" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die 2 "not a git repository: $g"
+  wt="$STATE/worktrees/$id"; br="subdeck/$id"
+  if [ "$rm" = 1 ]; then
+    [ -d "$wt" ] || die 1 "no worktree for $id"
+    st="$(git -C "$wt" status --porcelain 2>/dev/null)"
+    [ -z "$st" ] || die 3 "worktree $wt is not clean ($(printf '%s\n' "$st" | wc -l | tr -d ' ') changed paths); commit or discard there first"
+    git -C "$g" worktree remove "$wt" >/dev/null 2>&1 || die 3 "git worktree remove failed for $wt"
+    printf 'removed %s (branch %s kept)\n' "$wt" "$br"
+    return 0
+  fi
+  [ ! -e "$wt" ] || die 2 "worktree already exists: $wt"
+  mkdir -p "$STATE/worktrees" 2>/dev/null || die 1 "cannot create $STATE/worktrees"
+  git -C "$g" worktree add -b "$br" "$wt" HEAD >/dev/null 2>&1 || die 3 "git worktree add failed (branch $br may already exist)"
+  printf '%s\n' "$wt"
+}
 cmd_rewind() {
   local id="" cpt="" apply=0 a n=0
   while [ ${#ARGV[@]} -gt 0 ]; do
@@ -1668,7 +1698,7 @@ queue_missing() { # task-or-empty missing-list
   report_check_on || return 0
   missing_json "$2"
   local t="null"; [ -n "$1" ] && t="\"$1\""
-  queue_event report_missing "$(printf '{"agent_id":"%s","agent_type":"%s","session_id":"%s","transcript_path":"%s","task":%s,"missing":%s}' "$(safe_tok "$AGENT_ID")" "$(safe_tok "$AGENT_TYPE")" "$(safe_tok "$SESSION_ID")" "$(safe_tok "$TR_PATH")" "$t" "$MJ")"
+  queue_event report_missing "$(printf '{"agent_id":"%s","agent_type":"%s","session_id":"%s","transcript_path":"%s","task":%s,"missing":%s%s}' "$(safe_tok "$AGENT_ID")" "$(safe_tok "$AGENT_TYPE")" "$(safe_tok "$SESSION_ID")" "$(safe_tok "$TR_PATH")" "$t" "$MJ" "${DEAD_JSON:-}")"
   NOTIFY_Q="${NOTIFY_Q}report_missing$NL"
 }
 git_part() { # prints indented lines of a command's output, capped at 50
@@ -1731,6 +1761,40 @@ interrupt_task() { # errtype : T_* loaded, status in-progress
   queue_status "$T_id" "$from" interrupted
   queue_event task_interrupted "$(printf '{"agent_id":"%s","agent_type":"%s","session_id":"%s","task":"%s","error_type":"%s","files":%s}' "$(safe_tok "${T_agent:-$AGENT_ID}")" "$(safe_tok "$AGENT_TYPE")" "$(safe_tok "${T_session:-$SESSION_ID}")" "$T_id" "$1" "$files")"
   NOTIFY_Q="${NOTIFY_Q}task_interrupted$NL"
+}
+# dead_record: a sub-agent stopped without any final message (API error, timeout, killed). T_* loaded. Records the
+# uncommitted paths (git status --porcelain, paths only, max 20; scoped to the task's writable paths) into the task
+# Handoff, the agent's handoff record (resume-prompt) and the report_missing event (DEAD_JSON). One git call.
+dead_record() {
+  DEAD_JSON=""
+  local g="$PROJECT" st n w aid="${T_agent:-$AGENT_ID}" pl="" p blk hf
+  local -a args warr
+  args=()
+  IFS=, read -ra warr <<< "$T_writable"
+  for w in "${warr[@]}"; do [ -n "$w" ] && args[${#args[@]}]="$w"; done
+  [ -n "${SUBDECK_TASK_GIT:-}" ] && [ -d "$SUBDECK_TASK_GIT" ] && g="$SUBDECK_TASK_GIT"
+  git -C "$g" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  if [ ${#args[@]} -gt 0 ]; then st="$(git -C "$g" -c core.quotepath=false status --porcelain -- "${args[@]}" 2>/dev/null)"
+  else st="$(git -C "$g" -c core.quotepath=false status --porcelain 2>/dev/null)"; fi
+  n=0; [ -n "$st" ] && n="$(printf '%s\n' "$st" | wc -l | tr -d ' ')"
+  st="$(printf '%s\n' "$st" | head -n 20 | cut -c4- | tr -d '\r')"
+  blk="### $(now_iso) stopped without report${NL}agent: ${aid:-unknown} (${AGENT_TYPE:-unknown})${NL}files: $n${NL}uncommitted (paths only, max 20):"
+  hf="Handoff from agent ${aid:-unknown} (${AGENT_TYPE:-agent}), $(now_iso)${NL}Headline: stopped without a report${NL}Dirty files: $n"
+  if [ "$n" -gt 0 ]; then
+    while IFS= read -r p; do [ -n "$p" ] || continue; blk="$blk$NL    $p"; hf="$hf$NL  $p"; pl="$pl${pl:+, }${p:0:200}"; done <<< "$st"
+    blk="$blk${NL}Resume it with SendMessage; its edits are uncommitted."
+    hf="$hf${NL}Resume it with SendMessage; its edits are uncommitted."
+  else
+    blk="$blk${NL}    (none)${NL}Resume it with SendMessage; no uncommitted edits were found."
+    hf="$hf${NL}Resume it with SendMessage; no uncommitted edits were found."
+  fi
+  append_block "## Handoff" "$blk"
+  if [ -n "$aid" ]; then
+    [ -d "$STATE/handoff" ] || mkdir -p "$STATE/handoff" 2>/dev/null
+    printf '%s\n' "$hf" > "$STATE/handoff/${aid//[^A-Za-z0-9._-]/}.txt" 2>/dev/null
+  fi
+  jesc "$pl"
+  DEAD_JSON=",\"dirty\":$n,\"paths\":\"$JESC\",\"hint\":\"resume it with SendMessage; its edits are uncommitted\""
 }
 # with_task ID FUNC: lock, load, run FUNC (returns 0 = write), unlock
 with_task() {
@@ -1854,6 +1918,8 @@ h_stop() {
     T_status=blocked
     [ "$fallback" = 0 ] && append_reply "## Report" "final reply ($AGENT_TYPE $AGENT_ID)" "$MSG"
     queue_status "$T_id" in-progress blocked
+    DEAD_JSON=""
+    [ -z "$MSG" ] && report_check_on && dead_record
     queue_missing "$T_id" "$MISSING"
     return 0
   fi
@@ -1896,6 +1962,27 @@ handback_fallback() {
   fi
   handback_message
   [ -n "$V" ] && MSG="$V"
+  return 0
+}
+# report_lines TEXT -> RLINES (non-blank span of the text, first to last non-blank line)
+report_lines() {
+  RLINES="$(printf '%s\n' "$1" | awk '{ sub(/\r$/, ""); l[NR] = $0 } END { a = 1; while (a <= NR && l[a] ~ /^[ \t]*$/) a++; b = NR; while (b >= a && l[b] ~ /^[ \t]*$/) b--; print (b >= a ? b - a + 1 : 0) }')"
+  RLINES="${RLINES:-0}"
+}
+# shorten_ask -> 0 when ONE stop-block was set in BLOCK_OUT (a report over 9 lines, first time for this agent). Never loops: the
+# marker <state>/shorten-asked/<agent> and the payload's stop_hook_active both make a second over-long report pass.
+BLOCK_OUT=""
+shorten_ask() {
+  [ -n "$MSG" ] && [ -n "$AGENT_ID" ] || return 1
+  report_check_on || return 1
+  [[ $COMPACT =~ \"stop_hook_active\"[[:space:]]*:[[:space:]]*true ]] && return 1
+  report_lines "$MSG"
+  [ "$RLINES" -gt 9 ] || return 1
+  [ -e "$STATE/shorten-asked/$AGENT_ID" ] && return 1
+  shape_check worker "$MSG"
+  [ "$STOPW" = quota ] && return 1
+  mkdir -p "$STATE/shorten-asked" 2>/dev/null && : > "$STATE/shorten-asked/$AGENT_ID" 2>/dev/null || return 1
+  BLOCK_OUT="{\"decision\":\"block\",\"reason\":\"Your report is $RLINES lines; the limit is 9. Shorten it to at most 9 lines (Result, Evidence, Tested, Not verified, Decision, Stop), move detail into your Detail file, and send the short report. This is asked once.\"}"
   return 0
 }
 # ---- checkpoints (PostToolUse on a git commit by a task-linked agent) ----
@@ -1979,12 +2066,13 @@ hook_main() {
     SubagentStop)
       find_task_id SubagentStop
       handback_fallback
+      if shorten_ask; then return 0; fi
       if [ -z "$TID" ] && auto_bind_ok; then auto_create; fi
       # an agent without a task is not tracked: no report_missing, no notification
       [ -n "$TID" ] && with_task "$TID" h_stop_main
       if [ -n "$MSG" ]; then
         local nl
-        nl="$(printf '%s\n' "$MSG" | awk '{ sub(/\r$/, ""); l[NR] = $0 } END { a = 1; while (a <= NR && l[a] ~ /^[ \t]*$/) a++; b = NR; while (b >= a && l[b] ~ /^[ \t]*$/) b--; print (b >= a ? b - a + 1 : 0) }')"
+        report_lines "$MSG"; nl="$RLINES"
         if [ "${nl:-0}" -gt 9 ]; then
           local tj=null; [ -n "$TID" ] && tj="\"$TID\""
           queue_event report_too_long "$(printf '{"agent_id":"%s","agent_type":"%s","session_id":"%s","task":%s,"lines":%s,"limit":9}' "$(safe_tok "$AGENT_ID")" "$(safe_tok "$AGENT_TYPE")" "$(safe_tok "$SESSION_ID")" "$tj" "$nl")"
@@ -2024,7 +2112,7 @@ hook_main() {
 # ---------- dispatch ----------
 run_cli() {
   case "$CMD" in
-    "") die 2 "usage: tasks.sh [--project <dir>] <new|set|append|step|history|resume-prompt|rewind|ask|answer|strike|interrupt|link|verify|verify-level|verify-delta|grant|pack|writable|done|list|ready|show|dir|hook> ..." ;;
+    "") die 2 "usage: tasks.sh [--project <dir>] <new|set|append|step|history|resume-prompt|rewind|worktree|ask|answer|strike|interrupt|link|verify|verify-level|verify-delta|grant|pack|writable|done|list|ready|show|dir|hook> ..." ;;
   esac
   resolve_dir
   case "$CMD" in
@@ -2043,6 +2131,7 @@ run_cli() {
     history) cmd_history ;;
     resume-prompt) cmd_resume_prompt ;;
     rewind) cmd_rewind ;;
+    worktree) cmd_worktree ;;
     ask) cmd_ask ;;
     strike) cmd_strike ;;
     interrupt) cmd_interrupt ;;
@@ -2073,6 +2162,6 @@ meter_cli() {
   exit "$rc"
 }
 case "$CMD" in
-  hook) hook_main >/dev/null 2>&1 || log_err "hook failed (${ARGV[0]:-})"; lock_release; exit 0 ;;
+  hook) hook_main >/dev/null 2>&1 || log_err "hook failed (${ARGV[0]:-})"; lock_release; [ -n "$BLOCK_OUT" ] && printf '%s\n' "$BLOCK_OUT"; exit 0 ;;
 esac
 if [ "${SUBDECK_METER:-}" = 0 ]; then run_cli; else meter_cli; fi

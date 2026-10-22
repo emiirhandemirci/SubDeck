@@ -484,6 +484,28 @@ hv_out="$(t resume-prompt "$HT")"
 has "$hv_out" "Last agent handoff:" "resume-prompt: handoff heading"
 has "$hv_out" "Result: finished the thing" "resume-prompt: handoff record text"
 case "$hv_out" in *"Last agent handoff"*"Continue from Next"*) ok "resume-prompt: handoff before the Continue line" ;; *) bad "resume-prompt: handoff order" ;; esac
+
+# ---- worktree helper ----
+WP="$W/wtproj"; mkdir -p "$WP"
+( cd "$WP" && git init -q && git config user.email t@t && git config user.name t && echo a > a.txt && git add . && git commit -qm one && git checkout -q -b side && echo b > b.txt && git add . && git commit -qm two ) >/dev/null 2>&1
+wt() { bash "$TS" --project "$WP" "$@"; }
+WST="$(sdstate "$WP")"
+WID="$(wt new "wt job" --owner worker-sonnet --writable "a.txt")"
+WPATH="$(wt worktree "$WID")"
+check "$WPATH" "$WST/worktrees/$WID" "worktree: prints <state>/worktrees/<id>"
+[ -f "$WPATH/b.txt" ] && ok "worktree: starts at the current HEAD (not the default branch)" || bad "worktree: starts at the current HEAD"
+check "$(git -C "$WPATH" rev-parse --abbrev-ref HEAD)" "subdeck/$WID" "worktree: new branch subdeck/<id>"
+check "$(git -C "$WPATH" rev-parse HEAD)" "$(git -C "$WP" rev-parse HEAD)" "worktree: branch tip is the project HEAD"
+wt worktree "$WID" >/dev/null 2>&1; check "$?" "2" "worktree: a second create is refused (exit 2)"
+wt worktree t-ffff >/dev/null 2>&1; check "$?" "1" "worktree: unknown task id (exit 1)"
+echo dirty > "$WPATH/new.txt"
+wt worktree "$WID" --remove >/dev/null 2>&1; check "$?" "3" "worktree --remove: refused while dirty (exit 3)"
+[ -d "$WPATH" ] && ok "worktree --remove: dirty worktree kept" || bad "worktree --remove: dirty worktree kept"
+rm -f "$WPATH/new.txt"
+has "$(wt worktree "$WID" --remove)" "removed" "worktree --remove: clean worktree removed"
+[ -d "$WPATH" ] && bad "worktree --remove: directory gone" || ok "worktree --remove: directory gone"
+git -C "$WP" rev-parse --verify -q "subdeck/$WID" >/dev/null && ok "worktree --remove: branch kept" || bad "worktree --remove: branch kept"
+wt worktree "$WID" >/dev/null 2>&1; check "$?" "3" "worktree: existing branch makes create fail cleanly (exit 3)"
 echo
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
