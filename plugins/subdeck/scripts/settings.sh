@@ -14,6 +14,7 @@
 #       protect=<list> (replaces), unprotect=<list>         -> guard.sh protect|unprotect (guard.protectedPaths)
 #       context=<tokens>, 0 = auto                          -> config key context.window (written here)
 #       protected-resources=deny|ask|off                    -> guard.sh (guard.rules.protected-resources)
+#       kill-by-name=auto|deny|ask|allow                  -> guard.sh (guard.rules.kill-by-name; auto = deny for sub-agents, ask for the main session)
 #       protect-ports|protect-hosts|protect-procs=<list>    -> guard.sh cli ports|hosts|procs (replaces; empty clears)
 #       tasks.dir=<path>, empty = the state dir             -> config key tasks.dir (written here; \ stored as /)
 #       report-check=on|off                                 -> config key tasks.reportCheck (written here)
@@ -32,7 +33,7 @@
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_KEYS="mode worker escalation researcher verifier explore light"
-STATIC_RULES="git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources commit-pathspec commit-scope"
+STATIC_RULES="git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources kill-by-name commit-pathspec commit-scope"
 EVENT_KINDS="waiting done agent idle"
 ROLE_TOOLS="claude codex gemini agy opencode copilot custom"
 US=$'\037'
@@ -193,6 +194,7 @@ meta() {
     attribution)  MG=guard; MT=enum; MO="deny ask off"; MD="AI attribution lines in commits and PRs" ;;
     protected-paths) MG=guard; MT=enum; MO="deny ask off"; MD="edits to the files listed under protect" ;;
     protected-resources) MG=guard; MT=enum; MO="deny ask off"; MD="commands that use a protected port, host or process (lists below)" ;;
+    kill-by-name) MG=guard; MT=enum; MO="auto deny ask allow"; MD="kills by process name (pkill, killall, taskkill /IM, Stop-Process -Name); auto = deny for sub-agents and autopilot, ask in the main session; kill by PID of a process you started stays allowed" ;;
     commit-pathspec) MG=guard; MT=enum; MO="warn off"; MD="warns when git commit takes a directory pathspec (it picks up other agents work)" ;;
     commit-scope) MG=guard; MT=enum; MO="warn off"; MD="warns when a commit includes files outside the bound task writable paths" ;;
     protect)      MG=protect; MT=list; MD="files or globs agents must not edit or delete without approval (set protect= replaces the list)" ;;
@@ -295,9 +297,9 @@ END {
   if (sv("guard/rules/push", "ask branches off")) out("push", EV, ES); else out("push", "branches", "default")
   if (lv("guard/protectBranches")) out("protect-branches", EV, ES); else out("protect-branches", "main,master,release/*", "default")
   if (sv("guard/enabled", "true false")) out("guard", (EV == "true") ? "on" : "off", ES); else out("guard", "on", "default")
-  n = split("git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources commit-pathspec commit-scope", RK, " ")
-  split("deny deny ask deny ask off ask ask warn warn", RD, " ")
-  for (i = 1; i <= n; i++) { if (sv("guard/rules/" RK[i], (RK[i] ~ /^commit-/) ? "warn off" : "deny ask off")) out(RK[i], EV, ES); else out(RK[i], RD[i], "default") }
+  n = split("git-add-all force-push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources kill-by-name commit-pathspec commit-scope", RK, " ")
+  split("deny deny ask deny ask off ask ask auto warn warn", RD, " ")
+  for (i = 1; i <= n; i++) { if (sv("guard/rules/" RK[i], (RK[i] ~ /^commit-/) ? "warn off" : (RK[i] == "kill-by-name") ? "auto deny ask allow off" : "deny ask off")) out(RK[i], EV, ES); else out(RK[i], RD[i], "default") }
   if (lv("guard/protectedPaths")) out("protect", EV, ES); else out("protect", "", "default")
   if (lv("guard/protectPorts")) out("protect-ports", EV, ES); else out("protect-ports", "", "default")
   if (lv("guard/protectHosts")) out("protect-hosts", EV, ES); else out("protect-hosts", "", "default")
@@ -707,6 +709,7 @@ case "$CMD" in
           if [[ "$RULES" == *" $k "* ]]; then
             case "$k" in
               commit-*) case "$lv" in warn|off) GP+=("$k=$lv") ;; *) die "$k must be warn or off (got '$v')" ;; esac ;;
+              kill-by-name) case "$lv" in auto|deny|ask|allow|off) GP+=("$k=$lv") ;; *) die "$k must be auto, deny, ask or allow (got '$v')" ;; esac ;;
               *) case "$lv" in deny|ask|off) GP+=("$k=$lv") ;; *) die "$k must be deny, ask or off (got '$v')" ;; esac ;;
             esac
           else die "unknown key '$k' (run: settings.sh help)"; fi ;;

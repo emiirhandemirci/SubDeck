@@ -48,7 +48,7 @@
 #   editors, git checkout <branch> / stash / reset, and cp into a protected directory.
 # bash + awk only; one awk process per hook call.
 
-RULES="git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources commit-pathspec commit-scope"
+RULES="git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources kill-by-name commit-pathspec commit-scope"
 
 if [ $# -eq 0 ] || [ "$1" = hook ]; then
   case "$SUBDECK_GUARD" in 0|off|false|no|OFF|FALSE|NO) exit 0 ;; esac
@@ -155,11 +155,11 @@ function slurp(f,  t, line, r) {
 
 # ---------- config ----------
 function initrules(  i, n, a) {
-  n = split("git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources commit-pathspec commit-scope", a, " ")
+  n = split("git-add-all force-push push history-rewrite rm-rf-danger secret-files attribution protected-paths protected-resources kill-by-name commit-pathspec commit-scope", a, " ")
   NRULE = n
   for (i = 1; i <= n; i++) RID[i] = a[i]
   DEF["git-add-all"] = "deny"; DEF["force-push"] = "deny"; DEF["push"] = "branches"
-  DEF["history-rewrite"] = "ask"; DEF["rm-rf-danger"] = "deny"; DEF["secret-files"] = "ask"; DEF["attribution"] = "off"; DEF["protected-paths"] = "ask"; DEF["protected-resources"] = "ask"
+  DEF["history-rewrite"] = "ask"; DEF["rm-rf-danger"] = "deny"; DEF["secret-files"] = "ask"; DEF["attribution"] = "off"; DEF["protected-paths"] = "ask"; DEF["protected-resources"] = "ask"; DEF["kill-by-name"] = "auto"
   DEF["commit-pathspec"] = "warn"; DEF["commit-scope"] = "warn"
   for (i = 1; i <= n; i++) { MODE[RID[i]] = DEF[RID[i]]; SRC[RID[i]] = "default" }
   ENABLED = 1; ENSRC = "default"; NPL = 0; PLSRC = "default"
@@ -190,7 +190,7 @@ function cfgfile(f, src,  t, i, v, id) {
     if (("/guard/rules/" id) in V) {
       v = tolower(V["/guard/rules/" id])
       if (id ~ /^commit-/) { if (v == "warn" || v == "off") { MODE[id] = v; SRC[id] = src } }
-      else if (v == "deny" || v == "ask" || v == "off" || (id == "push" && v == "branches")) { MODE[id] = v; SRC[id] = src }
+      else if (v == "deny" || v == "ask" || v == "off" || (id == "push" && v == "branches") || (id == "kill-by-name" && (v == "allow" || v == "auto"))) { MODE[id] = v; SRC[id] = src }
     }
   }
 }
@@ -596,7 +596,7 @@ function seg(d, id,  nw, k, x, cmd, j, str) {
   if (k > nw) return
   cmd = x; sub(/.*[\/\\]/, "", cmd); cmd = tolower(cmd); sub(/\.exe$/, "", cmd)
   if (PPON) prot_cmd(cmd, d, id, k + 1, nw)
-  if (PRON) pr_cmd(cmd, d, id, k + 1, nw)
+  if (PRON || KBNON) pr_cmd(cmd, d, id, k + 1, nw)
   if (ap_on()) ap_cmd(d, id, k, nw)
   if (cmd == "git") git_seg(d, id, k + 1, nw)
   else if (PSM && cmd ~ /^(rm|remove-item|ri|del|erase|rd|rmdir)$/) ps_rm_seg(d, id, k + 1, nw)
@@ -790,6 +790,7 @@ function secret_path(p,  b) {
 # ---------- protected resources (ports, hosts, processes from guard.protectPorts/Hosts/Procs) ----------
 function pr_prepare() {
   PRON = (MODE["protected-resources"] != "off" && NPORT + NHOST + NPROC > 0)
+  KBNON = (MODE["kill-by-name"] != "off" && MODE["kill-by-name"] != "allow"); KBNHIT = 0; KBNPG = 0; KBNKILL = 0; KBNM = ""
   NPFX = split("localhost: 127.0.0.1: 0.0.0.0: [::1]: [::]:", PFX, " ")
 }
 function pr_hit(what, list) { if (RESINFO == "") { RESINFO = what; RESLIST = list }; hit("protected-resources") }
@@ -844,6 +845,9 @@ function pr_words(d, id, nw,  i) {
 }
 function pr_proc(x,  j) {
   x = tolower(x); sub(/.*[\/\\]/, "", x); sub(/\.exe$/, "", x)
+  # kill-by-name: KBNM is "hit" for commands that kill by name and "pg" for lookups (pgrep, pidof, Get-Process)
+  if (KBNM == "hit") KBNHIT = 1; else if (KBNM == "pg" || KBNM == "gp") KBNPG = 1
+  if (KBNM == "gp") return 0
   for (j = 1; j <= NPROC; j++) if (x == PROCL[j]) { pr_hit("process " PROCL[j], "Procs"); return 1 }
   return 0
 }
@@ -876,14 +880,30 @@ function pr_cmd(cmd, d, id, k, nw,  i, x, n, v, a, na, j, t, kill) {
       if (t ~ /^[0-9]+\/(tcp|udp)$/) { sub(/\/.*/, "", t); for (j = 1; j <= NPORT; j++) if (t + 0 == PORTL[j] + 0) { pr_hit("port " PORTL[j], "Ports"); return } }
     }
   }
-  if (!NPROC) return
-  if (cmd ~ /^(pkill|pgrep)$/) pr_names(d, id, k, nw, "dgGPstuUF", "^--(delimiter|pgroup|group|parent|session|terminal|euid|uid|pidfile|signal|ns|nslist)$")
-  else if (cmd == "killall") pr_names(d, id, k, nw, "suoync", "^--(signal|user|older-than|younger-than|ns|context)$")
-  else if (cmd == "pidof") pr_names(d, id, k, nw, "o", "^--omit-pid$")
+  if (!NPROC && !KBNON) return
+  KBNM = ""
+  if (cmd == "kill" || cmd == "taskkill" || cmd ~ /^(stop-process|spps)$/) KBNKILL = 1
+  if (cmd ~ /^(get-process|gps)$/ || (PSM && cmd == "ps")) {
+    KBNM = "gp"
+    for (i = k; i <= nw; i++) {
+      x = W[d, id, i]
+      if (x ~ /^-/) {
+        n = tolower(substr(x, 2)); sub(/:.*/, "", n)
+        if (n != "" && index("name", n) == 1) { v = (index(x, ":") > 0) ? substr(x, index(x, ":") + 1) : W[d, id, ++i]; na = split(v, a, ","); for (j = 1; j <= na; j++) pr_proc(a[j]) }
+        else if (n != "" && (index("id", n) == 1 || index("inputobject", n) == 1 || index("computername", n) == 1) && index(x, ":") == 0) i++
+      } else { na = split(x, a, ","); for (j = 1; j <= na; j++) pr_proc(a[j]) }
+    }
+    KBNM = ""; return
+  }
+  if (cmd ~ /^(pkill|pgrep)$/) { KBNM = (cmd == "pkill") ? "hit" : "pg"; pr_names(d, id, k, nw, "dgGPstuUF", "^--(delimiter|pgroup|group|parent|session|terminal|euid|uid|pidfile|signal|ns|nslist)$") }
+  else if (cmd == "killall") { KBNM = "hit"; pr_names(d, id, k, nw, "suoync", "^--(signal|user|older-than|younger-than|ns|context)$") }
+  else if (cmd == "pidof") { KBNM = "pg"; pr_names(d, id, k, nw, "o", "^--omit-pid$") }
   else if (cmd == "taskkill") {
+    KBNM = "hit"
     for (i = k; i < nw; i++) if (tolower(W[d, id, i]) ~ /^[\/-]im$/ && pr_proc(W[d, id, i + 1])) return
   }
   else if (cmd ~ /^(stop-process|spps)$/ || (PSM && cmd == "kill")) {
+    KBNM = "hit"
     for (i = k; i <= nw; i++) {
       x = W[d, id, i]
       if (x !~ /^-[A-Za-z]/) continue
@@ -981,6 +1001,7 @@ function reason(id) {
   if (id == "secret-files") return "SubDeck guard (secret-files): this file looks like a secret (.env, key, certificate, credentials); get the user\047s approval before writing it."
   if (id == "attribution") return "SubDeck guard (attribution): the commit message contains an attribution line (Co-Authored-By / Generated with); remove it and commit again."
   if (id == "protected-paths") return "SubDeck guard (protected-paths): " PPINFO "; this path is listed in guard.protectedPaths; get the user\047s approval before editing, moving or deleting it."
+  if (id == "kill-by-name") return "SubDeck guard (kill-by-name): killing processes by name can stop programs that are not yours. Kill by PID a process you started yourself (record the PID when you start it); never by name."
   if (id == "protected-resources") return "SubDeck guard (protected-resources): this command uses " RESINFO ", listed in guard.protect" RESLIST "; get the user\047s approval first and leave it as you found it."
   return "SubDeck guard (" id ")"
 }
@@ -1139,6 +1160,11 @@ function hook_decide(t,  tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp, a
     # PowerShell: backtick is the escape character (no command substitution), backslash is a plain path separator
     PSM = (tool == "PowerShell")
     analyze(cmd, 0)
+    if (KBNHIT || (KBNPG && KBNKILL)) {
+      id = MODE["kill-by-name"]
+      if (id == "auto") id = (ap_on() || match(t, /"agent_id"[ \t]*:[ \t]*"[^"]+"/)) ? "deny" : "ask"
+      if (id == "deny" && DENYID == "") DENYID = "kill-by-name"; else if (id == "ask" && ASKID == "") ASKID = "kill-by-name"
+    }
     if (COMMIT) { low = tolower(cmd); if (index(low, "co-authored-by") || index(low, "generated with")) hit("attribution") }
     if (NCM > 0) commit_warnings(t)
   } else if (tool == "Write" || tool == "Edit" || tool == "MultiEdit") {
@@ -1163,7 +1189,7 @@ function hook_decide(t,  tool, cmd, fp, cwd, low, dec, id, rs, np, pl, pi, pp, a
   if (DENYID != "") { dec = "deny"; id = DENYID } else { dec = "ask"; id = ASKID }
   LOGID = id; LOGDEC = dec; LOGTOOL = tool   # logged by do_hook after the decision is printed
   # the other modes /subdeck:settings accepts for this rule (push: ask|branches|off, the rest: deny|ask|off)
-  np = split(id == "push" ? "ask branches off" : "deny ask off", pl, " "); pp = ""
+  np = split(id == "push" ? "ask branches off" : (id == "kill-by-name") ? "auto deny ask allow" : "deny ask off", pl, " "); pp = ""
   for (pi = 1; pi <= np; pi++) if (pl[pi] != MODE[id]) pp = pp (pp == "" ? "" : "|") pl[pi]
   rs = reason(id) (id == "autopilot" ? "" : " To change this rule: /subdeck:settings set " id "=" pp)
   if (id == "protected-paths") rs = rs " (or unprotect=<glob>)"
@@ -1226,7 +1252,7 @@ function do_dump(  t, i, id, v) {
   }
   for (i = 1; i <= NRULE; i++) {
     id = RID[i]
-    if (("/guard/rules/" id) in V) { v = tolower(V["/guard/rules/" id]); if (id ~ /^commit-/ ? (v == "warn" || v == "off") : (v == "deny" || v == "ask" || v == "off" || (id == "push" && v == "branches"))) print "rule " id " " v }
+    if (("/guard/rules/" id) in V) { v = tolower(V["/guard/rules/" id]); if (id ~ /^commit-/ ? (v == "warn" || v == "off") : (v == "deny" || v == "ask" || v == "off" || (id == "push" && v == "branches") || (id == "kill-by-name" && (v == "allow" || v == "auto")))) print "rule " id " " v }
   }
 }
 BEGIN {
@@ -1424,7 +1450,7 @@ case "$CMD" in
     for kv in "${PAIRS[@]}"; do
       k="${kv%%=*}"; v="$(printf '%s' "${kv#*=}" | tr 'A-Z' 'a-z')"
       if ! valid_rule "$k"; then echo "error: unknown rule '$k' (rules: $RULES)"; ERR=1
-      else case "$k:$v" in commit-*:warn|commit-*:off) NEW+=("$k=$v"); continue ;; commit-*:*) echo "error: invalid mode '$v' for $k (valid: warn, off)"; ERR=1; continue ;; esac
+      else case "$k:$v" in kill-by-name:auto|kill-by-name:deny|kill-by-name:ask|kill-by-name:allow|kill-by-name:off) NEW+=("$k=$v"); continue ;; kill-by-name:*) echo "error: invalid mode '$v' for $k (valid: auto, deny, ask, allow)"; ERR=1; continue ;; commit-*:warn|commit-*:off) NEW+=("$k=$v"); continue ;; commit-*:*) echo "error: invalid mode '$v' for $k (valid: warn, off)"; ERR=1; continue ;; esac
         case "$v" in deny|ask|off) NEW+=("$k=$v") ;; branches) if [ "$k" = push ]; then NEW+=("$k=$v"); else echo "error: invalid mode '$v' for $k (valid: deny, ask, off)"; ERR=1; fi ;; *) echo "error: invalid mode '$v' for $k (valid: deny, ask, off; push also: branches)"; ERR=1 ;; esac; fi
     done
     if [ $ERR -ne 0 ]; then echo "nothing written."; exit 0; fi

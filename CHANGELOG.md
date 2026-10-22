@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Guard: kill-by-name:** new rule `kill-by-name` (default `auto`) blocks killing processes by name (`pkill`, `killall`, `taskkill /IM`, `Stop-Process -Name`, `Get-Process <name> | Stop-Process`, `kill $(pgrep <name>)`): denied for sub-agents and in autopilot runs, asked in the main session; set `deny`, `ask` or `allow` with `/subdeck:settings set kill-by-name=...`. Kill by PID of a process you started stays allowed. Works without `protect-procs`; `protected-resources` is unchanged and the stricter decision wins.
+- Over-long (more than 9 line) sub-agent reports are bounced back once; agents that die without a report get their uncommitted paths recorded; `tasks.sh worktree <id>` creates an isolated worktree.
+
 ## 0.9.2 - 2026-10-22
 
 - **Knowledge ledger and handoff:** `ledger.sh add|check|list|prune` keeps findings (`file:line`) with a hash of the cited lines, so stale ones are detected; every SubagentStop writes a handoff record and `tasks.sh resume-prompt` shows the task's latest one.

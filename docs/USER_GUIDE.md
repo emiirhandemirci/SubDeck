@@ -301,6 +301,7 @@ SubDeck ships a deterministic PreToolUse hook. It makes no model call and adds a
 | `rm-rf-danger` | deny | recursive delete of `/`, a drive root, `~`/`$HOME`, the project root or their parents |
 | `secret-files` | ask | Write/Edit of `.env*` (not `.env.example`), `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `credentials*.json` |
 | `protected-resources` | ask | commands that use a port, host or process you listed with `protect-ports`, `protect-hosts`, `protect-procs` (see section 9b; inactive while the lists are empty) |
+| `kill-by-name` | auto | killing processes by name (`pkill`, `killall`, `taskkill /IM`, `Stop-Process -Name`, or a `pgrep`/`Get-Process` name piped into a kill); `auto` denies sub-agents and autopilot runs and asks in the main session, or set `deny`, `ask`, `allow`; kill by PID of a process you started stays allowed |
 | `attribution` | off | `git commit` messages containing `Co-Authored-By` or "Generated with" |
 
 - `/subdeck:settings` shows the effective rules.

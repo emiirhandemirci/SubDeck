@@ -606,7 +606,7 @@ rm -f "$UC" "$PC"
 # ---- protected-resources (inactive until guard.protectPorts/Hosts/Procs has an entry) ----
 rm -f "$UC" "$PC"
 expect allow 'curl http://localhost:8080/health' "protected-resources inactive without lists"
-RES_CFG='{"guard":{"protectPorts":["8080","9000"],"protectHosts":["staging.example","10.0.0.5"],"protectProcs":["redis","node"]}}'
+RES_CFG='{"guard":{"rules":{"kill-by-name":"allow"},"protectPorts":["8080","9000"],"protectHosts":["staging.example","10.0.0.5"],"protectProcs":["redis","node"]}}'
 cfg "$UC" "$RES_CFG"
 # want <TAB> tool <TAB> command ; every ask row is also run against a guard without the rule (negative control below)
 RES_TABLE="$(cat <<'TABLE'
@@ -741,8 +741,8 @@ expect allow 'pkill redis' "guard.enabled=false disables protected-resources"
 # rule's two call sites removed) every one of them is allowed, so the table would fail
 cfg "$UC" "$RES_CFG"
 MUT="$(mktemp -d)"; cp "$HERE/../scripts/"*.sh "$MUT/"
-grep -v 'if (PRON) pr_' "$G" > "$MUT/guard.sh"
-[ "$(grep -c 'if (PRON) pr_' "$G")" -eq 2 ] && ok "negative control: mutant drops both call sites" || bad "negative control: call sites changed"
+grep -v 'if (PRON[^)]*) pr_' "$G" > "$MUT/guard.sh"
+[ "$(grep -c 'if (PRON[^)]*) pr_' "$G")" -eq 2 ] && ok "negative control: mutant drops both call sites" || bad "negative control: call sites changed"
 n_ask=0; n_mut=0; n_off=0
 while IFS=$'\t' read -r want tool cmd; do
   [ "$want" = ask ] || continue
@@ -1013,6 +1013,94 @@ printf '{"maxHeavy":"x" broken' > "$SDIR/config.json"
 [ -z "$(hv_call worker-sonnet)" ] && ok "cfg cap: invalid config fails open to default 2" || bad "cfg cap: invalid config blocked"
 rm -f "$SDIR/config.json" "$SDIR/events.jsonl"
 
+
+# ---------- kill-by-name (default: deny for sub-agents, ask for the main session, deny under autopilot) ----------
+rm -f "$UC" "$PC"
+kb_main() { bash_json "$1" | decision; }
+kb_agent() { printf '{"session_id":"s","cwd":"%s","agent_id":"agKB","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"command":"%s"}}' "$(esc "$P")" "${TOOL:-Bash}" "$(esc "$1")" | decision; }
+kb_ap() { local o; o="$(bash_json "$1" | SUBDECK_AUTOPILOT=1 HOME="$H" CLAUDE_PROJECT_DIR="$P" OS="$OS" bash "$G")"; if [ -z "$o" ]; then echo allow; else printf '%s' "$o" | sed 's/.*"permissionDecision":"\([a-z]*\)".*/\1/'; fi; }
+KB_NAME_TABLE="$(cat <<'TABLE'
+Bash	pkill chrome
+Bash	pkill -f "my server"
+Bash	pkill -9 node
+Bash	killall chrome
+Bash	killall -9 chrome
+Bash	taskkill /IM chrome.exe /F
+Bash	taskkill /F /IM chrome.exe
+Bash	sudo pkill nginx
+Bash	kill $(pgrep chrome)
+Bash	kill -9 $(pidof chrome)
+Bash	pgrep chrome | xargs kill
+Bash	echo hi && pkill chrome
+PowerShell	Stop-Process -Name chrome
+PowerShell	Stop-Process -Name chrome -Force
+PowerShell	spps -Name chrome
+PowerShell	Get-Process chrome | Stop-Process
+PowerShell	Get-Process -Name chrome | Stop-Process -Force
+PowerShell	gps chrome | Stop-Process
+PowerShell	taskkill /IM chrome.exe
+TABLE
+)"
+KB_PID_TABLE="$(cat <<'TABLE'
+Bash	kill 1234
+Bash	kill -9 1234
+Bash	kill -TERM 1234 5678
+Bash	kill $PID
+Bash	kill %1
+Bash	pgrep chrome
+Bash	pidof chrome
+Bash	ps aux | grep chrome
+Bash	taskkill /PID 1234 /F
+Bash	taskkill /F /PID 1234
+PowerShell	Stop-Process -Id 4242
+PowerShell	Stop-Process -Id 4242 -Force
+PowerShell	Get-Process chrome
+PowerShell	Get-Process -Name chrome | Select-Object Id
+PowerShell	taskkill /PID 4242
+TABLE
+)"
+while IFS=$'\t' read -r tool cmd; do
+  [ -n "$tool" ] || continue
+  TOOL="$tool" ; export TOOL
+  [ "$(kb_main "$cmd")" = ask ]   && ok "kill-by-name main session asks: $cmd" || bad "kill-by-name main session ask: $cmd (got $(kb_main "$cmd"))"
+  [ "$(kb_agent "$cmd")" = deny ] && ok "kill-by-name sub-agent denied: $cmd" || bad "kill-by-name sub-agent deny: $cmd (got $(kb_agent "$cmd"))"
+  [ "$(kb_ap "$cmd")" = deny ]    && ok "kill-by-name autopilot denied: $cmd" || bad "kill-by-name autopilot deny: $cmd (got $(kb_ap "$cmd"))"
+done <<< "$KB_NAME_TABLE"
+while IFS=$'\t' read -r tool cmd; do
+  [ -n "$tool" ] || continue
+  TOOL="$tool" ; export TOOL
+  [ "$(kb_main "$cmd")" = allow ] && [ "$(kb_agent "$cmd")" = allow ] && [ "$(kb_ap "$cmd")" = allow ] && ok "kill-by-name leaves allowed: $cmd" || bad "kill-by-name negative control: $cmd (got $(kb_main "$cmd")/$(kb_agent "$cmd"))"
+done <<< "$KB_PID_TABLE"
+unset TOOL
+out="$(printf '{"session_id":"s","cwd":"%s","agent_id":"agKB","tool_name":"Bash","tool_input":{"command":"pkill chrome"}}' "$(esc "$P")" | HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
+has "$out" 'SubDeck guard \(kill-by-name\).*Kill by PID a process you started yourself.*never by name' "kill-by-name message"
+has "$out" 'To change this rule: /subdeck:settings set kill-by-name=deny\|ask\|allow' "kill-by-name message names the setting"
+# modes
+for m in allow off; do
+  cfg "$UC" "{\"guard\":{\"rules\":{\"kill-by-name\":\"$m\"}}}"
+  [ "$(kb_main 'pkill chrome')" = allow ] && [ "$(kb_agent 'pkill chrome')" = allow ] && [ "$(kb_ap 'pkill chrome')" = allow ] && ok "kill-by-name=$m passes" || bad "kill-by-name=$m passes"
+done
+cfg "$UC" '{"guard":{"rules":{"kill-by-name":"deny"}}}'
+[ "$(kb_main 'pkill chrome')" = deny ] && ok "kill-by-name=deny denies the main session" || bad "kill-by-name=deny main"
+cfg "$UC" '{"guard":{"rules":{"kill-by-name":"ask"}}}'
+[ "$(kb_main 'pkill chrome')" = ask ] && [ "$(kb_agent 'pkill chrome')" = ask ] && ok "kill-by-name=ask asks everyone" || bad "kill-by-name=ask"
+cfg "$UC" '{"guard":{"enabled":false}}'
+[ "$(kb_agent 'pkill chrome')" = allow ] && ok "guard disabled: kill-by-name inactive" || bad "guard disabled: kill-by-name"
+# protected-resources still works and the stricter decision wins
+cfg "$UC" '{"guard":{"rules":{"kill-by-name":"allow"},"protectProcs":["redis"]}}'
+[ "$(kb_main 'pkill redis')" = ask ] && ok "protected-resources unchanged with kill-by-name=allow" || bad "protected-resources with kill-by-name=allow"
+[ "$(kb_main 'pkill chrome')" = allow ] && ok "unlisted name allowed with kill-by-name=allow" || bad "unlisted name with kill-by-name=allow"
+cfg "$UC" '{"guard":{"protectProcs":["redis"]}}'
+[ "$(kb_agent 'pkill redis')" = deny ] && ok "both rules fire for a sub-agent: stricter (deny) wins" || bad "stricter wins"
+cfg "$UC" '{"guard":{"rules":{"protected-resources":"deny","kill-by-name":"ask"},"protectProcs":["redis"]}}'
+[ "$(kb_main 'pkill redis')" = deny ] && ok "protected-resources=deny beats kill-by-name=ask" || bad "protected-resources deny vs kill-by-name ask"
+# other decisions unchanged
+rm -f "$UC" "$PC"
+expect deny 'git add -A && pkill chrome' "deny of another rule still wins"
+expect allow 'git status' "unrelated command unaffected"
+# guard.sh show lists the rule
+out="$(HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G" show 2>&1)"; has "$out" '^kill-by-name +auto +default' "show lists kill-by-name"
+rm -f "$SDIR/config.json" "$SDIR/events.jsonl"
 # ---------- hooks.json matcher: the guard entry must cover the Agent and Task tools (negative control: HEAD~ version) ----------
 gm_of() { awk '/"PreToolUse"/{f=1} f && /"matcher"/{ gsub(/.*"matcher": *"|".*/, ""); print; exit }'; }
 GM_NOW="$(gm_of < "$HERE/../hooks/hooks.json")"

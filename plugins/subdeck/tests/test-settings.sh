@@ -108,6 +108,7 @@ chk "empty branches" "protect-branches needs" protect-branches= worker=haiku
 chk "bad statusline" "statusline must be" statusline=maybe worker=haiku
 chk "bad report-check" "report-check must be on or off" report-check=maybe worker=haiku
 chk "bad protected-resources" "protected-resources must be deny, ask or off" protected-resources=nope worker=haiku
+chk "bad kill-by-name" "kill-by-name must be auto, deny, ask or allow" kill-by-name=nope worker=haiku
 chk "tasks.dir with .." "'..' segments are not allowed" tasks.dir=../elsewhere worker=haiku
 chk "tasks.dir with inner .." "'..' segments are not allowed" 'tasks.dir=docs\..\..\x' worker=haiku
 chk "tasks.dir with a quote" "no quotes or control characters" 'tasks.dir=a"b' worker=haiku
@@ -183,6 +184,16 @@ out="$(run set tasks.dir=docs/tasks worker=opus)"
 out="$(run reset)"
 grep -q '"tasks"' "$CFG" 2>/dev/null && bad "reset kept the tasks member" || ok "reset removes the tasks member"
 has "$out" '^ +report-check +on *$' "reset: report-check default"
+
+# ---- kill-by-name ----
+rm -f "$CFG"; rm -rf "${SS:?}"/*
+out="$(run)"; has "$out" '^ +kill-by-name +auto *$' "table: kill-by-name default auto"
+out="$(run set kill-by-name=allow)"; rc=$?
+[ $rc -eq 0 ] && grep -q '"kill-by-name":"allow"' "$CFG" && ok "set kill-by-name=allow stored" || bad "kill-by-name=allow: rc=$rc $(cat "$CFG" 2>/dev/null)"
+has "$out" '^ +kill-by-name +allow +user' "table: kill-by-name allow"
+j="$(run json)"; has "$j" '"key":"kill-by-name","value":"allow","source":"user","group":"guard","type":"enum","options":\["auto","deny","ask","allow"\]' "json: kill-by-name"
+out="$(run set kill-by-name=deny)"; grep -q '"kill-by-name":"deny"' "$CFG" && ok "set kill-by-name=deny stored" || bad "kill-by-name=deny"
+rm -f "$CFG"; rm -rf "${SS:?}"/*
 
 # ---- protected resources (routed to guard.sh cli ports|hosts|procs) ----
 rm -f "$CFG"; rm -rf "${SS:?}"/*
