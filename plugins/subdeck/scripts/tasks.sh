@@ -38,12 +38,13 @@
 #   done <id>[,<id>...] [--force]   every latest verdict must be Approved (auto tasks need none); moves files to archive/ (--force refused when SUBDECK_AUTOPILOT=1)
 #   list [--status s] [--all] [--json|--tsv]   default: one terse line "<id> <status> <owner|-> <title>"; --tsv = id status owner agent updated title
 #   ready [--json|--tsv]       open tasks whose blocked-by ids all exist and are done; warns on stderr after a quota_recent event
+#   warm <path>...             finished agents worth resuming for these paths: "<agent> <role> <task> overlap=N ctx=Nk age=Nm changed=N stopped=S -> resume|stale|fresh" (or none); read-only
 #   show <id> [--section task|done-when|report|verification|handoff|progress|question]   the file verbatim (live or archive), or one section's body
 #   dir                        the resolved task dir (not created)
 #   hook <SubagentStart|SubagentStop|StopFailure>   payload on stdin; called by log-event.sh; always exits 0
 #                              auto-bind (worker/researcher without a task), report_too_long (> 9 lines), quota_recent;
 #                              a reply with a Decision other than none, or Stop: waiting..., sets the task to needs-user
-# Every CLI call except hook appends one tasks_cli event (bytes written, exit code); SUBDECK_METER=0 turns that off.
+# Every CLI call except hook and warm (a read-only lookup that must stay fast) appends one tasks_cli event (bytes written, exit code); SUBDECK_METER=0 turns that off.
 # Exit codes (CLI): 0 ok, 1 id not found, 2 usage / invalid value, 3 done refused, 4 lock busy.
 # Task dir: env SUBDECK_TASKS_DIR, else config tasks.dir (project config wins over ~/.subdeck/config.json),
 #   else <state>/tasks (lib-paths.sh). Relative values are relative to the project. Task file grammar: see docs.
@@ -2109,10 +2110,167 @@ hook_main() {
   return 0
 }
 
+# ---------- warm: which finished agents are worth resuming ----------
+# warm <path>...  one line per candidate agent (newest first), read-only, fails open with the single word "none":
+#   <agent_id> <role> <task|-> overlap=<n> ctx=<k>k age=<m>m changed=<n> stopped=<end_turn|mid|running|?> -> resume|stale|fresh
+# Sources: events.jsonl (SubagentStart/Stop), the agent transcript tail (context size, age and stop reason of the LAST request,
+# not of the stop event), the task file (writable paths + grants) and the file_path inputs in the transcript.
+# Verdict: resume = role fits (not verifier/Explore/Plan), age < 4 min (55 with subagentPromptCacheTtl=1h), ctx <= 150k, overlap >= 1,
+# stopped=end_turn; stale = age >= 5 min (60 with 1h): never resume; else fresh. The manager adds the n/overlap-count rule.
+warm_epoch() { # ISO 8601 UTC -> WE (epoch seconds) or empty
+  WE="$(printf '%s' "$1" | awk '{
+    if (!match($0, /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][T ][0-9][0-9]:[0-9][0-9]:[0-9][0-9]/)) exit
+    y = substr($0,1,4)+0; m = substr($0,6,2)+0; d = substr($0,9,2)+0
+    if (m <= 2) { y--; m += 12 }
+    days = 365*y + int(y/4) - int(y/100) + int(y/400) + int((153*(m-3)+2)/5) + d - 719469
+    print days*86400 + substr($0,12,2)*3600 + substr($0,15,2)*60 + substr($0,18,2)
+  }')"
+}
+warm_mtime() { # FILE -> WM (epoch seconds) or empty
+  WM="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null)"
+  [[ $WM =~ ^[0-9]+$ ]] || WM=""
+}
+warm_norm() { # PATH -> WN (project-relative where possible, forward slashes, lower case on Windows)
+  local p="${1//\\//}"
+  sd_norm_path "$p"; p="${SD_NORM:-$p}"
+  case "$p" in "$WARM_PN"/*) p="${p#"$WARM_PN"/}" ;; esac
+  WN="${p#./}"
+}
+warm_match() { # PATH WRITABLE-ENTRY -> 0 when PATH is covered by the entry (exact, directory prefix or glob)
+  local p="$1" w="${2//\\//}"
+  [ -n "$w" ] || return 1
+  w="${w#./}"
+  if [ "$WARM_PLAT" = win ]; then sd_lower "$w"; w="$SD_LOWER"; fi
+  [ "$p" = "$w" ] && return 0
+  case "$w" in
+    */\*\*|*/\*) w="${w%\*}"; w="${w%\*}"; w="${w%/}"; case "$p" in "$w"/*) return 0 ;; esac; return 1 ;;
+    */) w="${w%/}"; case "$p" in "$w"/*) return 0 ;; esac; return 1 ;;
+  esac
+  case "$p" in "$w"/*) return 0 ;; esac
+  case "$w" in *\**|*\?*|*\[*) [[ $p == $w ]] && return 0 ;; esac
+  return 1
+}
+warm_ttl_limit() { # -> WLIMIT: minutes an agent may be idle and still be resumed (4; 55 with subagentPromptCacheTtl=1h)
+  local v="${CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL:-}" f c
+  if [ -z "$v" ]; then
+    for f in "$PROJECT/.claude/settings.local.json" "$PROJECT/.claude/settings.json" "${HOME}/.claude/settings.json"; do
+      [ -f "$f" ] || continue
+      c="$(tr -d '\r\n' < "$f" 2>/dev/null)"
+      if [[ $c =~ \"subagentPromptCacheTtl\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then v="${BASH_REMATCH[1]}"; break; fi
+    done
+  fi
+  if [ "$v" = 1h ]; then WLIMIT=55; else WLIMIT=4; fi
+}
+warm_lines() {
+  local -a want wp w; local a p now cands aid ty ses lastev ts tp role tid wr g2 last stamp epoch ctx_in ctx_cc ctx_cr ctxk sr stopped
+  local overlap changed r ov_list f agem verdict i upd id st ow ag se tr bl w2 cr arch inv file
+  want=(); wp=()
+  for a in "${ARGV[@]}"; do [ -n "$a" ] && want[${#want[@]}]="$a"; done
+  [ ${#want[@]} -gt 0 ] || return 0
+  sd_platform; WARM_PLAT="$SD_PLAT"
+  sd_norm_path "$PROJECT"; WARM_PN="$SD_NORM"
+  for a in "${want[@]}"; do warm_norm "$a"; wp[${#wp[@]}]="$WN"; done
+  warm_ttl_limit
+  now=""; now_s now
+  [ -f "$STATE/events.jsonl" ] || return 0
+  cands="$(tail -n 3000 "$STATE/events.jsonl" 2>/dev/null | awk -v sid="${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-${SUBDECK_SESSION:-}}}" '
+    function fld(l, k) { if (match(l, "\"" k "\":\"[^\"]*\"")) return substr(l, RSTART + length(k) + 4, RLENGTH - length(k) - 5); return "" }
+    /"event":"Subagent(Start|Stop)"/ {
+      aid = fld($0, "agent_id"); if (aid == "") next
+      s = fld($0, "session_id"); if (sid != "" && s != sid) next
+      t = fld($0, "agent_type"); if (t != "") ty[aid] = t
+      ses[aid] = s
+      ev[aid] = ($0 ~ /"event":"SubagentStart"/) ? "S" : "E"
+      ts[aid] = fld($0, "ts")
+      if (match($0, /"agent_transcript_path":"([^"\\]|\\.)*"/)) { x = substr($0, RSTART + 25, RLENGTH - 26); gsub(/\\\\/, "/", x); gsub(/\\\//, "/", x); tpath[aid] = x }
+    }
+    END { for (a in ev) printf "%s\037%s\037%s\037%s\037%s\037%s\n", ts[a], a, ty[a], ses[a], ev[a], tpath[a] }' | sort -r | head -n 12)"
+  [ -n "$cands" ] || return 0
+  collect 0
+  while IFS=$'\037' read -r ts aid ty ses lastev tp; do
+    [ -n "$aid" ] || continue
+    role="${ty#subdeck:}"; [ -n "$role" ] || role="-"
+    tid="-"; wr=""
+    if [ -n "$ROWS" ]; then
+      while IFS="$US" read -r upd id st ow ag se tr bl w2 cr arch inv file; do
+        if [ "$ag" = "$aid" ]; then
+          tid="$id"; wr="$w2"; [ -n "$tr" ] && [ -z "$tp" ] && tp="$tr"
+          g2=""; load_task "$file" 2>/dev/null && g2="$T_grants"
+          eff_writable "$wr" "$g2"; wr="$EFF"
+          break
+        fi
+      done <<< "$ROWS"
+    fi
+    # last request of the agent: context size, time, stop reason (transcript tail)
+    ctxk="?"; stopped="?"; epoch=""; ov_list=""
+    tp="${tp//\\//}"
+    if [ -n "$tp" ] && [ -f "$tp" ]; then
+      last="$(tail -c 131072 "$tp" 2>/dev/null | grep -E '"type" *: *"assistant"' | tail -n 1)"
+      if [ -n "$last" ]; then
+        stamp=""; [[ $last =~ \"timestamp\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] && stamp="${BASH_REMATCH[1]}"
+        warm_epoch "$stamp"; epoch="$WE"
+        ctx_in=0; ctx_cc=0; ctx_cr=0
+        [[ $last =~ \"input_tokens\"[[:space:]]*:[[:space:]]*([0-9]+) ]] && ctx_in="${BASH_REMATCH[1]}"
+        [[ $last =~ \"cache_creation_input_tokens\"[[:space:]]*:[[:space:]]*([0-9]+) ]] && ctx_cc="${BASH_REMATCH[1]}"
+        [[ $last =~ \"cache_read_input_tokens\"[[:space:]]*:[[:space:]]*([0-9]+) ]] && ctx_cr="${BASH_REMATCH[1]}"
+        ctxk=$(( (ctx_in + ctx_cc + ctx_cr + 500) / 1000 ))
+        sr=""; [[ $last =~ \"stop_reason\"[[:space:]]*:[[:space:]]*\"([a-z_]*)\" ]] && sr="${BASH_REMATCH[1]}"
+        if [ "$sr" = end_turn ]; then stopped=end_turn; else stopped=mid; fi
+      fi
+      ov_list="$(grep -o '"file_path" *: *"[^"]*"' "$tp" 2>/dev/null | sed 's/^"file_path" *: *"//; s/"$//' | sort -u)"
+    fi
+    [ "$lastev" = S ] && stopped=running
+    if [ -z "$epoch" ]; then warm_epoch "$ts"; epoch="$WE"; ctxk="?"; fi
+    agem="?"
+    if [ -n "$epoch" ] && [ -n "$now" ]; then agem="$(awk -v a="$((now - epoch))" 'BEGIN { if (a < 0) a = 0; printf "%.1f", a / 60 }')"; fi
+    # overlap with the asked paths: task writable list (+ grants), or files the agent read or edited
+    overlap=0; changed=0; i=0
+    for p in "${wp[@]}"; do
+      r=0
+      if [ -n "$wr" ]; then
+        IFS=, read -ra w <<< "$wr"
+        for f in "${w[@]}"; do if warm_match "$p" "$f"; then r=1; break; fi; done
+      fi
+      if [ "$r" = 0 ] && [ -n "$ov_list" ]; then
+        while IFS= read -r f; do
+          [ -n "$f" ] || continue
+          warm_norm "$f"; if [ "$WN" = "$p" ]; then r=1; break; fi
+        done <<< "$ov_list"
+      fi
+      if [ "$r" = 1 ]; then
+        overlap=$((overlap + 1))
+        f="${want[$i]}"; case "$f" in /*|[A-Za-z]:*) ;; *) f="$PROJECT/$f" ;; esac
+        if [ -n "$epoch" ] && [ -f "$f" ]; then warm_mtime "$f"; if [ -n "$WM" ] && [ "$WM" -gt "$epoch" ]; then changed=$((changed + 1)); fi; fi
+      fi
+      i=$((i + 1))
+    done
+    verdict=fresh
+    if [ "$agem" != "?" ] && [ "$ctxk" != "?" ]; then
+      case "$role" in
+        verifier*|Explore|Plan) verdict=fresh ;;
+        *)
+          if awk -v a="$agem" -v l="$WLIMIT" 'BEGIN { exit !(a >= l + 1) }'; then verdict=stale
+          elif awk -v a="$agem" -v l="$WLIMIT" 'BEGIN { exit !(a < l) }' && [ "$ctxk" -le 150 ] && [ "$overlap" -ge 1 ] && [ "$stopped" = end_turn ]; then verdict=resume
+          fi ;;
+      esac
+    fi
+    [ "$agem" = "?" ] || agem="${agem}m"
+    [ "$ctxk" = "?" ] || ctxk="${ctxk}k"
+    printf '%s %s %s overlap=%s ctx=%s age=%s changed=%s stopped=%s -> %s\n' "$aid" "$role" "$tid" "$overlap" "$ctxk" "$agem" "$changed" "$stopped" "$verdict"
+  done <<< "$cands"
+  return 0
+}
+cmd_warm() {
+  [ ${#ARGV[@]} -gt 0 ] || die 2 "usage: warm <path>..."
+  local out
+  out="$(warm_lines 2>/dev/null)" || true
+  if [ -n "$out" ]; then printf '%s\n' "$out"; else echo none; fi
+  return 0
+}
 # ---------- dispatch ----------
 run_cli() {
   case "$CMD" in
-    "") die 2 "usage: tasks.sh [--project <dir>] <new|set|append|step|history|resume-prompt|rewind|worktree|ask|answer|strike|interrupt|link|verify|verify-level|verify-delta|grant|pack|writable|done|list|ready|show|dir|hook> ..." ;;
+    "") die 2 "usage: tasks.sh [--project <dir>] <new|set|append|step|history|resume-prompt|rewind|worktree|ask|answer|strike|interrupt|link|verify|verify-level|verify-delta|grant|pack|writable|done|list|ready|warm|show|dir|hook> ..." ;;
   esac
   resolve_dir
   case "$CMD" in
@@ -2138,6 +2296,7 @@ run_cli() {
     answer) cmd_answer ;;
     list) cmd_list ;;
     ready) cmd_ready ;;
+    warm) cmd_warm ;;
     show) cmd_show ;;
     dir) printf '%s\n' "$DIR" ;;
     *) die 2 "unknown command '$CMD'" ;;
@@ -2164,4 +2323,4 @@ meter_cli() {
 case "$CMD" in
   hook) hook_main >/dev/null 2>&1 || log_err "hook failed (${ARGV[0]:-})"; lock_release; [ -n "$BLOCK_OUT" ] && printf '%s\n' "$BLOCK_OUT"; exit 0 ;;
 esac
-if [ "${SUBDECK_METER:-}" = 0 ]; then run_cli; else meter_cli; fi
+if [ "${SUBDECK_METER:-}" = 0 ] || [ "$CMD" = warm ]; then run_cli; else meter_cli; fi
