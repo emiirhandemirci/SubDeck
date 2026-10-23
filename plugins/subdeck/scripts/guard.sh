@@ -1299,7 +1299,19 @@ if [ $# -eq 0 ] || [ "$1" = hook ]; then
   SD_GUARD_BASH="${BASH:-bash}"; SD_GUARD_GP="$GP"
   export SD_GUARD_PF SD_GUARD_LF SD_GUARD_TASKS SD_GUARD_NUL SD_GUARD_CP SD_GUARD_BASH SD_GUARD_GP
   if [ "$GREAD" = 1 ]; then awk -v mode=hook "$GUARD_AWK" <<< "$GIN" 2>/dev/null
-  else awk -v mode=hook "$GUARD_AWK" 2>/dev/null; fi
+  else
+    # awk reading stdin directly cannot be trusted to see a NUL byte (BSD/macOS awk drops or truncates at it):
+    # stdin goes through a temp file and tr/cmp look for the NUL first. No temp file: awk reads stdin as before.
+    GTMP="$(mktemp "${TMPDIR:-/tmp}/sdguard.XXXXXX" 2>/dev/null)" || GTMP=""
+    if [ -n "$GTMP" ] && [ -f "$GTMP" ] && cat > "$GTMP" 2>/dev/null; then
+      tr -d ' ' < "$GTMP" 2>/dev/null | cmp -s - "$GTMP" 2>/dev/null || { SD_GUARD_NUL=1; export SD_GUARD_NUL; }
+      awk -v mode=hook "$GUARD_AWK" < "$GTMP" 2>/dev/null
+      rm -f "$GTMP" 2>/dev/null
+    else
+      [ -n "$GTMP" ] && rm -f "$GTMP" 2>/dev/null
+      awk -v mode=hook "$GUARD_AWK" 2>/dev/null
+    fi
+  fi
   exit 0
 fi
 

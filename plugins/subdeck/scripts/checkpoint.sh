@@ -29,9 +29,11 @@ sd_cp_pre() {
   [ -n "$SD_KEY" ] || return 0
   d="$SD_STATE/checkpoint-pre"; pf="$d/$aid"
   [ "${BASH_VERSINFO[0]:-3}" -ge 4 ] && to=0.5
-  { IFS= read -r -t "$to" pre; rc=$?; } < <(GIT_OPTIONAL_LOCKS=0 git -C "$g" rev-parse --verify -q HEAD 2>/dev/null </dev/null)
-  if [ "$rc" -gt 128 ]; then rm -f "$pf" 2>/dev/null; return 0; fi
-  pre="${pre%$'\r'}"; [[ $pre =~ ^[0-9a-f]{40,64}$ ]] || pre=none
+  # the child always ends its line with "ok <HEAD or empty>": bash 3.2 (macOS) returns 1, not >128, when read -t
+  # times out, so a missing "ok " prefix (timeout or killed child) is what tells a hung git from an unborn branch
+  { IFS= read -r -t "$to" pre; rc=$?; } < <(h="$(GIT_OPTIONAL_LOCKS=0 git -C "$g" rev-parse --verify -q HEAD 2>/dev/null </dev/null)"; printf 'ok %s\n' "$h")
+  if [ "$rc" -gt 128 ] || [ "${pre:0:3}" != "ok " ]; then rm -f "$pf" 2>/dev/null; return 0; fi
+  pre="${pre#ok }"; pre="${pre%$'\r'}";[[ $pre =~ ^[0-9a-f]{40,64}$ ]] || pre=none
   { [ -d "$d" ] || mkdir -p "$d"; } 2>/dev/null || return 0
   if { printf '%s\n' "$pre" > "$pf.$$.tmp" && mv -f "$pf.$$.tmp" "$pf"; } 2>/dev/null; then return 0; fi
   rm -f "$pf.$$.tmp" "$pf" 2>/dev/null

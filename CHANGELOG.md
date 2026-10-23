@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **macOS fixes:** a hung `git` during the checkpoint HEAD capture is now detected on bash 3.2 (where `read -t` timeout returns 1, not >128), so the older remembered HEAD is dropped as intended; the guard checks stdin for a raw NUL byte with `tr`/`cmp` when `CLAUDE_PROJECT_DIR` is set, because BSD awk drops or truncates at NUL and the payload was not denied.
+
 ## 0.9.3 - 2026-10-23
 
 - **Guard: kill-by-name:** new rule `kill-by-name` (default `auto`) blocks killing processes by name (`pkill`, `killall`, `taskkill /IM`, `Stop-Process -Name`, `Get-Process <name> | Stop-Process`, `kill $(pgrep <name>)`): denied for sub-agents and in autopilot runs, asked in the main session; set `deny`, `ask` or `allow` with `/subdeck:settings set kill-by-name=...`. Kill by PID of a process you started stays allowed. Works without `protect-procs`; `protected-resources` is unchanged and the stricter decision wins.
