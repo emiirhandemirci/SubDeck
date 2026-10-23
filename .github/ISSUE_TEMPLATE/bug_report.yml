@@ -18,7 +18,7 @@ body:
     id: subdeck-version
     attributes:
       label: SubDeck version
-      placeholder: "0.9.2"
+      placeholder: "0.9.3"
     validations:
       required: true
   - type: input

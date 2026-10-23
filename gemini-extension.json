@@ -1,6 +1,6 @@
 {
   "name": "subdeck",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Manager plus sub-agents toolkit: orchestrator rulebook, live agent status, SubDeck Desk dashboard and settings.",
   "contextFileName": "GEMINI.md"
 }
