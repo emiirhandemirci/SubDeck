@@ -1303,8 +1303,10 @@ if [ $# -eq 0 ] || [ "$1" = hook ]; then
     # awk reading stdin directly cannot be trusted to see a NUL byte (BSD/macOS awk drops or truncates at it):
     # stdin goes through a temp file and tr/cmp look for the NUL first. No temp file: awk reads stdin as before.
     GTMP="$(mktemp "${TMPDIR:-/tmp}/sdguard.XXXXXX" 2>/dev/null)" || GTMP=""
+    # the hook may be stopped by its timeout: remove the temp file on exit and on HUP/INT/TERM (not on KILL)
+    [ -n "$GTMP" ] && { trap 'rm -f "$GTMP" 2>/dev/null' EXIT; trap 'exit 143' HUP INT TERM; }
     if [ -n "$GTMP" ] && [ -f "$GTMP" ] && cat > "$GTMP" 2>/dev/null; then
-      tr -d ' ' < "$GTMP" 2>/dev/null | cmp -s - "$GTMP" 2>/dev/null || { SD_GUARD_NUL=1; export SD_GUARD_NUL; }
+      tr -d '\000' < "$GTMP" 2>/dev/null | cmp -s - "$GTMP" 2>/dev/null || { SD_GUARD_NUL=1; export SD_GUARD_NUL; }
       awk -v mode=hook "$GUARD_AWK" < "$GTMP" 2>/dev/null
       rm -f "$GTMP" 2>/dev/null
     else

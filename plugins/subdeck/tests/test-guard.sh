@@ -909,6 +909,15 @@ for cpd in "$P" ""; do
 done
 got="$(printf '{"session_id":"s","cwd":"%s","tool_name":"Bash","tool_input":{"command":"git add -A"}}\000' "$P" | SUBDECK_GUARD=0 HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G")"
 [ -z "$got" ] && ok "raw NUL with SUBDECK_GUARD=0: no output" || bad "raw NUL with SUBDECK_GUARD=0 printed: $got"
+# BSD/macOS awk drops NUL bytes: simulate it with an awk wrapper that strips them, so only the shell-side
+# NUL check can catch the byte (a raw NUL inside guard.sh is dropped by bash and makes that check a no-op)
+REALAWK="$(command -v awk)"; NB="$(mktemp -d)"
+{ echo '#!/bin/sh'; echo "REALAWK='$REALAWK'"; echo 'tr -d '"'"'\000'"'"' | "$REALAWK" "$@"'; } > "$NB/awk"; chmod +x "$NB/awk"
+tr -d '\000' < "$NB/awk" | cmp -s - "$NB/awk" || bad "test setup: the awk wrapper holds a raw NUL byte"
+got="$(printf '{"session_id":"s","cwd":"%s","tool_name":"Bash",\000"tool_input":{"command":"git status"}}' "$P" | PATH="$NB:$PATH" HOME="$H" CLAUDE_PROJECT_DIR="$P" bash "$G" | sed -n 's/.*"permissionDecision":"\([a-z]*\)".*/\1/p')"
+[ "$got" = deny ] && ok "raw NUL with a NUL-dropping awk (macOS): deny" || bad "raw NUL with a NUL-dropping awk (macOS): got '$got', want deny"
+rm -rf "$NB"
+tr -d '\000' < "$G" | cmp -s - "$G" && ok "guard.sh holds no raw NUL byte" || bad "guard.sh holds a raw NUL byte (bash drops it)"
 # a 2 MB Write to .env through a pipe (the real hook path) is decided well inside the 10 s hook timeout
 BIG="$(head -c 2097152 /dev/zero | tr '\0' 'a')"
 printf '{"session_id":"s","cwd":"%s","tool_name":"Write","tool_input":{"file_path":"%s/.env","content":"%s"}}' "$P" "$P" "$BIG" > "$FX/big.json"; BIG=""
