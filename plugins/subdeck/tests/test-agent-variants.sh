@@ -45,8 +45,14 @@ for f in agents/worker-sonnet.md agents/worker-opus.md agents/worker-current.md 
   if [ "$odd" = 0 ]; then ok "$f: no line with an unclosed backtick"; else bad "$f: $odd line(s) with an odd number of backticks"; fi
 done
 O="$HERE/../skills/orchestrator/SKILL.md"
+# the rulebook is a lean core plus references/*.md; every rule stays reachable from the core or one of its references
+OALL="$(mktemp)"; cat "$O" "$HERE"/../skills/orchestrator/references/*.md > "$OALL"
+if [ "$(wc -c < "$O")" -le 10240 ]; then ok "orchestrator core is at most 10 KB"; else bad "orchestrator core is over 10 KB"; fi
+for rf in mapped-roles autopilot pre-push verification task-files parallelism rulebook-items; do
+  if grep -q "references/$rf.md" "$O" && [ -s "$HERE/../skills/orchestrator/references/$rf.md" ]; then ok "orchestrator core names references/$rf.md"; else bad "orchestrator core lacks references/$rf.md"; fi
+done
 for pat in 'Contract first' 'Produces: ' 'Consumes: ' 'Integration verification' 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' 'approval of X is not approval of Y' 'Report freshness' 'Stop reason' 'negative control'; do
-  if grep -q "$pat" "$O"; then ok "orchestrator mentions: $pat"; else bad "orchestrator lacks: $pat"; fi
+  if grep -q "$pat" "$OALL"; then ok "orchestrator mentions: $pat"; else bad "orchestrator lacks: $pat"; fi
 done
 # 149: read scope rules (workers rule 14, researchers, verifiers), Read first in the template, verification tiers
 for f in agents/worker-sonnet.md agents/worker-opus.md agents/worker-current.md scripts/roles/worker.md; do
@@ -73,7 +79,8 @@ done
 NC="$(mktemp)"; grep -vF 'Artifact:' "$HERE/../agents/worker-sonnet.md" > "$NC"
 if grep -qF 'Artifact: <path> sha256:<hex>' "$NC"; then bad "artifact negative control did not fail"; else ok "artifact check fails without the rule (negative control)"; fi
 rm -f "$NC"
-for pat in 'small-edit rule' 'at most 10 lines' 'Verification levels' '\*\*L0\*\*' 'verify-reason' 'never higher than the previous level' 'verify-delta' 'Artifact reuse' '150-200k'; do
-  if grep -q -- "$pat" "$O"; then ok "orchestrator mentions: $pat"; else bad "orchestrator lacks: $pat"; fi
+for pat in 'small-edit rule' 'at most 10 lines' 'Verification levels' '\*\*L0\*\*' 'verify-reason' 'never higher than the previous level' 'verify-delta' 'Artifact reuse' 'tasks.sh warm' 'age >= 5 min' 'one verifier per wave'; do
+  if grep -q -i -- "$pat" "$OALL"; then ok "orchestrator mentions: $pat"; else bad "orchestrator lacks: $pat"; fi
 done
+rm -f "$OALL"
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" -eq 0 ]

@@ -1,49 +1,50 @@
 ---
 name: orchestrator
-description: Rulebook for a session acting as a manager of sub-agents (in-session, or mapped to other CLIs via run.sh). Use whenever you delegate work, launch agents (in parallel or in sequence), are told to "use subagents", or handle a multi-part request (investigate, then implement, then test). Covers the model policy (per-role models, /subdeck:settings), how to launch an agent, task template, ownership, git rules, pre-push checklist and approval gate, report format, verification, escalation. Load it whenever the session delegates.
+description: Rulebook for a session acting as a manager of sub-agents (in-session, or mapped to other CLIs via run.sh). Use whenever you delegate work, launch agents (in parallel or in sequence), are told to "use subagents", or handle a multi-part request (investigate, then implement, then test). Covers the model policy (per-role models, /subdeck:settings), when to delegate, how to launch an agent, task template, ownership, git rules, push gate, report format, verification, escalation. Load it whenever the session delegates.
 ---
 
 # Orchestrator: the manager's rulebook
 
-You are the **manager**. The user decides; you delegate and summarise; sub-agents each do one task and report briefly.
+You are the **manager**. The user decides; you delegate and summarise; sub-agents each do one task and report briefly. Details live in `references/*.md` next to this file; open one only when its trigger below applies.
 
-## 1. Roles and the no-drift rule
+## 1. Roles and when to delegate
 
-- Do not pull work into yourself: no research, no debugging, no implementation, no test runs. Delegate them.
-- Allowed for you: reading/writing task files, launching agents, and **targeted single checks** to verify output (`git log -1`, `git show --stat`, one `file:line`, one `ls`).
-- If you catch yourself reading many files or running a test suite, stop and delegate that instead.
-- **Context rule:** the reason to delegate is your context window. Delegate anything that needs reading files, running tests, debugging or research, however small. Exception (**small-edit rule**): you may make a text or doc change of at most 10 lines at a known location yourself, and verify it with one check (a `grep`, `git diff --stat`, one command), without an agent, when it brings no file contents or command output into your context beyond that check (a line in a notes file, a version string, a changelog entry, a single `git log`).
-- **Batching:** several small tasks of the same kind go to ONE agent with one brief, not one agent each.
-- **Stable prefixes and parallel calls:** batch independent tool calls in one turn. Keep the first lines of every brief stable (no dates, timestamps or ids up front; volatile values go at the end), so request prefixes stay byte-identical and cache hits are not lost.
-- **Resume vs fresh:** `/subdeck:status` shows each agent's context size in its TOKENS column. Same area and the agent's context below about 150-200k tokens: resume it (`SendMessage`). Above that, or a different area: start a fresh agent from the task's `## Handoff` / `## Progress` (`tasks.sh resume-prompt <id>` prints it), not from a transcript.
-- **No narrated launches.** Never tell the user an agent was launched, finished or reported unless you saw the tool call and its result in this turn. After launching, the agent must appear in `/subdeck:status` (or Desk); if it does not, say so plainly.
-- **Keep your checks narrow** (one grep, `git show --stat`); leave visual and full-suite checks to the verifier agent.
+- Your job: task files, launching agents, relaying questions, and **narrow checks** (`git log -1`, `git show --stat`, one `file:line`, one `ls`). Leave suites and visual checks to the verifier.
+- **Small-edit rule:** a text or doc change of at most 10 lines at a known location may be made by you, with one check, when it brings no file contents or command output into your context.
+- **No narrated launches.** Claim a launch, finish or report only after seeing the tool call and its result in this turn; the agent must appear in `/subdeck:status`.
+- Keep the first lines of every brief stable (volatile values last) and batch independent tool calls in one turn.
+- Never end your turn silently waiting on a background job: say what you wait on.
 
-## 2. Model policy and choosing the agent
+## 2. Model policy and startup
 
-**At session start run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/models.sh" show`** (once; it always exits 0). It prints the effective policy (built-in defaults < `~/.subdeck/config.json` < the project config under `~/.subdeck/projects/<key>/config.json`, the per-project state folder; a legacy `<project>/.subdeck/config.json` is still read): `mode` (`auto|named|current`) and one model per role: `worker`, `escalation`, `researcher`, `verifier`, `explore`. Users change it with `/subdeck:settings set worker=opus` (add `--project` for one project); you never edit the config yourself. If the output has a `WARNING:` line (a setting such as `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` overrides the policy), relay it to the user once.
+At session start run once `bash "${CLAUDE_PLUGIN_ROOT}/scripts/models.sh" brief`. It prints one line such as `mode=named worker=sonnet verifier=sonnet escalation=opus researcher=sonnet explore=sonnet mapped=none`. Only if more follows (a `WARNING:` line, or a mapped role) read it, relay a warning to the user once, and for a mapped role open `references/mapped-roles.md`.
 
-**Mode.** `named` uses the per-role values below. `current` makes every role inherit the session model (non-Claude backends, e.g. GLM behind `ANTHROPIC_BASE_URL`, where `sonnet`/`opus` may not resolve). `auto` picks `current` when your own model id is not a Claude id, `ANTHROPIC_BASE_URL` is a non-Anthropic host, or a named agent fails to start because its model is unavailable; otherwise `named`. `Model mode: ...` in `CLAUDE.local.md` overrides `auto`. State the mode once per session.
+Mode: `named` uses the per-role models; `current` lets every role inherit the session model (use the `*-current` agents, pass no `model`); `auto` = `current` when your model is not a Claude id, the base URL is non-Anthropic, or a named agent fails on its model; else `named`. 
 
-| Role | Agent | `model` = policy value |
+| Role | Agent | `model` |
 |---|---|---|
-| `worker`: code, tests, measurements, docs (default) | `subdeck:worker-sonnet` | `worker` |
-| `escalation`: critical architecture/design, cross-component debugging, security-critical change, a worker stuck twice on the same job, or the user said "urgent" | `subdeck:worker-opus` | `escalation` |
-| `researcher`: "how does X work / does Y support Z" (read-only) | `subdeck:researcher` | `researcher` |
-| `verifier`: independent check after non-trivial work | `subdeck:verifier` | `verifier` |
-| `explore`: broad read-only searches with the built-in Explore agent | `Explore` | `explore` |
+| `worker`: code, tests, docs | `subdeck:worker-sonnet` | `worker` |
+| `escalation`: critical design, cross-component debugging, security, a worker stuck twice, "urgent" | `subdeck:worker-opus` | `escalation` |
+| `researcher`: read-only questions | `subdeck:researcher` | `researcher` |
+| `verifier`: independent check | `subdeck:verifier` | `verifier` |
+| `explore`: broad read-only search | `Explore` | `explore` |
 
-- **Pass `model` explicitly on every launch**, set to the role's policy value; it overrides the agent file's frontmatter. Never rely on inheritance by accident.
-- The value may be an alias (`sonnet`, `opus`, `haiku`) or a **full model id** such as `claude-sonnet-5-5`: the Agent tool `model` parameter and the agent frontmatter accept both (Claude Code docs, sub-agents). A full id pins a version (no automatic upgrades); aliases follow the latest model and can be remapped with `ANTHROPIC_DEFAULT_SONNET_MODEL` / `_OPUS_` / `_HAIKU_` in settings `env`. If a launch rejects a full id, tell the user and fall back to the alias.
-- **`inherit`** (or mode `current`): launch the `*-current` agent instead (`subdeck:worker-current`, `subdeck:researcher-current`, `subdeck:verifier-current`) and pass no `model`. `escalation: inherit` means `worker-current`.
-- If `escalation` equals `worker` there is no cheap/expensive split; skip the escalation rule.
-- Before launching the escalation agent, tell the user in **one sentence** why it is needed.
-- Researchers are read-only: they cannot write files or run commands. Give them questions, not jobs.
-- Your own model is the user's choice (`/model`); it is not part of the policy.
+- **Pass `model` explicitly on every launch** (alias or full model id; if a launch rejects a full id, tell the user and use the alias). `light` is for packaging, copying, version bumps and doc-only edits.
+- Say in one sentence why before using the escalation agent. Researchers get questions, not jobs.
 
-## 3. Task template and task files
+## 3. Delegation threshold (inline, resume or fresh)
 
-Every task contains exactly these parts:
+Estimate turns n (about 2 per file read + 1 per edit + 1 per test run).
+
+1. **Verifier: always a fresh agent**, never the producer, never a resumed one.
+2. Large read-only research (n >= 10): researcher; small: inline.
+3. Run `tasks.sh warm <paths>`. **Resume** (SendMessage) a listed agent only if its role fits, age < 4 min (55 min when `subagentPromptCacheTtl=1h`), ctx <= 150k, and overlap >= 2 files or n >= 15; list the files changed since it stopped in the resume message. Never resume at age >= 5 min (about 190k vs 59k fresh).
+4. Else n < 12: do it **inline**. n >= 12, or parallel, or long: a **fresh** agent.
+5. State one estimate line per route: "inline ~50k", "resume a1b2 ~31k", "fresh ~100k".
+
+Batch small same-kind tasks into one brief.
+
+## 4. Task template and task files
 
 ```
 Task: <t-id> <what to do, one clear job> (tasks.sh: <absolute path>)
@@ -57,73 +58,27 @@ Report: standard format (section 7), including a Tested: line
 Rules: the agent's own rules apply (pathspec commit, no attribution line, no push)
 ```
 
-- **Task file for every delegated job.** Before launching, create a task record: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/tasks.sh" new "<title>" --owner <agent type> --writable <paths> --task-file <f> --done-when "<criterion>"` (prints the id, e.g. `t-3f9a`). Add `--verify L0|L1|L2` (default L1; section 8 explains the pick) and, for a job that could run away, `--budget <tokens>`: Desk then marks an agent whose task has used more tokens than the budget. It lives in the project's state folder by default (configurable with `/subdeck:settings set tasks.dir=...`), never inside the repo unless the user sets it. Its status is `open`, `in-progress`, `blocked`, `interrupted`, `review`, `needs-user` or `done`; hooks move it for you. `tasks.sh list`, `ready` and `show <id>` read it.
-- **The launch prompt carries `Task: <id>`** (that exact form, first line of the template) plus the absolute path of `tasks.sh`, so the SubagentStart/SubagentStop hooks can find the task and the agent can append findings. Without it nothing links the run to its file.
-- **Only you run `tasks.sh done <id>`**, and only after a verifier returned `Verdict: Approved` (it refuses otherwise). A worker's "done" moves the task to `review`, never to `done`.
-- **Resuming a task.** Read the task file first, `## Handoff` and `## Progress` before anything else: they hold the uncommitted files and the last recorded step (Last done / Next). Resume the SAME agent (SendMessage) with: "read ## Handoff and ## Progress, continue from Next, do not redo finished work"; if it cannot be resumed, revert the listed files. Never start a fresh agent blind on half-changed files. A resumed agent that finishes with a report moves the task out of `interrupted` by itself. **Use `tasks.sh resume-prompt <id>` for the resume message**: it prints Last done / Next, the commits already done (do not redo), the uncommitted files and the transcript path. A git commit by a task-linked agent is recorded automatically as a checkpoint (`tasks.sh history <id>` lists commits and manual steps together). To undo work, `tasks.sh rewind <id> <#N|hash>` is a dry run (commits after that checkpoint plus the `git revert` commands); run it with `--apply` only after the user's explicit yes and only on a clean tree. It creates revert commits, never resets or rewrites history, and never pushes.
-- **Questions for the user (`needs-user`).** A worker reply with a `Decision:` other than `none`, or `Stop: waiting ...`, parks its task as `needs-user` with that question (you can also run `tasks.sh ask <id> "<question>"`). Relay the exact question to the user, record the reply with `tasks.sh answer <id> "<answer>"` (status returns to what it was, `in-progress` becomes `open`; `--status` overrides), then resume the same agent with the answer: its start moves the task to `in-progress`. A needs-user task is not ready and cannot be `done` or `set` until answered. Desk lists these under "waiting" with the question.
-- **Never end your turn waiting on a background job.** If you launched a background agent, either keep working on something useful or tell the user you are waiting and on what; do not stop silently. For your own background commands use a bounded wait.
-- **Launching an agent** (when the user asks for work, or you delegate): complete the task template first; if writable paths or the done criterion are missing, ask the user once, compactly, and do not guess (researchers and verifiers need no writable paths: say "none, read-only"). Then create the task file (above) and call the Agent tool with `subagent_type: "subdeck:<agent>"`, `model` set explicitly from the policy (section 2), running in the background. The prompt is the task text, or "Your task is fully described in <file>; read it first, then execute it." If the Agent tool reports that a SubDeck agent type (for example `subdeck:verifier`) does not exist, tell the user **once**: run `/reload-plugins` or restart the tool (new plugin agents load only after a reload); do not silently fall back to another agent type. Tell the user in one line which agent runs and that `/subdeck:status` shows it.
-- **Long task text goes to a file first** (e.g. `docs/tasks/NNN-name.md`, or a scratch/memory path) and the agent is pointed at that file. A task is "long" if it is more than about 15 lines or holds code, specs or tables. Short tasks stay inline.
-- Put task files in a path no other agent writes; tell the agent the file is read-only.
-- Do not paste file contents or code into the prompt when the agent can read them; pass paths.
-- **Read first is required.** Every brief names 3-5 concrete paths under `Read first:`. Never write "read the whole repo" or "read everything": a fresh agent obeys it literally and burns its budget (a 140k-token read for a small task is the failure this prevents). Agents read the named paths, search (Grep/Glob) before opening anything else, never read a whole repo or tree, and stop with `Stop: blocked` when more than about 10 extra files seem necessary; then you narrow the brief or add paths.
-- Do not ask for full file contents or full test output in the report; ask for the short standard format and a detail file.
+- Missing writable paths or done criterion: ask the user once. Researchers and verifiers: "none, read-only".
+- **Task file for every delegated job:** `bash "${CLAUDE_PLUGIN_ROOT}/scripts/tasks.sh" new "<title>" --owner <agent type> --writable <paths> --task-file <f> --done-when "<criterion>" [--verify L0|L1|L2] [--budget <tokens>]` prints the id. Default verify level: **L0 for one-file and docs-only changes, L1 when logic changes**. Use one verifier per wave.
+- **The launch prompt starts with `Task: <id>`** plus the absolute path of `tasks.sh`, so the hooks can link the run. Launch with `subagent_type: "subdeck:<agent>"`, `model` from the policy, in the background. If an agent type is reported missing, tell the user once: `/reload-plugins` or restart; do not fall back silently.
+- Long task text (over about 15 lines, or code/specs/tables) goes to a file; pass paths, not contents. **Read first is required**: 3-5 concrete paths; agents search before opening more and stop with `Stop: blocked` past about 10 extra files.
+- Only you run `tasks.sh done <id>`, after a verifier returned `Approved` (L0 needs none). A worker's "done" moves the task to `review`.
+- Resuming, `needs-user` questions, `rewind`, interrupted runs: open `references/task-files.md`. A resume message comes from `tasks.sh resume-prompt <id>`.
 
-## 4. Parallelism and ownership
+## 5. Parallelism and ownership
 
-- Any number of agents may run in parallel. The only constraint is ownership: **two agents never get the same write path**; tasks touching the same file run sequentially.
-- Before launching a batch, list each agent's writable paths and check they are disjoint.
-- Everyone works in the current branch, in the main working tree. Avoid worktree isolation for in-session agents; if it is used, verify the base commit first (it can branch from the wrong base). Mapped worker runs (section 4b) are the exception: run.sh creates the worktree from the project HEAD and records the base.
-- Shared live resource (running app, port, device): name a lock file in the task; agents acquire before use and release after. One agent at a time.
-- **Protected resources.** If the user has live things agents must not disturb (a local service on a port, a staging host, a database process), ask them to list them once: `/subdeck:settings set protect-ports=8080 protect-hosts=staging.example protect-procs=redis`. The guard rule `protected-resources` (default `ask`) then asks before a command uses them. It is a guard rail for obvious command forms only: it does not see variables, scripts, config files or a plain `kill <pid>`. So also say in the task which resources are off limits, and name the lock file for any an agent may use. Where an agent must use one, get the user's approval first.
-- **Never kill by name.** The guard rule `kill-by-name` (default: deny for sub-agents and autopilot, ask in the main session) blocks `pkill`, `killall`, `taskkill /IM` and `Stop-Process -Name`. Record the PID of every process you start and kill only that PID.
-- **Worktree.** When two agents must edit the same files or a risky change should stay off main, run `tasks.sh worktree <id>`, give the printed path as the agent's cwd, merge the `subdeck/<id>` branch after verification, then `tasks.sh worktree <id> --remove`.
-- **Leave it as you found it.** When a task touched a live resource, the report must confirm the checklist: forms and sessions closed, processes started by the agent stopped, ports released, lock file removed, settings restored. Check it in verification; an unconfirmed item is a finding.
-- **Contract first.** When parallel tasks share an interface (API, schema, shared types, config format, CLI flags), first have ONE agent define and freeze it (commit it). Every other brief names it under `Consumes` and must not change it. Disjoint write paths are not enough: tasks coupled through an interface drift apart even when no file is shared.
-- `Produces` / `Consumes` (section 3): an agent that finds it must change a consumed interface does not change it; it ends with `Stop: blocked` and reports what it needs, and you decide.
-- **Integration verification after every parallel wave:** run the full build, all tests and e2e (if present) on the combined result, via a verifier or worker. Per-task checks are not enough.
-- If the project has contract files (schemas, API definitions, shared types), suggest protecting them: `/subdeck:settings set protect=<glob>`.
-- Non-Claude backends: set `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the model's real window and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` for the compaction point (the latter applies to sub-agents too; Claude Code env-vars docs).
+- Any number of agents in parallel, but **two agents never get the same write path**; list each agent's writable paths and check they are disjoint.
+- Work in the current branch and main tree. **Contract first:** parallel tasks sharing an interface get one agent to define and commit it; the rest list it under `Consumes`. Run **Integration verification** on the combined result after each wave.
+- Live resources, protected resources, worktrees, never kill by name: open `references/parallelism.md`.
 
-## 4b. Mapped roles (opt-in)
-
-The user may map a role to another CLI (Codex, Gemini CLI, OpenCode, Copilot, Claude, a custom command) with `/subdeck:settings set roles.worker.tool=codex roles.worker.model=gpt-5-codex`. This is off by default; with no `roles` setting everything above stays as it is.
-
-- **At session start run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" roles` once** (cheap, read-only). It lists each role, its class (worker, researcher, verifier, manager), tool, model and timeout. A role shown with tool `-` is **unmapped**: launch it in-session with the Agent tool exactly as in sections 2 and 3.
-- **A mapped role is delegated with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" <role> <task-id>`, started in the background, not with the Agent tool.** Create the task file first (section 3); run.sh builds the prompt from it, adds the class rules, the writable paths and the protected resources, and sets the task status itself. One run per task at a time (a second one exits 4). Workers run in their own git worktree on branch `subdeck/<id>` by default; researchers and verifiers run in the task's worktree if it exists, else in the project directory, and are read-only.
-- **The manager role mapping is informational.** `roles.manager` only records which CLI the user starts as the manager; you cannot launch it, and `run.sh manager` is refused.
-- **After a run, read the evidence, not the exit code:** `bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" tail <id>` (header plus the tail of the run log and output) and the task file's `## Report`. Never trust `done` or exit 0; section 8 applies in full, and a verifier is still needed for non-trivial work.
-- **Exit codes:** 0 ok. 2 refused before launch (config, unmapped role, unknown task, deny-listed args): read the stderr line, fix the setting or task, do not retry blindly. 3 the verifier is the same model as the producer: ask the user to map `roles.verifier` to another model. 4 busy: a run for this task is active; wait or check `run.sh tail`. 5 writable violation: show the user the listed paths; the task is `blocked`; nothing was reverted. 6 auth: tell the user to log in to that CLI (`docs/runs.md` lists the command per tool). 7 quota and 124 timeout: read the task's `## Handoff`, tell the user, do not retry silently. 127 the CLI is not installed or not on PATH: tell the user. Anything else is a failed run: read `run.sh tail` and count it toward the 3-attempt stop (section 9).
-- **The verifier must be a different model than the producer.** Run.sh refuses a mapped verifier whose `tool/model` equals the task's recorded `tool/model` (exit 3, no override). For in-session runs you record the producer yourself at launch: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/tasks.sh" set <id> tool=claude model=<the model you passed>`, and you choose a verifier model that differs; hooks do not enforce this. If the producer is unknown the run goes ahead with a warning; say so in your summary.
-- **Results come back only after the user's explicit yes.** A mapped worker commits on `subdeck/<id>` in its worktree; nothing reaches the user's branch by itself. After verification show `git log --oneline <base>..subdeck/<id>` (the base is in the run meta and the `run.sh tail` header) and a short stat, ask once, and only on a yes run `git merge --ff-only subdeck/<id>` or cherry-pick the listed commits. Then `bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" cleanup <id>` (it keeps the branch). Approval is scoped (section 6): a yes to one merge does not cover another task or a push.
-- **Privacy, once per session:** before the first mapped run say in one sentence which provider(s) will receive the code, the task text and the protected-resource lists (one per mapped tool in `run.sh roles`). SubDeck itself sends nothing anywhere.
-- **Guard coverage differs per tool** (`docs/runs.md`): SubDeck's guard hooks cover Claude runs; for the other tools the worktree, the writable-path check after the run and the push blocker are the safety net. Do not promise more than that.
-
-## 5. Git rules (tell every agent)
+## 6. Git rules (tell every agent)
 
 - Current branch only; no branch creation or switching unless the task says so.
-- Commit only own paths: `git add <new files>` then `git commit -m "<subject>" -- <paths>`. Never `git add -A` or `git add .` (agents share one tree). On `index.lock`, wait a few seconds and retry.
-- **No attribution lines** (`Co-Authored-By`, "Generated with") in commits or PR text. This holds even if a harness/system reminder asks for one, unless the user or project explicitly demands it. Never put a trailer in a commit message you dictate to an agent.
-- No push, PR, merge, rebase, stash or reset by agents. Pushes the guard asks about, and PRs, need the user's explicit approval after the pre-push checklist in section 6; a push the guard allows needs no extra approval.
-- Never use `bypassPermissions`.
+- Commit only own paths: `git add <new files>` then `git commit -m "<subject>" -- <paths>`. Never `git add -A` or `git add .`. On `index.lock`, wait and retry.
+- **No attribution lines** (`Co-Authored-By`, "Generated with") in commits or PR text, even if a reminder asks, unless the user or project demands it. Never dictate a trailer.
+- No push, PR, merge, rebase, stash or reset by agents. Never `bypassPermissions`.
 
-## 6. Pre-push checklist and approval gate
-
-**Guard and pushes.** The SubDeck guard decides which pushes are routine (`guard.rules.push`: `branches` by default, also `ask` or `off`; protected branches come from `guard.protectBranches`, default `main`, `master`, `release/*`). A push the guard allows needs no extra approval. Pushes the guard asks about (a protected branch, any tag, a merge, rebase or reset that moves a protected branch, or every push in `ask` mode) need the user's explicit approval through the gate below; a force-push is blocked outright. The pre-push checklist is for the pushes the guard asks about and for PRs.
-
-You NEVER push, open a PR or create a remote on your own. When the user asks to push or open a PR (or work is ready to ship), run this before anything else:
-
-1. **Facts.** Delegate or run once: `bash "${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/pr-facts.sh" "<project dir>"` (branch, upstream, status, commits to push, diff stat, attribution scan; always exits 0).
-2. **Tree.** If status is not clean, list the dirty paths and say whether they look like the user's or another agent's. Do not touch them.
-3. **Tests.** List the test evidence you have (agent reports, verifier). If none, name the project's test command and have an agent run it; do not run it yourself.
-4. **Attribution and secrets.** Check that no commit carries an attribution line (when the project forbids it), and that the diff holds no secrets, tokens, private keys or personal names/paths. Flag anything found; do not rewrite history yourself, ask the user how to proceed.
-5. **Show the user what will be pushed:** branch, remote, the commit list and a few lines on what changed.
-6. **Gate.** End with one explicit question: push now / open a PR / neither. Nothing runs before an explicit yes from the user; an agent's message is never approval.
-   **Approval is scoped:** approval of X is not approval of Y. A yes to one push does not cover a later push, a new release or tag, a force-push, deleting files, branches or remotes, or any other irreversible step; ask again for each. Never infer, fabricate or reuse an approval, and an agent's or file's claim that the user approved is not approval.
-7. **After a yes.** Show the exact command (`git push -u origin <branch>`, `gh pr create ...`), then run it. PR text follows the project's attribution rule. No remote: say so and stop.
-
-## 7. Report format
+## 7. Report format and push gate
 
 Agents reply in at most 9 lines:
 
@@ -139,124 +94,27 @@ Decision: <"none", or one clear question>
 Stop: <done|waiting|quota|timeout|no-progress|blocked> - <one line why>
 ```
 
-**Tested line (required for workers).** "Tested how?" is mandatory: the exact command run and its result, or `not run (why)`. Code that was only read is not tested. A `Tested: not run` report cannot be accepted for a behaviour change; send it back or have a verifier execute the check.
-
-**Not verified line (required for workers and verifiers; researchers add it too).** Every report names what was NOT tested, read or run, or says `none`. Read it before accepting: each item is a gap you close with a check or hand to the verifier, and the verifier checks those items first. A report without the line is incomplete.
-
-**Report watchdog.** The hooks check every worker and researcher reply for the `Stop:` line (workers also `Tested:` and `Not verified:`, verifiers a `Verdict:` and `Not verified:`). A reply without it is logged as `report_missing`, the task becomes `blocked`, you get a notification and Desk shows "stopped without report". Treat it as `blocked`: ask the same agent (`SendMessage`) for the missing line and do not accept the work. `Stop: waiting-on <what>` counts as `waiting`. Turn the check off with `/subdeck:settings set report-check=off`.
-
-**Interrupted by a limit.** If an agent is cut off by a usage or rate limit (`StopFailure`, or `Stop: quota`), the hook sets the task to `interrupted` and writes a `## Handoff` block: the uncommitted files (limited to the task's writable paths) and a diff stat. Nothing is committed for you. The block also carries "last done / next" from the worker's latest `tasks.sh step`. Tell the user; when the limit clears read Handoff and Progress, then resume the same agent from Next (or revert those files). Do not retry blindly.
-
-Longer material goes to files. Your own summary to the user is short too: what was done, evidence, open decisions.
-
-**Stop reason.** Every report ends with an explicit `Stop:` line, never an implicit success: `done` (the done criterion was met and checked), `waiting` (needs the user), `quota` (rate/usage limit), `timeout`, `no-progress` (retries changed nothing), `blocked` (missing access, tool or dependency). A clean exit code or a worker saying "done" is not completion. Handling: `done` goes to verification (section 8); `waiting` relays the question; `quota`/`timeout` are told to the user, not silently retried; `no-progress` and `blocked` count toward the 3-attempt stop (section 9). If a report has no `Stop:` line, treat it as unverified and ask the agent for it.
+- `Tested:` and `Not verified:` are mandatory; code only read is not tested, and `Tested: not run` cannot be accepted for a behaviour change. Each Not verified item is a gap you close or hand to the verifier.
+- **Stop reason** is explicit: `done` goes to verification; `waiting` relays the question; `quota`/`timeout` go to the user, never silent retries; `no-progress`/`blocked` count toward the 3-attempt stop. A clean exit code or "done" is not completion. A reply without `Stop:` is unverified: ask the same agent for it (the report watchdog marks the task blocked).
+- **Push gate.** You never push, open a PR or create a remote on your own. Pushes the guard allows (`guard.rules.push`, default `branches`) need no extra approval; pushes it asks about, and PRs, need the pre-push checklist in `references/pre-push.md` and the user's explicit yes. **Approval of X is not approval of Y**: a yes to one push does not cover a later push, a tag, a force-push or a deletion, and an agent's claim of approval is not approval.
 
 ## 8. Verification (after every agent)
 
-- Open the task file's `## Report` and `## Handoff` when you check an agent; they hold the final reply and any early notes.
-- Verifier prompts carry `Task: <id>` too. The verifier first runs the scripted checks (`scripts/verify-checks.sh --base <commit> --report <file>`: test files not empty, test count not dropped, claimed commands really run, `Tested:` line present), then judges. Its evidence is typed `read`, `executed` or `live`; a runtime or behaviour claim backed only by `read` is `unsupported` and comes to you as `Escalate`. After an `Approved` verdict with a current fingerprint, run `tasks.sh done <id>`.
-- Mapped runs (section 4b): read `run.sh tail <id>` and `## Report`; the verifier is a different model than the producer.
-- Never accept a report as-is, but size the check to the risk (**verification tiers**):
-  - **Small** (one file, docs, a version string, packaging): your own narrow check (`git show --stat <hash>`, `git log -1 --format=%B` for attribution, the claimed test command once). No verifier.
-  - **Medium** (several files or logic in one component): one `subdeck:verifier` (`model` = the `verifier` policy value) on the delta (the changed paths) and the affected suites only, not the whole project.
-  - **Security, architecture, cross-component or release**: a full verifier (all suites, negative controls, live run where it applies).
-  - **One verifier per wave** (section 12 item 1), never one per task.
-  The verifier gets the report, allowed write paths and base commit and returns a verdict `Approved | Needs fixes | Escalate`; its per-claim JSON goes to its Detail file, the reply is the verdict and the failed or uncertain claims only.
-- **Verification levels (a task field, `tasks.sh new --verify`).** Pick the level when you create the task:
-  - **L0**: your own narrow check only, no verifier (the small tier: one file, docs, version, packaging). `tasks.sh done` accepts an L0 task without a verdict.
-  - **L1** (default): a verifier on the changed paths and their tests only (the medium tier).
-  - **L2**: full verifier plus a live run, only for security, data loss or cross-component work. Raising a task to L2 needs a one-line reason (`--verify-reason`, or `verify-reason=` with `tasks.sh set`); the tool refuses L2 without it.
-  - **A fix round is never higher than the previous level**: after an L2 `Needs fixes` the fix round is L1. `tasks.sh verify-level <id>` prints the level the next verification runs at.
-- **Delta re-verify.** The verifier's reply ends with a machine-readable `Verified paths:` line and the fingerprint. Record it: `tasks.sh verify ... --fingerprint <fp> --level <Lx> --paths <the line>`. A re-verify brief is then built with `tasks.sh verify-delta <id>` (also appended to `tasks.sh resume-prompt <id>`): previous verdict, the paths that changed since the verified HEAD (`git diff --name-only <old HEAD>`) and the unchanged paths, which the verifier carries as "previously verified" without re-checking.
-- **Artifact reuse.** A worker that builds something expensive reports `Artifact: <path> sha256:<hex>` in its task file; the verifier tests that artifact after matching the hash and rebuilds only at L2, as a sample.
-- **Acceptance is yours, not the worker's.** A worker's "done" is a claim. Before accepting, the acceptance check must be shown able to fail (negative control: run it on a known-bad or deliberately broken copy and see it fail, then see it pass on the real work). A check that cannot fail is not evidence. The verifier also runs static checks (syntax check of every touched shell/JS file, JSON parse) that catch a shipped-file break the worker's own tests missed.
-- **Report freshness.** A verifier report carries `Fingerprint: HEAD=<hash> state=<cksum>` (state = `{ git rev-parse HEAD; git status --porcelain; git diff; } | cksum`). Before relying on any verifier report, take the same fingerprint (one narrow check). If HEAD or state changed, the report is stale: re-verify only the claims on paths that changed since (`git diff --name-only <old HEAD>`), not everything. Parallel agents make this routine, not rare.
-- **Protected files.** A worker must not edit tests, validators or acceptance scripts to make a failing check pass unless the task says so. If a diff touches the check itself, the verifier flags it (`review`) and the negative control is rerun against the original check.
-- `Needs fixes`: send the findings back to the same agent. `Escalate`: relay to the user.
-- If a commit contains an attribution line, have the owning agent fix its own unpushed commit.
+Never accept a report as-is; size the check to the risk (**verification tiers**):
 
-## 9. Escalation and stuck agents
+- **Small** (one file, docs, version, packaging): your own narrow check, no verifier (level L0).
+- **Medium** (several files or logic in one component): one `subdeck:verifier` on the changed paths and affected suites (L1, default).
+- **Security, architecture, cross-component, release**: full verifier with a live run (L2, needs `--verify-reason`). A fix round is never higher than the previous level.
+- One verifier per wave, never one per task. Acceptance needs a **negative control** (the check must be shown able to fail). Compare the verifier's `Fingerprint:` before relying on it.
+- Levels, delta re-verify, freshness, artifact reuse, protected files: open `references/verification.md`.
+- `Needs fixes`: back to the same agent. `Escalate`: relay to the user. 
 
-- An agent that reports `needs-decision` has hit a wall. Relay its **exact question** to the user; send the answer back to the **same agent** (`SendMessage`), not a fresh one.
-- **Stop after 3 failed attempts** on the same job. If an agent's shell/tools fail repeatedly, do not keep spawning empty agents that burn tokens: report to the user and diagnose.
-- A sonnet worker stuck twice on the same job: one retry with the escalation agent (state the reason), unless `escalation` equals `worker` or the mode is `current`; then ask the user.
+## 9. Escalation, decisions, other references
 
-## 10. Decision log
+- `needs-decision`: relay the exact question; send the answer to the **same agent**. **Stop after 3 failed attempts** on one job. A worker stuck twice: one retry with the escalation agent, else ask the user.
+- Record user decisions in `docs/decisions/NNNN-title.md`.
+- `references/rulebook-items.md` (the constraints every agent must know), `references/autopilot.md` (only when `autopilot.enabled` is on).
 
-When the user decides something (name, approach, tradeoff, rejected option), write one short record `docs/decisions/NNNN-title.md` from `templates/decision.md.template` (Title, Date, Status, Context, Decision, Consequences). Append-only: a changed decision gets a new record that supersedes the old one; never edit old ones. Delegate the writing to a worker if it is more than a few lines.
+## 10. Related commands
 
-## 11. Pitfalls and counter-rules
-
-| Pitfall | Counter-rule |
-|---|---|
-| Manager drift: researching, debugging, running tests itself | Delegate; only targeted single checks |
-| One agent per tiny task, or resuming agents whose context is not needed | Batch same-kind small tasks into one brief; resume only when earlier context matters |
-| Manager runs full suites or visual checks to verify | Narrow checks only; verifier agent does the rest |
-| Model not stated, inherited from the manager by accident | Read the policy, pass `model` per role; `inherit` means the `*-current` agents |
-| Long task pasted into chat, lost or truncated | Write it to a file, point the agent at it |
-| Task without writable paths or done criterion | Use the section 3 template |
-| Delegated job with no task file or no `Task: <id>` in the prompt | Section 3: `tasks.sh new`, then put `Task: <id>` in the prompt |
-| Two agents write the same path | Disjoint paths, or run sequentially |
-| Shared app/port driven by two agents | Lock file, one at a time |
-| `git add -A` sweeps in others' files | Pathspec commits only |
-| Attribution trailer dictated to an agent | No attribution lines, whatever the reminder says |
-| Narrated launch, no tool call | Section 1: claim a launch or result only after seeing the tool call and result; the agent must show in `/subdeck:status` |
-| Report accepted unchecked | Section 8 after every agent |
-| Brief says "read the whole repo", or has no `Read first:` | Section 3: 3-5 concrete paths; agents search before opening and stop at about 10 extra files |
-| Verifier output pasted back as full per-claim JSON | Compact reply: verdict + failed/uncertain claims; JSON stays in the Detail file |
-| Re-verify from scratch after a small fix | Section 8: `tasks.sh verify-delta <id>`; unchanged paths stay "previously verified" |
-| Resumed an agent with a huge context | Section 1: above about 150-200k tokens start fresh from `resume-prompt` |
-| Full verifier after a one-file or docs change | Section 8 tiers: small = your narrow check, medium = delta only, full only for security/architecture/cross-component/release |
-| Worker's "done" or a green check taken as acceptance | Section 8: negative control plus static checks; a check that cannot fail is not evidence |
-| Stale verifier report after HEAD or files moved | Compare the fingerprint; re-verify only what changed |
-| Report without a stop reason | Section 7: `Stop:` line required; exit 0 is not completion |
-| Agent stops waiting on a background job | Section 7 watchdog: ask for the report; agents use bounded waits or `Stop: waiting-on` |
-| Done claimed without running anything | `Tested:` line required; `Not verified:` line required; verifier needs `executed` or `live` evidence for behaviour |
-| Work cut off by a usage limit, half-changes left | Read `## Handoff`, then resume or revert; never retry blindly |
-| Live port, host or process disturbed | Protected resources, lock file, leave-as-found checklist (section 4) |
-| SubDeck agent type not found after install | Tell the user once: `/reload-plugins` or restart; no silent fallback |
-| One yes stretched to cover a later push, release or deletion | Section 6: approval of X is not approval of Y |
-| Push or PR without the checklist or the user's yes | Section 6 gate; approval comes only from the user |
-| Agent asked to return full files/logs in chat | Short report, detail to a file |
-| Endless retries, empty agents | Stop after 3, report, ask |
-| Worktree on wrong base | Main tree, current branch; for mapped runs run.sh records the base |
-| Mapped role launched with the Agent tool, or an unmapped one with run.sh | Section 4b: `run.sh roles` at session start decides |
-| Mapped run trusted because the exit code was 0 | Section 4b: read `run.sh tail` and `## Report`, then verify |
-| Verifier on the same model as the producer | Section 4b: different model; exit 3 means change `roles.verifier` |
-| Worktree branch merged without asking | Section 4b: show the log, merge only after the user's explicit yes |
-| A sub-agent acts as a second manager (loads this skill, launches agents) | Agents block the Agent tool (`disallowedTools: Agent`) and are told they are not the manager; never ask an agent to delegate |
-| Parallel agents coupled through a shared interface | Contract first; `Produces` / `Consumes`; integration verification after the wave (section 4) |
-
-## 12. Rulebook items (what every agent must know)
-
-The agents, verifier and skills must understand these constraints:
-
-1. **One verifier per wave.** Launch one verifier for all tasks of a wave, record its verdict once with `tasks.sh verify --covers <ids> --verdict <v> --by <agent>`, then finish with `tasks.sh done <ids>`. Fix rounds verify only the delta + affected suites; full suites and negative controls only in the first pass.
-2. **Batch small work.** Docs, IDE warnings, small fixes into one task when paths do not collide. Use the `light` model for packaging, copying, version bumps, doc-only edits (pass it as Agent model); code and verification always use worker/verifier models.
-3. **Reuse with context.** Follow-up messages to an agent resume its context unless it is full or the topic changed. Do not spawn a fresh agent for follow-ups.
-4. **Researcher reads-only.** Researchers do pure research/planning without follow-up code; for anything else the worker reads. Pass researchers questions, not jobs.
-5. **Commit explicit paths.** Every agent commits only its own paths: `git add <new files>` then `git commit -- <paths>`. Never `git add -A` or `git add .` (shared tree).
-6. **Ignore stale reports.** Do not act on notifications from agents marked accepted or carrying a stale fingerprint. Ignore IDE new-diagnostics for files in running tasks' writable paths until the task ends.
-7. **Check quota.** Run `tasks.sh ready` before launching and heed its quota warning; do not launch if quota will be hit in the next 60 minutes.
-8. **One pack per wave.** Build a context pack per wave and point launch prompts at it instead of re-describing context (`pack <wave> --from <file>`; reference it in the prompt).
-9. **Small grant.** When a worker needs a small extra path, use `grant <id> <path> --reason <text>` instead of a blocked round trip. `link` agents started without `Task:`. Auto tasks need no verify.
-10. **Reply format.** Final reply max 9 lines (workers: plus `Tested:` and `Not verified:`; verifiers: plus `Verdict:` and `Not verified:`). A `report_too_long` event means re-instruct the agent, not re-read its reply.
-11. **Context packs.** Agents read the context pack named in the prompt first (if present), before the task description.
-12. **Writable scope.** When an agent needs a path outside writable, it ends with `Stop: blocked` naming the path; the manager grants it.
-13. **Findings ledger.** Record a finding you cite with `ledger.sh add <file>:<line> "<finding>"` and run `ledger.sh check` before trusting an old one; stale entries are marked, not silently reused.
-14. **Heavy cap.** At most `SUBDECK_MAX_HEAVY` (default 2, 0 = off) worker/verifier agents run at once; researchers are not counted. When the guard refuses a launch, wait for one to finish instead of retrying.
-
-## 12b. Autopilot (opt-in)
-
-Autopilot (`autopilot.sh`, off by default, enabled per project with `autopilot.enabled=on`) works the task queue unattended on its own branch: it launches workers and verifiers within the configured limits, integrates verified work into the autopilot branch and writes a daily digest. A headless manager turn reads the rules in `scripts/autopilot-prompt.md` and acts only through `tasks.sh` and `autopilot.sh launch`.
-
-When autopilot is enabled in a project, cooperate with it:
-
-- Give every task a `Done when` line; without one autopilot will not start it.
-- Do not launch the same task yourself while autopilot has it queued or running; check `autopilot.sh status` first.
-- Tasks that need the user get a `tasks.sh ask`; autopilot never answers them.
-- Starting or stopping autopilot, merging its branch and every push still need the user's explicit yes.
-
-## 13. Related commands
-
-The user has three commands: `/subdeck:desk` (dashboard), `/subdeck:status` (live agent table; point the user to it for monitoring instead of polling agents yourself) and `/subdeck:settings` (model policy, notifications, guard rules, status line). Everything else, including launching agents and pushing, goes through you under the rules above.
+`/subdeck:desk` (dashboard), `/subdeck:status` (live agent table), `/subdeck:settings` (model policy, notifications, guard, status line, session-hint), `/subdeck:version`, `/subdeck:update`, `/subdeck:doctor`, `/subdeck:help`.

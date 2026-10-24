@@ -25,14 +25,15 @@ for s in desk status settings orchestrator; do
   grep -Eq 'CLAUDE_PLUGIN_ROOT|CLAUDE_PROJECT_DIR|^```!|allowed-tools|disable-model-invocation|\$ARGUMENTS' "$f" && bad "$s: Claude-specific syntax left" || ok "$s: no Claude-specific syntax"
   grep -q 'subdeck:' "$f" && bad "$s: namespaced Claude names left" || ok "$s: no subdeck: names"
 done
-for s in desk status settings; do
+for s in desk status settings version update doctor help; do
   sc="$(sed -n 's#.*<skill dir>/\.\./\.\./scripts/\([a-z]*\)\.sh.*#\1#p' "$PL/skills-portable/$s/SKILL.md" | head -1)"
   [ -n "$sc" ] && [ -f "$PL/skills-portable/$s/../../scripts/$sc.sh" ] && ok "$s: script path resolves from the skill dir" || bad "$s: script path ($sc)"
 done
 grep -o '<skill dir>/\.\./\.\./scripts/[a-z]*\.sh' "$PL/skills-portable/orchestrator/SKILL.md" | sort -u | while read -r p; do
   [ -f "$PL/skills-portable/orchestrator/${p#<skill dir>/}" ] || echo "MISSING $p"
 done > "$T/miss"; [ ! -s "$T/miss" ] && ok "orchestrator: script paths resolve" || bad "orchestrator: $(cat "$T/miss")"
-cmp -s "$PL/skills/orchestrator/pr-facts.sh" "$PL/skills-portable/orchestrator/pr-facts.sh" && grep -q '<skill dir>/pr-facts.sh' "$PL/skills-portable/orchestrator/SKILL.md" && ok "orchestrator: pr-facts.sh copied and referenced" || bad "orchestrator: pr-facts"
+cmp -s "$PL/skills/orchestrator/pr-facts.sh" "$PL/skills-portable/orchestrator/pr-facts.sh" && grep -q '<skill dir>/pr-facts.sh' "$PL/skills-portable/orchestrator/references/pre-push.md" && ok "orchestrator: pr-facts.sh copied and referenced" || bad "orchestrator: pr-facts"
+grep -rEq "CLAUDE_PLUGIN_ROOT|subdeck:" "$PL/skills-portable/orchestrator/references" && bad "orchestrator references: Claude-specific names left" || ok "orchestrator references: portable (no CLAUDE_PLUGIN_ROOT, no subdeck: names)"
 # Claude sources must stay Claude-shaped
 grep -q 'CLAUDE_PLUGIN_ROOT' "$PL/skills/desk/SKILL.md" && grep -q '^model: sonnet' "$PL/agents/worker-sonnet.md" && ok "Claude sources unchanged in shape" || bad "Claude sources changed"
 
@@ -63,7 +64,7 @@ for c in worker researcher verifier; do
   grep -q 'Not verified:' "$PL/scripts/roles/$c.md" && ok "roles/$c.md: has the Not verified: line" || bad "roles/$c.md misses Not verified:"
 done
 grep -q 'Not verified:' "$PL/skills-portable/orchestrator/SKILL.md" && grep -q 'Not verified:' "$PL/.github/agents/worker-sonnet.agent.md" && ok "portable copies carry the Not verified: line" || bad "portable copies miss Not verified:"
-grep -q '^## 4b\. Mapped roles' "$PL/skills/orchestrator/SKILL.md" && grep -q 'run.sh" roles' "$PL/skills-portable/orchestrator/SKILL.md" && ok "orchestrator: mapped roles section in source and portable copy" || bad "orchestrator mapped roles"
+grep -q '^# Mapped roles' "$PL/skills/orchestrator/references/mapped-roles.md" && grep -q 'run.sh" roles' "$PL/skills-portable/orchestrator/references/mapped-roles.md" && ok "orchestrator: mapped roles section in source and portable copy" || bad "orchestrator mapped roles"
 RT="$PL/../../docs/runs.md"
 if [ -f "$RT" ]; then
   for k in claude codex gemini agy opencode copilot; do grep -qi "$k" "$RT" || bad "docs/runs.md misses $k"; done
@@ -74,5 +75,5 @@ if [ -f "$RT" ]; then
 else bad "docs/runs.md missing"; fi
 AP_RULES="$PL/scripts/autopilot-prompt.md"
 if [ -f "$AP_RULES" ] && head -1 "$AP_RULES" | grep -q '^You are headless' && grep -q 'Never push' "$AP_RULES" && grep -q '^`Launched:' "$AP_RULES" && ! grep -q $'\r' "$AP_RULES" && ! grep -Eq '[0-9]{4}-[0-9]{2}-[0-9]{2}|t-[0-9a-f]{4}' "$AP_RULES"; then ok "autopilot-prompt.md: headless first line, never-rules, reply format, no dates or ids"; else bad "autopilot-prompt.md content"; fi
-grep -q '^## 12b. Autopilot' "$PL/skills-portable/orchestrator/SKILL.md" && ok "orchestrator: autopilot section in portable copy" || bad "orchestrator autopilot section missing in portable copy"
+grep -q '^# Autopilot' "$PL/skills-portable/orchestrator/references/autopilot.md" && ok "orchestrator: autopilot section in portable copy" || bad "orchestrator autopilot section missing in portable copy"
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" -eq 0 ]

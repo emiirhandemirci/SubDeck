@@ -5,4 +5,4 @@ SubDeck is installed. When you delegate work or launch sub-agents, follow the ru
 
 @./plugins/subdeck/skills-portable/orchestrator/SKILL.md
 
-User skills (`desk`, `status`, `settings`) live in `plugins/subdeck/skills-portable/`: each one tells you to run a script under `plugins/subdeck/scripts/` and print its output verbatim.
+User skills (`desk`, `status`, `settings`, `version`, `update`, `doctor`, `help`) live in `plugins/subdeck/skills-portable/`: each one tells you to run a script under `plugins/subdeck/scripts/` and print its output verbatim.

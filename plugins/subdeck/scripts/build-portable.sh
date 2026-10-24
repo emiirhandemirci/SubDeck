@@ -6,6 +6,7 @@
 #   skills-portable/<name>/SKILL.md   skills without Claude's "!" command injection and ${CLAUDE_PLUGIN_ROOT}:
 #                                     the script path is resolved from the skill's own directory (../../scripts)
 #   skills-portable/orchestrator/pr-facts.sh   copy
+#   skills-portable/orchestrator/references/*.md   the rulebook's reference files, same rewrites as SKILL.md
 #   scripts/roles/<class>.md          run.sh rulebooks (worker, researcher, verifier): agents/<class>-current.md body, no frontmatter
 #   .github/agents/<name>.agent.md    Copilot custom agents (Claude model/effort/memory keys dropped)
 #   .github/plugin/plugin.json        Copilot plugin manifest (found before .claude-plugin/plugin.json)
@@ -37,7 +38,7 @@ SKILLDIR='<skill dir>'   # prose placeholder the model resolves: the directory h
 
 # ---------- portable skills ----------
 rm -rf "$OUT/skills-portable"
-for name in desk status settings; do
+for name in desk status settings version update doctor help; do
   src="$SRC/skills/$name/SKILL.md"
   script="$(sed -n 's#.*scripts/\([a-z]*\)\.sh.*#\1#p' "$src" | head -n 1)"
   d="$OUT/skills-portable/$name"; mkdir -p "$d"
@@ -72,6 +73,17 @@ d="$OUT/skills-portable/orchestrator"; mkdir -p "$d"
         -e 's#subdeck:<agent>#<agent>#g'
 } > "$d/SKILL.md"
 cp "$SRC/skills/orchestrator/pr-facts.sh" "$d/pr-facts.sh"
+if [ -d "$SRC/skills/orchestrator/references" ]; then
+  mkdir -p "$d/references"
+  for rf in "$SRC"/skills/orchestrator/references/*.md; do
+    sed -e 's#"\${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/pr-facts\.sh"#"<skill dir>/pr-facts.sh"#g' \
+        -e 's#"\${CLAUDE_PLUGIN_ROOT}/scripts/#"<skill dir>/../../scripts/#g' \
+        -e 's#`/subdeck:\([a-z]*\)`#the `\1` skill#g' \
+        -e 's#/subdeck:\([a-z]*\)#the \1 skill#g' \
+        -e 's#subdeck:worker#worker#g' -e 's#subdeck:researcher#researcher#g' -e 's#subdeck:verifier#verifier#g' \
+        -e 's#subdeck:<agent>#<agent>#g' "$rf" > "$d/references/$(basename "$rf")"
+  done
+fi
 
 # ---------- portable role rulebooks (scripts/roles/<class>.md, read by scripts/run.sh) ----------
 # Body of agents/<class>-current.md without frontmatter, same subdeck: rewrites as the portable orchestrator.
@@ -129,7 +141,7 @@ sed -e '/"bash"/s#__ROOT__#$PLUGIN_ROOT#g' -e '/"powershell"/s#__ROOT__#$env:PLU
 # place; with --out DIR they go to DIR/repo-root so the sync test can compare them.
 if [ "$OUT" = "$SRC" ]; then RO="$(cd "$SRC/../.." && pwd)"; else RO="$OUT/repo-root"; fi
 DESC="Manager plus sub-agents toolkit: orchestrator rulebook, live agent status, SubDeck Desk dashboard and settings."
-RULE_TEXT="SubDeck is installed. When you delegate work or launch sub-agents, load the orchestrator skill first and follow it (model policy, task template, git rules, pre-push checklist, push only after explicit user approval). User skills: desk, status, settings."
+RULE_TEXT="SubDeck is installed. When you delegate work or launch sub-agents, load the orchestrator skill first and follow it (model policy, task template, git rules, pre-push checklist, push only after explicit user approval). User skills: desk, status, settings, version, update, doctor, help."
 
 # Cursor: .cursor-plugin/plugin.json (plugin root = repository root), rules/*.mdc, agents/*.md
 rm -rf "$RO/.cursor-plugin"; mkdir -p "$RO/.cursor-plugin/agents" "$RO/.cursor-plugin/rules"
@@ -219,7 +231,7 @@ SubDeck is installed. When you delegate work or launch sub-agents, follow the ru
 
 @./plugins/subdeck/skills-portable/orchestrator/SKILL.md
 
-User skills (`desk`, `status`, `settings`) live in `plugins/subdeck/skills-portable/`: each one tells you to run a script under `plugins/subdeck/scripts/` and print its output verbatim.
+User skills (`desk`, `status`, `settings`, `version`, `update`, `doctor`, `help`) live in `plugins/subdeck/skills-portable/`: each one tells you to run a script under `plugins/subdeck/scripts/` and print its output verbatim.
 EOF2
 echo "portable files written to $OUT"
 exit 0
