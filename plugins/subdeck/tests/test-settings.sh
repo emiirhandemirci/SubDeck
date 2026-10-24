@@ -497,5 +497,23 @@ grep -q 'help' "$SK" && ok "skill mentions help" || bad "skill does not mention 
 for d in task pr models notify guard statusline; do [ ! -e "$HERE/../skills/$d" ] && ok "skill $d removed" || bad "skill $d still present"; done
 for d in desk status settings orchestrator; do [ -f "$HERE/../skills/$d/SKILL.md" ] && ok "skill $d present" || bad "skill $d missing"; done
 
+# ---- session-hint (the one-line SessionStart hint) ----
+rm -f "$CFG"; rm -rf "${SS:?}"/*
+out="$(run)"; has "$out" '^ +session-hint +on *$' "session-hint default on"
+j="$(run json)"; has "$j" '"key":"session-hint","value":"on","source":"default","group":"tasks","type":"bool","options":\["on","off"\]' "json: session-hint bool default on"
+out="$(run help)"; has "$out" 'session-hint +on\|off' "help lists session-hint"
+out="$(run set session-hint=off 2>&1)"; rc=$?
+[ $rc -eq 0 ] && ok "session-hint=off: exit 0" || bad "session-hint=off exit $rc"
+grep -q '"sessionHint":false' "$CFG" && ok "session-hint=off stored as sessionHint:false (user)" || bad "session-hint config: $(cat "$CFG")"
+has "$out" '^ +session-hint +off +user' "show: session-hint off from user"
+run set session-hint=on --project >/dev/null 2>&1
+out="$(run)"; has "$out" '^ +session-hint +on +project' "project scope wins over user"
+run reset --project >/dev/null 2>&1; run reset >/dev/null 2>&1
+out="$(run)"; has "$out" '^ +session-hint +on *$' "reset: session-hint back to on"
+err="$(run set session-hint=maybe 2>&1)"; rc=$?
+[ $rc -eq 2 ] && ok "session-hint=maybe: exit 2" || bad "session-hint=maybe exit $rc"
+has "$err" 'session-hint must be on or off' "session-hint validation message"
+rm -f "$CFG"; rm -rf "${SS:?}"/*
+
 echo "passed=$PASS failed=$FAIL"
 [ $FAIL -eq 0 ]

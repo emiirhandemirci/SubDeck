@@ -42,8 +42,8 @@ if command -v node >/dev/null 2>&1; then
   jt "$CO" 'j.hooks.PreToolUse[0].env.SUBDECK_TOOL==="copilot" && /Bash/.test(j.hooks.PreToolUse[0].matcher)'; chk "copilot guard sets SUBDECK_TOOL=copilot" $?
   jt "$PL/hooks/hooks.json" 'JSON.stringify(j).includes("CLAUDE_PLUGIN_ROOT") && !JSON.stringify(j).includes("SUBDECK_TOOL")'; chk "Claude hooks.json untouched by tool variants" $?
   jt "$PL/hooks/hooks.json" 'j.hooks.StopFailure[0].hooks[0].command.includes("log-event StopFailure") && j.hooks.StopFailure[0].hooks[0].timeout===20 && j.hooks.StopFailure[0].hooks[0].shell==="bash"'; chk "hooks.json logs StopFailure through log-event" $?
-  for f in hooks.json codex-session-start.json copilot-session-start.json; do
-    grep -q 'run /reload-plugins or restart the tool; do not silently fall back' "$PL/hooks/$f"; chk "$f session text names /reload-plugins for a missing agent type" $?
+  for f in codex-session-start.json copilot-session-start.json; do
+    [ "$(wc -c < "$PL/hooks/$f")" -lt 400 ] && grep -q "delegating" "$PL/hooks/$f"; chk "$f session text is the one-line hint (the /reload-plugins advice lives in the rulebook)" $?
   done
 else
   echo "skip JSON structure tests (no node)"

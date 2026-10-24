@@ -2,6 +2,8 @@
 # SubDeck model policy: show / set / reset the per-role model policy.
 #
 #   bash <plugin>/scripts/models.sh [show]                         effective policy + source of each value
+#   bash <plugin>/scripts/models.sh brief                          ONE line: mode=named worker=sonnet verifier=sonnet escalation=opus researcher=sonnet explore=sonnet mapped=none
+#                                                                  (the session-start summary; the full show + run.sh roles tables follow only on a WARNING or a mapped role)
 #   bash <plugin>/scripts/models.sh set key=value ... [--project]  write user (default) or project config
 #   bash <plugin>/scripts/models.sh reset [--project]              remove the modelPolicy of that config file
 # A trailing existing directory argument is the project dir (default $CLAUDE_PROJECT_DIR, else cwd).
@@ -30,7 +32,7 @@ for a in "$@"; do
     "") ;;
     --project) SCOPE=project ;;
     --*) BADARGS+=("$a") ;;
-    show|set|reset) if [ -z "$CMD" ]; then CMD="$a"; else BADARGS+=("$a"); fi ;;
+    show|set|reset|brief) if [ -z "$CMD" ]; then CMD="$a"; else BADARGS+=("$a"); fi ;;
     *=*) PAIRS+=("$a") ;;
     *) if [ -d "$a" ]; then PROJECT="$a"; else BADARGS+=("$a"); fi ;;
   esac
@@ -170,10 +172,38 @@ show() {
   echo "Usage: /subdeck:settings set worker=sonnet verifier=opus (low-level: models.sh set worker=haiku verifier=opus [--project] | reset [--project])"
 }
 
+effval() { # KEY -> EV (effective value)
+  local v val
+  v="$(default_of "$1")"
+  val="$(getpol "$UFILE" "$1")"; if [ -n "$val" ]; then v="$val"; fi
+  if [ -n "$LFILE" ]; then val="$(getpol "$LFILE" "$1")"; if [ -n "$val" ]; then v="$val"; fi; fi
+  val="$(getpol "$PFILE" "$1")"; if [ -n "$val" ]; then v="$val"; fi
+  EV="$v"
+}
+brief() {
+  local k line="" warn roles mapped=""
+  for k in mode worker verifier escalation researcher explore; do effval "$k"; line="$line${line:+ }$k=$EV"; done
+  warn="$(warn_overrides)"
+  roles=""
+  if [ -f "$HERE/run.sh" ]; then
+    roles="$(bash "$HERE/run.sh" --project "$PROJECT" roles 2>/dev/null | tr -d '')"
+    mapped="$(printf '%s
+' "$roles" | awk -F '	' 'NF >= 3 && $3 != "-" && $3 != "" { printf "%s%s", sep, $1; sep = "," }')"
+  fi
+  echo "$line mapped=${mapped:-none}"
+  if [ -n "$warn" ] || [ -n "$mapped" ]; then
+    echo
+    show
+    if [ -n "$roles" ]; then echo; echo "Roles (role class tool model timeout source):"; printf '%s
+' "$roles"; fi
+  fi
+}
+
 for b in "${BADARGS[@]}"; do echo "warning: ignored argument '$b'"; done
 
 case "$CMD" in
   show) show ;;
+  brief) brief ;;
   reset)
     if [ ! -f "$TARGET" ]; then echo "reset: nothing to remove ($TARGET absent)"
     elif ! OTHERS="$(members "$TARGET")"; then echo "error: $TARGET is not a valid JSON object; left untouched (fix or delete it by hand)."

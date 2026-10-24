@@ -139,6 +139,32 @@ out="$(run set light='bad value')"; has "$out" "error: invalid value 'bad value'
 out="$(run reset)"; has "$out" '^light +haiku +default' "reset restores the light default"
 rm -f "$H/.subdeck/config.json"
 
+# ---- brief: one startup line; the full tables only on a WARNING or a mapped role ----
+out="$(run brief)"; rc=$?
+[ $rc -eq 0 ] && ok "brief exits 0" || bad "brief exit $rc"
+[ "$out" = "mode=auto worker=sonnet verifier=sonnet escalation=opus researcher=sonnet explore=sonnet mapped=none" ] && ok "brief: one line with the defaults and mapped=none" || bad "brief default: $out"
+[ "$(printf '%s
+' "$out" | wc -l | tr -d ' ')" = 1 ] && ok "brief: nothing else without a warning or a mapped role" || bad "brief printed more than one line"
+run set mode=named worker=opus verifier=haiku >/dev/null
+out="$(run brief)"
+[ "$out" = "mode=named worker=opus verifier=haiku escalation=opus researcher=sonnet explore=sonnet mapped=none" ] && ok "brief: shows the effective user policy" || bad "brief user: $out"
+printf '{"modelPolicy":{"worker":"sonnet"}}
+' > "$PF"
+out="$(run brief)"; has "$out" '^mode=named worker=sonnet verifier=haiku ' "brief: project value wins"
+rm -f "$PF"
+out="$(CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 run brief)"
+has "$out" '^mode=named ' "brief with a warning: first line is still the summary"
+has "$out" '^WARNING: CLAUDE_CODE_SUBAGENT_MODEL_FORCE' "brief with a warning: full show follows"
+has "$out" '^Roles \(role class tool' "brief with a warning: roles table follows"
+printf '{"roles":{"worker":{"tool":"codex","model":"gpt-5-codex"}}}
+' > "$H/.subdeck/config.json.roles"
+node -e 'const fs=require("fs");const f=process.argv[1];const j=JSON.parse(fs.readFileSync(f,"utf8"));j.roles={worker:{tool:"codex",model:"gpt-5-codex"}};fs.writeFileSync(f,JSON.stringify(j))' "$H/.subdeck/config.json"
+out="$(run brief)"
+has "$out" '^mode=named .* mapped=worker$' "brief with a mapped role: names it on the first line"
+has "$out" '^worker[[:space:]]+worker[[:space:]]+codex' "brief with a mapped role: run.sh roles table follows"
+has "$out" 'SubDeck model policy' "brief with a mapped role: models show follows"
+rm -f "$H/.subdeck/config.json" "$H/.subdeck/config.json.roles"
+
 rm -rf "$H" "$P"
 echo "$PASS passed, $FAIL failed"
 [ $FAIL -eq 0 ]
