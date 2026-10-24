@@ -153,8 +153,12 @@ SubDeck keeps its per-project records outside your project, in `~/.subdeck/proje
 | `/subdeck:desk` | Starts (or prints the URL of) Desk; `stop` stops it. |
 | `/subdeck:status` | Live agent table with the real model id per agent (`--all` includes finished agents). |
 | `/subdeck:settings` | Short table of all settings (model policy, notifications, push and guard rules, tasks, protected resources, context, status line); `help`, `set key=value`, `reset`, `--project`. |
+| `/subdeck:version` | Installed plugin version and commit, latest on GitHub main, one verdict line (up to date / N.N.N available / same version but newer commit on main). The marketplace is the repo itself, so an update always brings the current main commit even when the version string is unchanged. |
+| `/subdeck:update` | Runs `claude plugin marketplace update subdeck` and `claude plugin update subdeck@subdeck` (only SubDeck), prints version and commit before and after; then run `/reload-plugins` or restart. |
+| `/subdeck:doctor` | Health check, one line per item (ok/warn/fail/info) with a fix hint: plugin installed and enabled, hooks, the 7 agent files, Node vs the Desk minimum, state folder writable, Desk running, model policy warnings, version. Always exits 0. |
+| `/subdeck:help` | The command list, the most used settings keys and the User Guide link. |
 
-These three are the whole command surface. Launching agents and pushing go through the manager, which follows the rulebook (`/subdeck:orchestrator` opens it by hand). Coming from 0.4? `task` and `pr` are now manager rules; `models`, `notify`, `guard` and `statusline` are keys of `/subdeck:settings`. See the [User Guide](docs/USER_GUIDE.md#4-commands).
+`desk`, `status` and `settings` are the daily commands; `version`, `update`, `doctor` and `help` are small helpers. Launching agents and pushing go through the manager, which follows the rulebook (`/subdeck:orchestrator` opens it by hand). Coming from 0.4? `task` and `pr` are now manager rules; `models`, `notify`, `guard` and `statusline` are keys of `/subdeck:settings`. See the [User Guide](docs/USER_GUIDE.md#4-commands).
 
 <details>
 <summary><b>Install</b></summary>
