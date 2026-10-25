@@ -18,16 +18,17 @@ bash "$LG" add b.txt:1 "b note" >/dev/null
 check "$(bash "$LG" list | wc -l | tr -d ' ')" 2 "list shows 2"
 check "$(bash "$LG" list --path b.txt)" "2 ok b.txt:1 b note" "list --path"
 check "$(bash "$LG" check)" "2 entries, 0 stale" "check: fresh is not stale"
+check "$(bash "$LG" list --path b.txt)" "2 ok b.txt:1 b note" "check keeps text of an entry with empty agent/task"
 # negative control: file contents are not stored
 grep -q "line 5" "$SUBDECK_STATE_DIR"/*/ledger.tsv && bad "contents stored" || ok "no file contents in store"
 bash "$LG" add a.txt:99 "x" >/dev/null 2>&1; check "$?" 2 "line beyond EOF rejected"
 bash "$LG" add nope.txt:1 "x" >/dev/null 2>&1; check "$?" 2 "missing file rejected"
 # change a line within +-2 -> stale; far line -> still ok
-sed -i 's/line 6/line six changed/' "$P/a.txt"
+sed 's/line 6/line six changed/' "$P/a.txt" > "$P/a.tmp" && mv "$P/a.tmp" "$P/a.txt"   # no sed -i: GNU and BSD disagree
 check "$(bash "$LG" check)" "2 entries, 1 stale" "check: change within +-2 marks stale"
 has "$(bash "$LG" list --path a.txt)" "stale" "list shows stale"
 bash "$LG" add a.txt:10 "far" >/dev/null
-sed -i 's/line 2$/line two/' "$P/a.txt"
+sed 's/line 2$/line two/' "$P/a.txt" > "$P/a.tmp" && mv "$P/a.tmp" "$P/a.txt"
 check "$(bash "$LG" check)" "3 entries, 1 stale" "change far from cited lines keeps ok"
 check "$(bash "$LG" prune --stale)" "pruned 1" "prune --stale"
 check "$(bash "$LG" list | wc -l | tr -d ' ')" 2 "2 left after prune"

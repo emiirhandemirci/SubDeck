@@ -82,7 +82,19 @@ cmd_check() {
   [ -f "$STORE" ] || { echo "ledger empty"; return 0; }
   local tmp="$STORE.tmp.$$" id ts path line hash agent task st text nh total=0 stale=0
   : > "$tmp"
-  while IFS=$'\t' read -r id ts path line hash agent task st text; do
+  local rec rest
+  while IFS= read -r rec || [ -n "$rec" ]; do
+    # split on single tabs by hand: `read` with IFS=tab treats tab as whitespace and collapses empty fields
+    # (an empty agent/task would shift every later field and eat the finding text)
+    rest="$rec"
+    id="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    ts="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    path="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    line="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    hash="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    agent="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    task="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    st="${rest%%$'\t'*}"; text="${rest#*$'\t'}"
     [ -n "$id" ] || continue
     total=$((total + 1))
     resolve "$path"
