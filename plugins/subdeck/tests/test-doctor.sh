@@ -13,7 +13,10 @@ cat > "$T/inst.json" <<J
 {"version":2,"plugins":{"other@x":[{"version":"9.9.9","gitCommitSha":"ffffffffffffffff"}],"subdeck@subdeck":[{"scope":"user","installPath":"/p","version":"0.9.2","lastUpdated":"2026-10-22T10:00:00.000Z","gitCommitSha":"1234567890abcdef"}]}}
 J
 export SUBDECK_INSTALLED_JSON="$T/inst.json"
-D="$HERE/../scripts/doctor.sh"
+# run a copy of the plugin so the result does not depend on the checkout file modes
+mkdir -p "$T/plug"; cp -R "$HERE/../.claude-plugin" "$HERE/../hooks" "$HERE/../agents" "$HERE/../scripts" "$T/plug/"
+chmod +x "$T/plug/scripts/run-hook.cmd"
+D="$T/plug/scripts/doctor.sh"
 P="$T/proj"; mkdir -p "$P"
 printf '{"enabledPlugins":{"subdeck@subdeck":true}}' > "$T/cfg/settings.json"
 export SUBDECK_LATEST="0.9.2 1234567890abcdef"
@@ -27,8 +30,12 @@ has "$o" '^ok +state dir writable' "state dir writable"
 has "$o" '^ok +version up to date' "version ok"
 has "$o" '^info +Desk not running' "Desk not running is info"
 has "$o" '^summary: [0-9]+ ok, 0 warn, 0 fail$' "summary line"
-# problems
-printf '{"version":2,"plugins":{}}' > "$T/inst.json"
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ;; *)
+  chmod -x "$T/plug/scripts/run-hook.cmd"; o2="$(bash "$D" "$P")"
+  has "$o2" "^warn +scripts/run-hook.cmd is not executable" "non-executable run-hook.cmd: warn"
+  chmod +x "$T/plug/scripts/run-hook.cmd" ;;
+esac
+$1printf '{"version":2,"plugins":{}}' > "$T/inst.json"
 printf '{"enabledPlugins":{"subdeck@subdeck":false}}' > "$T/cfg/settings.json"
 export SUBDECK_LATEST="99.0.0 aaaaaaa"   # far above any real version, so the test survives releases
 o="$(bash "$D" "$P")"
