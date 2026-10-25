@@ -30,12 +30,12 @@ has "$o" '^summary: [0-9]+ ok, 0 warn, 0 fail$' "summary line"
 # problems
 printf '{"version":2,"plugins":{}}' > "$T/inst.json"
 printf '{"enabledPlugins":{"subdeck@subdeck":false}}' > "$T/cfg/settings.json"
-export SUBDECK_LATEST="0.9.3 aaaaaaa"
+export SUBDECK_LATEST="99.0.0 aaaaaaa"   # far above any real version, so the test survives releases
 o="$(bash "$D" "$P")"
 has "$o" '^fail +plugin subdeck@subdeck not found' "not installed: fail"
 has "$o" 'fix: claude plugin marketplace add' "fail has a fix hint"
 has "$o" '^warn +plugin is disabled' "disabled: warn"
-has "$o" '^warn +version: 0\.9\.3 available' "update available: warn"
+has "$o" '^warn +version: 99\.0\.0 available' "update available: warn"
 has "$o" 'summary: [0-9]+ ok, [1-9][0-9]* warn, 1 fail' "summary counts"
 # offline is not a warning; model override warning is
 export SUBDECK_LATEST=offline CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1
