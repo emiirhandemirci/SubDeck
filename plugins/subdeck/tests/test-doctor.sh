@@ -35,7 +35,7 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ;; *)
   has "$o2" "^warn +scripts/run-hook.cmd is not executable" "non-executable run-hook.cmd: warn"
   chmod +x "$T/plug/scripts/run-hook.cmd" ;;
 esac
-$1printf '{"version":2,"plugins":{}}' > "$T/inst.json"
+printf '{"version":2,"plugins":{}}' > "$T/inst.json"
 printf '{"enabledPlugins":{"subdeck@subdeck":false}}' > "$T/cfg/settings.json"
 export SUBDECK_LATEST="99.0.0 aaaaaaa"   # far above any real version, so the test survives releases
 o="$(bash "$D" "$P")"
