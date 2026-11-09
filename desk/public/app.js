@@ -217,6 +217,7 @@ const ABSENT_HINT = {
   codex: 'Looks for ~/.codex (or CODEX_HOME)',
   copilot: 'Looks for ~/.copilot (or COPILOT_HOME)',
   gemini: 'Looks for ~/.gemini',
+  antigravity: 'Looks for ~/.gemini/antigravity (or ANTIGRAVITY_HOME); needs Node 22.5+',
   cline: 'Looks for ~/.cline or the Cline/Roo extension storage in VS Code',
   opencode: 'Looks for the OpenCode data folder (XDG data home)',
   'subdeck-run': 'Looks for headless runs started by run.sh (<state dir>/<project>/runs)',

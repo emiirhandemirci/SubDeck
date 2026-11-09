@@ -23,12 +23,13 @@ node desk/server.mjs [--port N] [--days N] [--open] [--no-content]
 | Codex | `$CODEX_HOME` (default `~/.codex`): `state_N.sqlite` index and `sessions/` rollout files | Needs Node 22.13+. Rollout event names and sub-agent status values are unverified. |
 | Copilot | CLI: `$COPILOT_HOME/session-state` (default `~/.copilot`); VS Code Chat: `chatSessions` under the VS Code user directory | A live `inuse` lock file marks running CLI sessions (state source `lock`). VS Code Chat gives title, times and request count only. |
 | Gemini CLI | `$GEMINI_CLI_HOME/.gemini/tmp/<project>/chats/` (default `~/.gemini`) | Sub-agent parent links are inferred. |
+| Antigravity | `$ANTIGRAVITY_HOME` (default `~/.gemini/antigravity`): `conversations/<id>.db`, enriched from `conversation_summaries.db` | Needs Node 22.5+; read-only `node:sqlite`. Title, project and sub-agent links only when the summaries index has a row (it can lag). Only status `IDLE` is known; others show as unknown. Model and tokens are not shown. |
 | Cline/Roo | `globalStorage` of the Cline and Roo extensions in VS Code family editors | Title is the first task text. Roo child tasks link to their parent. |
 | OpenCode | `$XDG_DATA_HOME/opencode` (default `~/.local/share/opencode`): `opencode.db`, older `storage/` | Needs Node 22.13+ for the database. |
 
-Tools that are not installed are hidden in the UI header (listed under a collapsed "not detected" hint). Adapters whose data format is not yet verified on every platform (Codex, Copilot, Gemini CLI, Cline/Roo, OpenCode) are flagged in `/api/sources`; the UI shows no label for them, only a tooltip on the header badge.
+Tools that are not installed are hidden in the UI header (listed under a collapsed "not detected" hint). Adapters whose data format is not yet verified on every platform (Codex, Copilot, Gemini CLI, Antigravity, Cline/Roo, OpenCode) are flagged in `/api/sources`; the UI shows no label for them, only a tooltip on the header badge.
 
-Tool colours: Claude orange, Cursor blue, Codex teal, Copilot violet, Gemini pink, Cline/Roo yellow, OpenCode green.
+Tool colours: Claude orange, Cursor blue, Codex teal, Copilot violet, Gemini pink, Antigravity slate, Cline/Roo yellow, OpenCode green.
 
 Home override: `SUBDECK_HOME` sets the single data root (default: `USERPROFILE` on Windows, `HOME` elsewhere, then the OS home). Desk reads `~/.claude`, `~/.subdeck` and every other per-user path below it, and with `SUBDECK_HOME` set it ignores the ambient `APPDATA`, `LOCALAPPDATA` and `XDG_*` variables so nothing outside it is touched. Use it for tests and sandboxes.
 
