@@ -47,9 +47,9 @@ test('starts, writes desk.json, answers, second start exits 0, cleans up', async
   const res = await fetch(`http://127.0.0.1:${port}/api/sources`);
   assert.equal(res.status, 200);
   const srcs = (await res.json()).sources;
-  assert.deepEqual(srcs.map(x => x.id), ['claude-code', 'codex', 'copilot', 'gemini', 'cline', 'opencode', 'subdeck-run']);
+  assert.deepEqual(srcs.map(x => x.id), ['claude-code', 'codex', 'copilot', 'gemini', 'antigravity', 'cline', 'opencode', 'subdeck-run']);
   // cursor is disabled by this test's env; every other adapter is registered
-  assert.deepEqual(srcs.filter(x => x.experimental).map(x => x.id), ['codex', 'copilot', 'gemini', 'cline', 'opencode']);
+  assert.deepEqual(srcs.filter(x => x.experimental).map(x => x.id), ['codex', 'copilot', 'gemini', 'antigravity', 'cline', 'opencode']);
   // fetch() may refuse to override Host, so use node:http for the rebinding check
   const bad = await new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port, path: '/api/sources', headers: { Host: 'evil.example' } },
     r => { r.resume(); resolve(r.statusCode); }).on('error', reject));

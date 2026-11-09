@@ -52,7 +52,7 @@ Restart the tool (in a running Claude Code session `/reload-plugins` also works;
     <td width="33%" valign="top">📟<br><b>Live status table</b><br>Running and finished agents in the terminal: <code>/subdeck:status</code></td>
   </tr>
   <tr>
-    <td valign="top">🖥️<br><b>SubDeck Desk</b><br>Local web dashboard for Claude Code, Cursor, Codex, Copilot, Gemini, Cline/Roo and OpenCode sessions. Read-only, <code>127.0.0.1</code> only.</td>
+    <td valign="top">🖥️<br><b>SubDeck Desk</b><br>Local web dashboard for Claude Code, Cursor, Codex, Copilot, Gemini, Antigravity, Cline/Roo and OpenCode sessions. Read-only, <code>127.0.0.1</code> only.</td>
     <td valign="top">🚦<br><b>Push gate</b><br>The manager runs a pre-push checklist and asks first. It never pushes by itself.</td>
     <td valign="top">🔔<br><b>Notifications</b><br>Optional, silent desktop notifications when Claude needs you or finishes. Off by default; toggle in Desk or <code>/subdeck:settings</code>.</td>
   </tr>
@@ -97,7 +97,7 @@ Restart the tool (in a running Claude Code session `/reload-plugins` also works;
   </picture>
 </p>
 
-Projects on the left, the agent tree in the middle, details on the right. Start it with `/subdeck:desk` or `node desk/server.mjs`. Claude Code and Cursor are supported; Codex, Copilot (CLI and VS Code Chat), Gemini CLI, Cline/Roo and OpenCode support is newer and some data formats are not yet verified on every platform (hover a header badge for details). Sessions that are blocked on you (permission prompt, question, plan approval) show as **waiting** and sort first. Each session shows a context-usage bar and each project its token total (tokens, not cost); paths use `~`. Details in [desk/README.md](desk/README.md).
+Projects on the left, the agent tree in the middle, details on the right. Start it with `/subdeck:desk` or `node desk/server.mjs`. Claude Code and Cursor are supported; Codex, Copilot (CLI and VS Code Chat), Gemini CLI, Antigravity, Cline/Roo and OpenCode support is newer and some data formats are not yet verified on every platform (hover a header badge for details). Sessions that are blocked on you (permission prompt, question, plan approval) show as **waiting** and sort first. Each session shows a context-usage bar and each project its token total (tokens, not cost); paths use `~`. Details in [desk/README.md](desk/README.md).
 
 <details>
 <summary><b>Agent detail</b>: prompt, tool calls, final report</summary>

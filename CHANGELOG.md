@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- **Desk: Antigravity (experimental):** Desk lists Antigravity conversations from `~/.gemini/antigravity` (or `ANTIGRAVITY_HOME`), read-only via `node:sqlite` (Node 22.5 or newer; without it the tool shows as not detected). Titles, projects and sub-agent links come from the summaries index when it has a row; model and tokens are not shown yet.
 
 - **Hooks run on macOS and Linux:** the hook launcher `scripts/run-hook.cmd` and the other scripts are now committed with the executable bit (mode 100755). Hooks run it through a shell, so without the bit it fails with "Permission denied" and `/subdeck:doctor` warned "not executable". A new test fails if a script loses the bit.
 - **Ledger check keeps findings:** `ledger.sh check` no longer drops the finding text of entries saved without an agent or task (empty tab-separated fields were collapsed on read, shifting every later field).
