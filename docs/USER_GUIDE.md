@@ -178,7 +178,7 @@ Desk serves on `http://127.0.0.1:4917` by default (it falls back to 4918-4936 if
 | Codex | A turn is open in the rollout file and it was updated in the last 5 minutes. |
 | Copilot | CLI: an open turn while the session's lock file belongs to a live process. VS Code Chat: recent file activity. |
 | Gemini CLI | The session file changed in the last 2 minutes. |
-| Antigravity | The conversation database changed in the last 2 minutes (only the status `IDLE` is known; other values show as unknown). |
+| Antigravity | Status `IDLE` shows idle (finished after 30 minutes); any other status shows as unknown. Without a summary row the conversation file age decides. |
 | Cline/Roo | The task is not completed and its data changed in the last 2 minutes. |
 | OpenCode | An assistant message is still open and the session was updated in the last 5 minutes. |
 
